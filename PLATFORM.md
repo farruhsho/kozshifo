@@ -77,9 +77,9 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 8 | Director Dashboard | 🚧 | Revenue/avg-check/counts; full KPI suite ⬜ |
 | 9 | Audit | ✅ | Append-only log on all mutations; viewer UI ⬜ |
 | 10 | Branches | ✅ | Multi-branch CRUD |
-| 11 | Diagnostics | ⬜ | Phase 2 |
-| 12 | Medical Devices (HL7/DICOM/serial…) | ⬜ | Phase 4 (integration service) |
-| 13 | Doctors / EMR | ⬜ | Phase 2 |
+| 11 | Diagnostics | ⬜ | Phase 2 — folded into the EMR eye exam |
+| 12 | Medical Devices (HL7/DICOM/serial…) | 🚧 spec | 2 real devices + integration approach captured in `docs/DOMAIN.md`; build queued (`docs/prompts/02`) |
+| 13 | Doctors / EMR | 🚧 spec | Official **Form 025-8** fields captured in `docs/DOMAIN.md`; ready-to-build prompt `docs/prompts/02` |
 | 14 | Treatment | ⬜ | Phase 3 |
 | 15 | Operations | ⬜ | Phase 3 |
 | 16 | Inventory / Warehouse | ⬜ | Phase 3 (auto write-off ties to Operations) |

@@ -118,14 +118,22 @@ Login: **`director@kozshifo.uz` / `Director!2026`** (auto-seeded on first backen
 - **Backend auto-seeds on startup** (idempotent) — you don't need a manual seed step.
 - **Dev CORS allows any `localhost` port** (only when `ENVIRONMENT=development`).
 
-## 7. What to do next (ordered backlog)
+## 7. What to do next (two specified tracks)
 
-Finish **Phase 1** (the visible half of the journey the backend already supports):
-1. Flutter **Visits API client** + **Reception screen** (register → add services → pay → show receipt + ticket).
+**Track A — finish the visible journey (Phase 1):**
+1. Flutter **Visits API client** + **Reception screen** (register → add services → pay → receipt + ticket).
 2. Flutter **Queue** screen + full-screen **TV board** (backend endpoints exist: `/queue`, `/queue/tv-board/{branch}`).
 3. Backend hardening: **Alembic** migrations, **Docker Compose** (+Postgres), **refresh tokens**.
 
-Then **Phase 2**: Diagnostics, Doctor EMR / patient card. Full plan: `PLATFORM.md` §6.
+**Track B — clinical core (Phase 2), FULLY SPECIFIED & ready to build:**
+Ophthalmology **EMR / patient card** (the clinic's legal **MoH Form 025-8**) +
+**Medical Devices** (seeded with the clinic's two real instruments — Supore
+**RMK-700** auto-refractometer and **CAS-2000BER** A/B ultrasound; refractometer
+auto-fills the exam, A/B scan attaches to the visit).
+→ Ground-truth domain data: **`docs/DOMAIN.md`**.
+→ Ready-to-execute prompt: **`docs/prompts/02-emr-and-medical-devices.md`**.
+
+Full roadmap: `PLATFORM.md` §6.
 
 ## 8. Rules for agents
 

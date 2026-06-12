@@ -90,16 +90,19 @@ def take_payment(
 
     ticket_number: str | None = None
     if fully_paid and payload.issue_queue_ticket:
+        # Dedupe deliberately ignores the track: a patient mid-flow (active D *or*
+        # auto-advanced V ticket) must never be handed a second diagnostic ticket.
         existing = db.execute(
-            select(QueueTicket).where(
-                QueueTicket.visit_id == visit.id, QueueTicket.status.in_(_ACTIVE_TICKET)
-            )
+            select(QueueTicket)
+            .where(QueueTicket.visit_id == visit.id, QueueTicket.status.in_(_ACTIVE_TICKET))
+            .limit(1)
         ).scalar_one_or_none()
         if existing:
             ticket_number = existing.ticket_number
         else:
             ticket = QueueTicket(
-                ticket_number=next_ticket_number(db, visit.branch_id),
+                ticket_number=next_ticket_number(db, visit.branch_id, "diagnostic"),
+                track="diagnostic",
                 patient_id=visit.patient_id,
                 branch_id=visit.branch_id,
                 visit_id=visit.id,
@@ -137,6 +140,20 @@ def refund_payment(
     visit = db.get(Visit, payment.visit_id)
     if visit is not None:
         visit.paid_amount = Decimal(visit.paid_amount) - Decimal(payment.amount)
+        if Decimal(visit.paid_amount) <= Decimal("0.00"):
+            # Fully refunded — the patient leaves the flow: active queue
+            # tickets must not stay on the TV board or auto-advance later.
+            active = db.execute(
+                select(QueueTicket).where(
+                    QueueTicket.visit_id == visit.id,
+                    QueueTicket.status.in_(_ACTIVE_TICKET),
+                )
+            ).scalars().all()
+            for ticket in active:
+                ticket.status = "skipped"
+                record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+                             actor_id=actor.id, branch_id=visit.branch_id,
+                             summary=f"Ticket {ticket.ticket_number} skipped after full refund")
     record_audit(db, action="refund", entity_type="payment", entity_id=payment.id, actor_id=actor.id,
                  branch_id=payment.branch_id, summary=f"Refunded payment {payment.receipt_no}")
     db.commit()

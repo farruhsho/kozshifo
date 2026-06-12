@@ -57,7 +57,7 @@ def test_full_patient_journey(client, auth):
     assert Decimal(visit["balance"]) == price
     assert visit["items"][0]["status"] == "ordered"
 
-    # 3) Take full payment -> a queue ticket is issued automatically.
+    # 3) Take full payment -> a diagnostic-track queue ticket is issued automatically.
     result = client.post(
         f"{API}/payments",
         headers=auth,
@@ -68,7 +68,7 @@ def test_full_patient_journey(client, auth):
     assert Decimal(body["visit_balance"]) == Decimal("0.00")
     assert body["payment"]["receipt_no"].startswith("R-")
     ticket_number = body["queue_ticket_number"]
-    assert ticket_number and ticket_number.startswith("A-")
+    assert ticket_number and ticket_number.startswith("D-")
 
     # Item should now be marked paid.
     refreshed = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
@@ -78,16 +78,18 @@ def test_full_patient_journey(client, auth):
     queue = client.get(f"{API}/queue", headers=auth, params={"branch_id": branch_id}).json()
     assert any(t["ticket_number"] == ticket_number and t["status"] == "waiting" for t in queue)
 
-    # 5) Call it to a room.
+    # 5) Call it to a room (the ticket lives on the diagnostic track).
     called = client.post(
-        f"{API}/queue/call-next", headers=auth, json={"branch_id": branch_id, "room": "Каб. 1"}
+        f"{API}/queue/call-next", headers=auth,
+        json={"branch_id": branch_id, "room": "Каб. 1", "track": "diagnostic"},
     ).json()
     assert called["status"] == "called"
     assert called["room"] == "Каб. 1"
+    assert called["track"] == "diagnostic"
 
-    # 6) TV board shows it under "now serving".
+    # 6) TV board shows it in the diagnostic track's "now" column.
     board = client.get(f"{API}/queue/tv-board/{branch_id}", headers=auth).json()
-    assert any(e["ticket_number"] == ticket_number for e in board["now_serving"])
+    assert any(e["ticket_number"] == ticket_number for e in board["diagnostic"]["now"])
 
     # 7) Director KPI reflects today's revenue.
     kpi = client.get(f"{API}/dashboard/summary", headers=auth).json()

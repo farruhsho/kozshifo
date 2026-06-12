@@ -14,7 +14,10 @@ from app.models.base import TimestampMixin, UUIDPKMixin
 class QueueTicket(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "queue_tickets"
 
-    ticket_number: Mapped[str] = mapped_column(String(16), index=True, nullable=False)  # e.g. A-001
+    ticket_number: Mapped[str] = mapped_column(String(16), index=True, nullable=False)  # e.g. D-001 / V-001
+    # Two-track queue: "diagnostic" (issued on payment) -> "doctor" (auto-issued
+    # when the diagnostic ticket completes).
+    track: Mapped[str] = mapped_column(String(12), default="doctor", index=True, nullable=False)
     patient_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False
     )
@@ -34,5 +37,10 @@ class QueueTicket(UUIDPKMixin, TimestampMixin, Base):
     called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     served_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Who called the ticket (specialist name shown on the TV board).
+    called_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     patient: Mapped["Patient"] = relationship(lazy="joined")  # noqa: F821
+    called_by: Mapped["User | None"] = relationship(lazy="joined")  # noqa: F821

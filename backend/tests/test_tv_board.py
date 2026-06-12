@@ -15,7 +15,9 @@ def test_tv_board_endpoint_is_public(client, auth):
     body = resp.json()
     assert body["branch_id"] == branch_id
     assert body["branch_name"]  # header line on the TV page
-    assert "now_serving" in body and "waiting" in body
+    # 2x2 board: one {now, waiting} pair per track.
+    for track in ("doctor", "diagnostic"):
+        assert "now" in body[track] and "waiting" in body[track]
     # Wildcard CORS lets the board page run from file:// or another host.
     assert resp.headers["access-control-allow-origin"] == "*"
 
@@ -40,7 +42,12 @@ def test_tv_board_is_privacy_safe(client, auth):
                 json={"visit_id": visit["id"], "amount": visit["total_amount"]})
 
     board = client.get(f"{API}/queue/tv-board/{branch_id}").json()
-    entries = board["now_serving"] + board["waiting"]
+    entries = [
+        e
+        for track in ("doctor", "diagnostic")
+        for column in ("now", "waiting")
+        for e in board[track][column]
+    ]
     assert entries, "expected the new ticket on the board"
     text = str(entries)
     assert "Пациентов" not in text and "Конфиденциал" not in text

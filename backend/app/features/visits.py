@@ -17,6 +17,7 @@ from app.core.sequences import next_visit_no
 from app.models.branch import Branch
 from app.models.catalog import Service
 from app.models.patient import Patient
+from app.models.queue import QueueTicket
 from app.models.visit import Visit, VisitItem
 from app.schemas.common import Page
 from app.schemas.visit import VisitCreate, VisitItemAdd, VisitOut
@@ -140,6 +141,19 @@ def cancel_visit(
                             "Visit has payments — refund them before cancelling")
     visit.status = "cancelled"
     visit.closed_at = datetime.now(timezone.utc)
+    # The patient leaves the flow: active queue tickets of this visit must not
+    # stay on the TV board or auto-advance to the doctor queue later.
+    active_tickets = db.execute(
+        select(QueueTicket).where(
+            QueueTicket.visit_id == visit.id,
+            QueueTicket.status.in_(("waiting", "called", "serving")),
+        )
+    ).scalars().all()
+    for ticket in active_tickets:
+        ticket.status = "skipped"
+        record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+                     actor_id=actor.id, branch_id=visit.branch_id,
+                     summary=f"Ticket {ticket.ticket_number} skipped: visit cancelled")
     record_audit(db, action="cancel", entity_type="visit", entity_id=visit.id, actor_id=actor.id,
                  branch_id=visit.branch_id, summary=f"Cancelled visit {visit.visit_no}")
     db.commit()

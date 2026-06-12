@@ -1,4 +1,9 @@
-"""Live queue management and the public TV board."""
+"""Live two-track queue management and the public TV board.
+
+Tracks: payment issues a *diagnostic* ticket (D-001…); when it completes, the
+system auto-issues a *doctor* ticket (V-001…) for the same visit — no
+receptionist involved. The TV board shows both tracks side by side.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -13,14 +18,34 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.core.sequences import next_ticket_number
 from app.models.branch import Branch
 from app.models.patient import Patient
 from app.models.queue import QueueTicket
-from app.schemas.queue import CallNextRequest, QueueTicketOut, TVBoard, TVBoardEntry
+from app.models.visit import Visit
+from app.schemas.queue import (
+    CallNextRequest,
+    QueueTicketOut,
+    QueueTrack,
+    TVBoard,
+    TVBoardEntry,
+    TVTrack,
+)
 
 router = APIRouter(prefix="/queue", tags=["Queue"])
 
 _NOW_SERVING = ("called", "serving")
+_ACTIVE = ("waiting", *_NOW_SERVING)
+
+
+def _today_start() -> datetime:
+    """UTC day boundary — the same convention next_ticket_number resets on.
+
+    Active views (call-next, TV board, default queue list) are scoped to
+    today's tickets: numbers restart daily, so yesterday's forgotten ticket
+    must not jump the queue or collide with today's identical number.
+    """
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _patient_label(patient: Patient | None) -> str:
@@ -36,11 +61,15 @@ def _patient_label(patient: Patient | None) -> str:
 def list_queue(
     db: Annotated[Session, Depends(get_db)],
     branch_id: UUID,
+    track: QueueTrack | None = Query(None),
     active_only: bool = Query(True),
 ) -> list[QueueTicket]:
     stmt = select(QueueTicket).where(QueueTicket.branch_id == branch_id)
+    if track:
+        stmt = stmt.where(QueueTicket.track == track)
     if active_only:
-        stmt = stmt.where(QueueTicket.status.in_(("waiting", *_NOW_SERVING)))
+        stmt = stmt.where(QueueTicket.status.in_(_ACTIVE),
+                          QueueTicket.created_at >= _today_start())
     stmt = stmt.order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc())
     return list(db.execute(stmt).scalars().all())
 
@@ -56,7 +85,12 @@ def call_next(
     for _ in range(3):
         ticket = db.execute(
             select(QueueTicket)
-            .where(QueueTicket.branch_id == payload.branch_id, QueueTicket.status == "waiting")
+            .where(
+                QueueTicket.branch_id == payload.branch_id,
+                QueueTicket.track == payload.track,
+                QueueTicket.status == "waiting",
+                QueueTicket.created_at >= _today_start(),
+            )
             .order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc())
             .limit(1)
         ).scalar_one_or_none()
@@ -65,7 +99,12 @@ def call_next(
         claimed = db.execute(
             sa_update(QueueTicket)
             .where(QueueTicket.id == ticket.id, QueueTicket.status == "waiting")
-            .values(status="called", room=payload.room, called_at=datetime.now(timezone.utc))
+            .values(
+                status="called",
+                room=payload.room,
+                called_at=datetime.now(timezone.utc),
+                called_by_id=actor.id,
+            )
             .execution_options(synchronize_session=False)
         )
         if claimed.rowcount == 1:
@@ -89,18 +128,75 @@ _ALLOWED_FROM: dict[str, tuple[str, ...]] = {
 }
 
 
+def _auto_advance_to_doctor(db: Session, ticket: QueueTicket, actor: CurrentUser) -> None:
+    """Diagnostics finished -> automatically queue the patient for the doctor.
+
+    Issues a waiting doctor-track (V-…) ticket for the same visit, unless the
+    visit already has an active doctor ticket. Runs inside the caller's
+    transaction so the transition and the new ticket commit atomically.
+    """
+    # A dead visit must not re-enter the flow: a refunded-then-cancelled or
+    # already-closed visit gets no doctor ticket.
+    visit = db.get(Visit, ticket.visit_id)
+    if visit is None or visit.status in ("completed", "cancelled"):
+        return
+    active_doctor = db.execute(
+        select(QueueTicket.id)
+        .where(
+            QueueTicket.visit_id == ticket.visit_id,
+            QueueTicket.track == "doctor",
+            QueueTicket.status.in_(_ACTIVE),
+        )
+        .limit(1)
+    ).first()
+    if active_doctor is not None:
+        return
+    new_ticket = QueueTicket(
+        ticket_number=next_ticket_number(db, ticket.branch_id, "doctor"),
+        track="doctor",
+        patient_id=ticket.patient_id,
+        branch_id=ticket.branch_id,
+        visit_id=ticket.visit_id,
+        room=None,
+        status="waiting",
+    )
+    db.add(new_ticket)
+    db.flush()
+    record_audit(db, action="create", entity_type="queue_ticket", entity_id=new_ticket.id,
+                 actor_id=actor.id, branch_id=ticket.branch_id,
+                 summary=f"auto-advance to doctor queue: {new_ticket.ticket_number} "
+                         f"after {ticket.ticket_number} done")
+
+
 def _transition(db: Session, ticket_id: UUID, actor: CurrentUser, new_status: str, ts_field: str | None) -> QueueTicket:
     ticket = db.get(QueueTicket, ticket_id)
     if ticket is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
-    if ticket.status not in _ALLOWED_FROM[new_status]:
+    allowed = _ALLOWED_FROM[new_status]
+    if ticket.status not in allowed:
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Cannot move ticket {ticket.ticket_number} from {ticket.status} to {new_status}")
-    ticket.status = new_status
+    # Guarded UPDATE (same pattern as call_next): a concurrent done/skip race
+    # must lose with a 409, not double-fire the state machine — an unguarded
+    # write here could spawn duplicate V tickets or resurrect a skipped no-show.
+    values: dict = {"status": new_status}
     if ts_field:
-        setattr(ticket, ts_field, datetime.now(timezone.utc))
+        values[ts_field] = datetime.now(timezone.utc)
+    claimed = db.execute(
+        sa_update(QueueTicket)
+        .where(QueueTicket.id == ticket.id, QueueTicket.status.in_(allowed))
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Ticket {ticket.ticket_number} was changed concurrently — refresh and retry")
+    db.expire(ticket)
     record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id, actor_id=actor.id,
                  branch_id=ticket.branch_id, summary=f"Ticket {ticket.ticket_number} -> {new_status}")
+    if new_status == "done" and ticket.track == "diagnostic" and ticket.visit_id is not None:
+        _auto_advance_to_doctor(db, ticket, actor)
     db.commit()
     db.refresh(ticket)
     return ticket
@@ -124,12 +220,31 @@ def skip_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
     return _transition(db, ticket_id, actor, "skipped", None)
 
 
+def _called_desc_nulls_last(ticket: QueueTicket) -> tuple[bool, float]:
+    """Sort key: called_at DESC with NULLs last."""
+    if ticket.called_at is None:
+        return (True, 0.0)
+    return (False, -ticket.called_at.timestamp())
+
+
+def _tv_entry(t: QueueTicket) -> TVBoardEntry:
+    return TVBoardEntry(
+        ticket_number=t.ticket_number,
+        patient_label=_patient_label(t.patient),
+        room=t.room,
+        status=t.status,
+        called_at=t.called_at,
+        specialist=t.called_by.full_name if t.called_by is not None else None,
+    )
+
+
 @router.get("/tv-board/{branch_id}", response_model=TVBoard)
 def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)], response: Response) -> TVBoard:
     """Public (no auth): consumed by the standalone TV page at /tv/{branch_id}.
 
-    Deliberately exposes only privacy-safe data — ticket numbers, rooms and
-    anonymized patient labels (see `_patient_label`). Keep it that way.
+    Deliberately exposes only privacy-safe data — ticket numbers, rooms,
+    anonymized patient labels (see `_patient_label`) and the calling
+    specialist's name. Keep it that way.
     ACAO:* lets the board page run from file:// or another host (it is
     credential-free, so the wildcard is safe here).
     """
@@ -140,18 +255,36 @@ def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)], response:
     rows = list(
         db.execute(
             select(QueueTicket)
-            .where(QueueTicket.branch_id == branch_id, QueueTicket.status.in_(("waiting", *_NOW_SERVING)))
+            .where(
+                QueueTicket.branch_id == branch_id,
+                QueueTicket.status.in_(_ACTIVE),
+                # Numbers restart daily: yesterday's forgotten ticket must not
+                # appear next to today's identical number on the public board.
+                QueueTicket.created_at >= _today_start(),
+            )
             .order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc())
         ).scalars().all()
     )
-    now_serving, waiting = [], []
+    tracks: dict[str, dict[str, list[QueueTicket]]] = {
+        "doctor": {"now": [], "waiting": []},
+        "diagnostic": {"now": [], "waiting": []},
+    }
     for t in rows:
-        entry = TVBoardEntry(
-            ticket_number=t.ticket_number,
-            patient_label=_patient_label(t.patient),
-            room=t.room,
-            status=t.status,
-        )
-        (now_serving if t.status in _NOW_SERVING else waiting).append(entry)
-    return TVBoard(branch_id=branch_id, branch_name=branch.name,
-                   now_serving=now_serving, waiting=waiting)
+        bucket = tracks.get(t.track)
+        if bucket is None:  # unknown track value — never break the public board
+            continue
+        bucket["now" if t.status in _NOW_SERVING else "waiting"].append(t)
+    for bucket in tracks.values():
+        bucket["now"].sort(key=_called_desc_nulls_last)
+    return TVBoard(
+        branch_id=branch_id,
+        branch_name=branch.name,
+        doctor=TVTrack(
+            now=[_tv_entry(t) for t in tracks["doctor"]["now"]],
+            waiting=[_tv_entry(t) for t in tracks["doctor"]["waiting"]],
+        ),
+        diagnostic=TVTrack(
+            now=[_tv_entry(t) for t in tracks["diagnostic"]["now"]],
+            waiting=[_tv_entry(t) for t in tracks["diagnostic"]["waiting"]],
+        ),
+    )

@@ -52,7 +52,8 @@ def test_queue_state_machine_enforced(client, auth):
     assert client.post(f"{API}/queue/{ticket['id']}/serve", headers=auth).status_code == 409
 
     called = client.post(f"{API}/queue/call-next", headers=auth,
-                         json={"branch_id": branch_id, "room": "Каб. 9"}).json()
+                         json={"branch_id": branch_id, "room": "Каб. 9",
+                               "track": "diagnostic"}).json()
     done = client.post(f"{API}/queue/{called['id']}/done", headers=auth)
     assert done.status_code == 200  # called -> done is the allowed shortcut
 

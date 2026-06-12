@@ -41,26 +41,39 @@ def main() -> int:
         "method": "cash", "room": "Каб. 2",
     }).json()
     ticket_no = pay["queue_ticket_number"]
-    assert ticket_no, pay
+    assert ticket_no and ticket_no.startswith("D-"), pay  # diagnostic track first
     print(f"[3] paid, receipt {pay['payment']['receipt_no']}, ticket {ticket_no}")
 
-    queue = c.get(f"{API}/queue", params={"branch_id": branch_id}).json()
+    queue = c.get(f"{API}/queue", params={"branch_id": branch_id, "track": "diagnostic"}).json()
     assert any(t["ticket_number"] == ticket_no and t["status"] == "waiting" for t in queue)
-    print(f"[4] queue shows {ticket_no} waiting")
+    print(f"[4] diagnostic queue shows {ticket_no} waiting")
 
     called = c.post(f"{API}/queue/call-next",
-                    json={"branch_id": branch_id, "room": "Каб. 2"}).json()
-    served = c.post(f"{API}/queue/{called['id']}/serve").json()
-    assert served["status"] == "serving"
-    print(f"[5] called -> serving ({called['ticket_number']})")
+                    json={"branch_id": branch_id, "room": "Каб. 2",
+                          "track": "diagnostic"}).json()
+    done = c.post(f"{API}/queue/{called['id']}/done").json()
+    assert done["status"] == "done"
+    v_queue = c.get(f"{API}/queue",
+                    params={"branch_id": branch_id, "track": "doctor"}).json()
+    v_ticket = next(t for t in v_queue if t["visit_id"] == visit["id"])
+    assert v_ticket["ticket_number"].startswith("V-")
+    print(f"[5] diagnostics done -> auto V-ticket {v_ticket['ticket_number']} (no receptionist)")
+
+    v_called = c.post(f"{API}/queue/call-next",
+                      json={"branch_id": branch_id, "room": "Каб. 5",
+                            "track": "doctor"}).json()
+    assert v_called["id"] == v_ticket["id"]
 
     anon = httpx.Client(timeout=15)  # no Authorization at all
     board = anon.get(f"{API}/queue/tv-board/{branch_id}").json()
-    entries = board["now_serving"] + board["waiting"]
-    assert any(e["ticket_number"] == called["ticket_number"] for e in entries)
-    assert "Поток" not in str(entries)  # privacy-safe
-    print(f"[6] public tv-board OK, {len(board['now_serving'])} serving / "
-          f"{len(board['waiting'])} waiting, no names leaked")
+    doc_now = board["doctor"]["now"]
+    assert any(e["ticket_number"] == v_ticket["ticket_number"] and e["specialist"]
+               for e in doc_now)
+    all_entries = [e for tr in ("doctor", "diagnostic") for col in ("now", "waiting")
+                   for e in board[tr][col]]
+    assert "Поток" not in str(all_entries)  # privacy-safe
+    print(f"[6] public 2x2 tv-board OK: doctor now={len(doc_now)}, "
+          f"specialist shown, no names leaked")
 
     page = anon.get(f"{BASE}/tv/{branch_id}")
     assert page.status_code == 200 and "KO'Z" in page.text

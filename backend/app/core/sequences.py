@@ -51,12 +51,21 @@ def next_receipt_no(db: Session) -> str:
             return candidate
 
 
-def next_ticket_number(db: Session, branch_id: UUID) -> str:
-    """Per-branch daily counter, formatted like A-001."""
+# Queue tracks: "doctor" -> V-001…, "diagnostic" -> D-001… (independent counters).
+_TICKET_PREFIX = {"doctor": "V", "diagnostic": "D"}
+
+
+def next_ticket_number(db: Session, branch_id: UUID, track: str = "doctor") -> str:
+    """Per-branch, per-track daily counter, formatted like D-001 / V-001."""
+    prefix = _TICKET_PREFIX[track]
     start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     count = db.execute(
         select(func.count())
         .select_from(QueueTicket)
-        .where(QueueTicket.branch_id == branch_id, QueueTicket.created_at >= start)
+        .where(
+            QueueTicket.branch_id == branch_id,
+            QueueTicket.track == track,
+            QueueTicket.created_at >= start,
+        )
     ).scalar_one()
-    return f"A-{count + 1:03d}"
+    return f"{prefix}-{count + 1:03d}"

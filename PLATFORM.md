@@ -80,7 +80,7 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 5 | Queue | ✅ | **Two-track** D-diagnostics → auto V-doctor (no receptionist), per-track call-next, day-scoped, race-guarded |
 | 6 | TV Queue | ✅ | 2x2 board (doctor blue / diagnostics green): big called number + cabinet + specialist, next-8 tables, voice announcements |
 | 7 | Service Catalog | ✅ | Categories, priced services |
-| 8 | Director Dashboard | 🚧 | Revenue/avg-check/counts + operations & warehouse KPIs (deficit, expiring lots); conversions/LTV/forecast ⬜ |
+| 8 | Director Dashboard | 🚧 | KPIs + **self-improvement insights** (low stock, revenue drop, queue overload, stale visits, cancellation spikes — criticals auto-notify); conversions/LTV/forecast ⬜ |
 | 9 | Audit | ✅ | Append-only log on all mutations; viewer UI ⬜ |
 | 10 | Branches | ✅ | Multi-branch CRUD |
 | 11 | Diagnostics | ✅ | Folded into the EMR eye exam (refraction, IOP, biomicroscopy, A/B-scan note) |
@@ -94,8 +94,8 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 19 | CRM | ⬜ | Phase 5 |
 | 20 | Reports / Analytics | 🚧 | KPI summary live; reporting engine ⬜ Phase 5 |
 | 21 | Notifications | ✅ | Core: log + optional Telegram, low-stock alerts with anti-spam, notification ledger + API; SMS & UI screen ⬜ |
-| 22 | Settings | 🚧 | Env config + seed; settings UI/API ⬜ |
-| 23 | Director Control Center | 🚧 | Dashboard + identity/catalog mgmt; full center ⬜ |
+| 22 | Settings | 🚧 | Env config + seed; runtime settings UI ⬜ |
+| 23 | Director Control Center | 🚧 | Dashboard + insights + **admin UI** (services/prices, branches, staff via `/admin`); roles editor UI, process builder ⬜ |
 
 ## 5. API & UI/UX
 

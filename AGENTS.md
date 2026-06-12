@@ -34,6 +34,13 @@ tokens re-deriving the project from scratch.
   Flutter preview · ✅ notification core: log + optional Telegram, low-stock
   alerts with 24h anti-spam · ✅ extended director KPIs; remaining: real device
   transports, SMS, notification UI).
+- **Owner Automation: ✅ core done** (event-driven visit `flow_status` —
+  nobody sets it manually, `core/flow.py` advances it from payments/queue/
+  operations/treatments events · patient timeline `GET /patients/{id}/timeline`
+  · self-improvement insights `GET /dashboard/insights` with debounced
+  auto-notify of criticals · Flutter: admin screens `/admin` (services/prices,
+  branches, staff), dashboard attention panel, timeline in the doctor card,
+  «Завершить приём» button).
 - **Everything else: ⬜ planned** — see `PLATFORM.md` §4 matrix.
 
 **Works end-to-end today (all clickable in the app):**
@@ -46,9 +53,9 @@ exam → pulls refraction from the RMK-700 device result → prints official
 card.pdf`, on top of **JWT auth · dynamic RBAC (no hardcoded roles) · audit log
 on every mutation · multi-branch**.
 
-**Verified green:** backend `pytest` = 82 passed · Flutter `flutter test` = 26 passed
+**Verified green:** backend `pytest` = 96 passed · Flutter `flutter test` = 41 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (5 revisions).
+`alembic upgrade head` + `alembic check` = clean (6 revisions).
 
 ## 2. Repo map (where things live)
 
@@ -89,7 +96,7 @@ cd backend
 python -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows path
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload
-./.venv/Scripts/python.exe -m pytest -q                         # 82 passed
+./.venv/Scripts/python.exe -m pytest -q                         # 96 passed
 ./.venv/Scripts/alembic.exe upgrade head                        # migrations (prod path)
 
 # Docker (on a Docker-capable host; dev machine has none)
@@ -98,7 +105,7 @@ docker compose up --build                                       # api :8000 + Po
 # Flutter  (separate terminal, from repo root)
 flutter pub get
 flutter run -d chrome                                           # dev: any localhost port OK
-flutter test                                                    # 26 passed
+flutter test                                                    # 41 passed
 
 # TV board (waiting-room screen): open in any browser, no login required
 #   http://127.0.0.1:8000/tv/<branch_id>   (link dialog: Queue screen → TV icon)

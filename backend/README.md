@@ -127,6 +127,8 @@ tests/
 | Operations | `GET/POST /operation-types`, `GET /operation-types/{id}/availability` (consumables pre-check), `POST /visits/{id}/operations` (bills the visit, priority), `/operations/{id}/perform` (FEFO auto write-off) / `cancel` |
 | Treatment | `POST/GET /visits/{id}/treatments`, `/treatments/{id}/dispense` (stock write-off) / `complete` / `cancel` |
 | Notifications | `GET /notifications` — log/Telegram ledger (low-stock alerts fire on every write-off path) |
+| Timeline | `GET /patients/{id}/timeline` — automatic chronological history (visits, payments, exams, devices, operations, treatments) |
+| Insights | `GET /dashboard/insights` — owner attention list (criticals auto-notify, 24h debounce). Visits carry an auto-managed `flow_status` (event-driven, no manual writes) |
 | Devices | `GET/POST/PATCH /devices`, `POST/GET /devices/{id}/results`, `POST /devices/{id}/results/file` (multipart B-scan), `GET /device-results/{id}/file`, `GET /visits/{id}/device-results`, `POST /visits/{id}/exam/apply-refraction?result_id=…` |
 
 ## Migrations (Alembic)

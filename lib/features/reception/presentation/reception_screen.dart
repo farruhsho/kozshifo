@@ -78,8 +78,10 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
 
   Future<void> _openVisit() async {
     final patient = _patient;
+    // Визит происходит там, где пациент физически находится: филиал оператора
+    // в приоритете, домашний филиал пациента — только fallback.
     final branchId =
-        patient?.branchId ?? ref.read(authControllerProvider).user?.branchId;
+        ref.read(authControllerProvider).user?.branchId ?? patient?.branchId;
     if (patient == null || _cart.isEmpty) return;
     if (branchId == null) {
       _snack('У пользователя не задан филиал', error: true);
@@ -110,7 +112,35 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       context: context,
       builder: (_) => _PaymentDialog(visit: visit),
     );
-    if (result != null) setState(() => _result = result);
+    if (result == null) return;
+    final remaining = double.tryParse(result.visitBalance) ?? 0;
+    if (remaining > 0) {
+      // Частичная оплата: обновляем остаток и оставляем кнопку оплаты доступной.
+      setState(() => _visit = visit.copyWith(
+            balance: result.visitBalance,
+            status: result.visitStatus,
+          ));
+      _snack('Чек ${result.payment.receiptNo}: принято '
+          '${formatMoney(result.payment.amount)}. '
+          'Остаток: ${formatMoney(result.visitBalance)}');
+    } else {
+      setState(() => _result = result);
+    }
+  }
+
+  Future<void> _cancelVisit() async {
+    final visit = _visit;
+    if (visit == null) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(receptionRepositoryProvider).cancelVisit(visit.id);
+      _snack('Визит ${visit.visitNo} отменён');
+      _reset();
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   void _reset() {
@@ -138,13 +168,14 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     final user = ref.watch(authControllerProvider).user;
     final canBill =
         (user?.can('visits.create') ?? false) && (user?.can('payments.create') ?? false);
+    final canRegister = user?.can('patients.create') ?? false;
     final services = ref.watch(activeServicesProvider);
     final wide = MediaQuery.sizeOf(context).width >= 1000;
 
     final left = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _patientSection(canBill),
+        _patientSection(canRegister),
         const SizedBox(height: 12),
         _servicesSection(services, canBill),
       ],
@@ -172,7 +203,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     );
   }
 
-  Widget _patientSection(bool canBill) {
+  Widget _patientSection(bool canRegister) {
     return _card('1. Пациент', [
       if (_patient == null) ...[
         Row(
@@ -197,7 +228,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             ),
             const SizedBox(width: 8),
             FilledButton.tonalIcon(
-              onPressed: canBill ? _registerNew : null,
+              onPressed: canRegister ? _registerNew : null,
               icon: const Icon(Icons.person_add_alt_1),
               label: const Text('Новый'),
             ),
@@ -333,9 +364,17 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         Text('Визит ${visit.visitNo} · к оплате ${formatMoney(visit.balance)}'),
         const SizedBox(height: 8),
         FilledButton.icon(
-          onPressed: canBill ? _takePayment : null,
+          onPressed: (canBill && !_busy) ? _takePayment : null,
           icon: const Icon(Icons.point_of_sale),
           label: const Text('Принять оплату'),
+        ),
+        const SizedBox(height: 8),
+        // Аварийный выход: пациент передумал / услуги выбраны неверно.
+        // Сервер отменит только неоплаченный визит (иначе — сначала возврат).
+        OutlinedButton.icon(
+          onPressed: (canBill && !_busy) ? _cancelVisit : null,
+          icon: const Icon(Icons.cancel_outlined),
+          label: const Text('Отменить визит'),
         ),
       ],
     ]);
@@ -436,7 +475,8 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
     try {
       final result = await ref.read(receptionRepositoryProvider).takePayment(
             visitId: widget.visit.id,
-            amount: _amount.text.trim(),
+            // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
+            amount: _amount.text.trim().replaceAll(',', '.'),
             method: _method,
             room: _room.text.trim().isEmpty ? null : _room.text.trim(),
           );

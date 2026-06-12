@@ -73,8 +73,8 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 2 | Patients | ✅ | CRUD, MRN, search |
 | 3 | Reception / Visits | ✅ | Visit + billed items, totals/balance |
 | 4 | Finance (Payments) | 🚧 | Take/refund payment, receipts; full ledger/cashflow ⬜ |
-| 5 | Queue | ✅ | Tickets, call/serve/skip |
-| 6 | TV Queue | ✅ | Privacy-safe board endpoint; needs display UI |
+| 5 | Queue | ✅ | Tickets, call/serve/skip + Flutter management screen |
+| 6 | TV Queue | ✅ | Public privacy-safe endpoint + standalone TV page `GET /tv/{branch}` (self-contained HTML, 4s polling) |
 | 7 | Service Catalog | ✅ | Categories, priced services |
 | 8 | Director Dashboard | 🚧 | Revenue/avg-check/counts; full KPI suite ⬜ |
 | 9 | Audit | ✅ | Append-only log on all mutations; viewer UI ⬜ |
@@ -97,13 +97,15 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 
 - **API:** versioned `/api/v1`, OpenAPI/Swagger auto-generated, consistent
   pagination envelope, RBAC-guarded. See `backend/README.md` for the surface.
-- **UI/UX 🚧:** Flutter app per the brief's stack (Riverpod · GoRouter · Freezed ·
+- **UI/UX:** Flutter app per the brief's stack (Riverpod · GoRouter · Freezed ·
   Dio), Feature-First + Clean Architecture. **Built:** JWT auth + auth-guarded
-  routing, Director KPI dashboard, Patients (list/search/register), **Doctor
-  patient card (Form 025-8: exam editing, history, PDF print, refractometer
-  pull, A/B-scan list)**, **Devices registry screen**, and permission-aware
-  navigation. **Next:** Reception (register→bill→pay→print) and a full-screen
-  TV board.
+  routing, Director KPI dashboard, Patients (list/search/register), **Reception
+  (search/register → service cart → visit → payment → receipt + queue ticket)**,
+  **Queue management (call/serve/done/skip, auto-refresh)**, **Doctor patient
+  card (Form 025-8: exam editing, history, PDF print, refractometer pull,
+  A/B-scan list)**, **Devices registry screen**, permission-aware navigation —
+  plus a **standalone TV board** (single HTML at `/tv/{branch}`, no login,
+  privacy-safe) for the waiting-room screen.
 
 ## 6. Roadmap (phased)
 
@@ -111,10 +113,10 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
   Journey slice, tests.
 - **Phase 1 — Hardening & Flutter client 🚧 (in progress):**
   ✅ Flutter foundation (Riverpod · GoRouter · Dio · Freezed, Clean Architecture)
-  with auth-guarded routing, a director **dashboard** (live KPIs) and **patients**
-  (list/search/register) wired to the API — analyzes clean, compiles to web, unit-tested.
-  ▫ Remaining: Reception billing/payment + Queue/TV-board screens, Alembic
-  migrations, Docker Compose (+Postgres), refresh tokens.
+  with auth-guarded routing, director **dashboard**, **patients**,
+  **reception** (bill → pay → receipt + ticket), **queue management**, and the
+  standalone **TV board** page — analyzes clean, compiles to web, unit-tested.
+  ▫ Remaining: Alembic migrations, Docker Compose (+Postgres), refresh tokens.
 - **Phase 2 — Clinical ✅ (done):** EMR eye exam (Form 025-8, 1:1 with visit)
   + printable `card.pdf`, medical-device registry with the 2 real instruments
   seeded, device results attached to visits, refractometer → exam auto-fill.
@@ -141,8 +143,9 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 ## 8. Testing & Deployment
 
 - **Testing:** pytest end-to-end Patient Journey + EMR exam (upsert/validation/
-  RBAC/history/PDF) + devices (seed/results/apply-refraction/RBAC) — `17 passed`;
-  Flutter `7 passed`. Target the executable-spec style already established.
+  RBAC/history/PDF) + devices (seed/results/apply-refraction/RBAC) + TV board
+  (public/privacy/page) + reception abort & queue state machine — `23 passed`;
+  Flutter `12 passed`. Target the executable-spec style already established.
 - **Deployment:** app is 12-factor/env-driven. Phase 1 adds Dockerfile +
   docker-compose (api + Postgres), Alembic migrations, and CI. Until then it runs
   with `uvicorn app.main:app` on SQLite.

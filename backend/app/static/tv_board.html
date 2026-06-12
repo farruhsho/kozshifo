@@ -202,8 +202,21 @@
     });
   }
 
+  // Self-rescheduling poll: never more than one request in flight, and a hung
+  // connection (TV Wi-Fi drop without TCP reset) is aborted after POLL_MS so
+  // the offline indicator actually appears instead of requests piling up.
   function poll() {
-    fetch(API + '/api/v1/queue/tv-board/' + BRANCH, { cache: 'no-store' })
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var killer = ctrl && setTimeout(function () { ctrl.abort(); }, POLL_MS);
+    var opts = { cache: 'no-store' };
+    if (ctrl) opts.signal = ctrl.signal;
+
+    function schedule() {
+      if (killer) clearTimeout(killer);
+      setTimeout(poll, POLL_MS);
+    }
+
+    fetch(API + '/api/v1/queue/tv-board/' + BRANCH, opts)
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -213,15 +226,16 @@
         renderWaiting(board.waiting || []);
         statusEl.textContent = 'online';
         statusEl.className = '';
+        schedule();
       })
       .catch(function (e) {
         statusEl.textContent = 'нет связи с сервером (' + e.message + ')';
         statusEl.className = 'offline';
+        schedule();
       });
   }
 
   poll();
-  setInterval(poll, POLL_MS);
 })();
 </script>
 </body>

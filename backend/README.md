@@ -114,9 +114,10 @@ tests/
 | Branches | `GET/POST/PATCH /branches` |
 | Patients | `GET/POST/PATCH/DELETE /patients` (search by name/MRN/phone) |
 | Catalog | `GET/POST /service-categories`, `GET/POST/PATCH /services` |
-| Visits | `GET/POST /visits`, `POST /visits/{id}/items`, `POST /visits/{id}/close` |
+| Visits | `GET/POST /visits`, `POST /visits/{id}/items`, `POST /visits/{id}/cancel` (unpaid only), `POST /visits/{id}/close` |
 | Finance | `GET/POST /payments`, `POST /payments/{id}/refund` |
-| Queue | `GET /queue`, `POST /queue/call-next`, serve/done/skip, `GET /queue/tv-board/{branch}` |
+| Queue | `GET /queue`, `POST /queue/call-next`, serve/done/skip, `GET /queue/tv-board/{branch}` (**public**, privacy-safe) |
+| TV board | `GET /tv/{branch_id}` — standalone waiting-room page (self-contained HTML, no auth) |
 | Director | `GET /dashboard/summary` |
 | EMR | `PUT/GET /visits/{id}/exam`, `GET /visits/{id}/exam/card.pdf` (Form 025-8), `GET /patients/{id}/exams` |
 | Devices | `GET/POST/PATCH /devices`, `POST/GET /devices/{id}/results`, `GET /visits/{id}/device-results`, `POST /visits/{id}/exam/apply-refraction?result_id=…` |

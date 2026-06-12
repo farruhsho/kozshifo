@@ -122,6 +122,31 @@ def add_visit_item(
     return visit
 
 
+@router.post("/{visit_id}/cancel", response_model=VisitOut)
+def cancel_visit(
+    visit_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("visits.update"))],
+) -> Visit:
+    """Cancel an *unpaid* open visit (reception abort path: patient declined,
+    wrong services billed). Paid visits must be refunded first."""
+    visit = db.get(Visit, visit_id)
+    if visit is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot cancel a {visit.status} visit")
+    if Decimal(visit.paid_amount) > Decimal("0.00"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Visit has payments — refund them before cancelling")
+    visit.status = "cancelled"
+    visit.closed_at = datetime.now(timezone.utc)
+    record_audit(db, action="cancel", entity_type="visit", entity_id=visit.id, actor_id=actor.id,
+                 branch_id=visit.branch_id, summary=f"Cancelled visit {visit.visit_no}")
+    db.commit()
+    db.refresh(visit)
+    return visit
+
+
 @router.post("/{visit_id}/close", response_model=VisitOut)
 def close_visit(
     visit_id: UUID,

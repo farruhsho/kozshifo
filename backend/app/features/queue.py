@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -49,28 +50,51 @@ def call_next(
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))],
 ) -> QueueTicket:
-    ticket = db.execute(
-        select(QueueTicket)
-        .where(QueueTicket.branch_id == payload.branch_id, QueueTicket.status == "waiting")
-        .order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if ticket is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No waiting tickets")
-    ticket.status = "called"
-    ticket.room = payload.room
-    ticket.called_at = datetime.now(timezone.utc)
-    record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id, actor_id=actor.id,
-                 branch_id=ticket.branch_id, summary=f"Called {ticket.ticket_number} to {payload.room}")
-    db.commit()
-    db.refresh(ticket)
-    return ticket
+    # Guarded UPDATE (status must still be "waiting") so two operators clicking
+    # concurrently can never be handed the same ticket; loser retries the next one.
+    for _ in range(3):
+        ticket = db.execute(
+            select(QueueTicket)
+            .where(QueueTicket.branch_id == payload.branch_id, QueueTicket.status == "waiting")
+            .order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if ticket is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No waiting tickets")
+        claimed = db.execute(
+            sa_update(QueueTicket)
+            .where(QueueTicket.id == ticket.id, QueueTicket.status == "waiting")
+            .values(status="called", room=payload.room, called_at=datetime.now(timezone.utc))
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount == 1:
+            db.expire(ticket)
+            record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+                         actor_id=actor.id, branch_id=ticket.branch_id,
+                         summary=f"Called {ticket.ticket_number} to {payload.room}")
+            db.commit()
+            db.refresh(ticket)
+            return ticket
+        db.rollback()  # someone else claimed it — try the next waiting ticket
+    raise HTTPException(status.HTTP_409_CONFLICT, "Queue is contended, try again")
+
+
+# Enforced state machine: waiting -> called -> serving -> done | skipped.
+# called -> done is a deliberate shortcut (operator completes without "serve").
+_ALLOWED_FROM: dict[str, tuple[str, ...]] = {
+    "serving": ("called",),
+    "done": ("called", "serving"),
+    "skipped": ("waiting", "called"),
+}
 
 
 def _transition(db: Session, ticket_id: UUID, actor: CurrentUser, new_status: str, ts_field: str | None) -> QueueTicket:
     ticket = db.get(QueueTicket, ticket_id)
     if ticket is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
+    if ticket.status not in _ALLOWED_FROM[new_status]:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Cannot move ticket {ticket.ticket_number} from {ticket.status} to {new_status}")
     ticket.status = new_status
     if ts_field:
         setattr(ticket, ts_field, datetime.now(timezone.utc))
@@ -100,12 +124,15 @@ def skip_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
 
 
 @router.get("/tv-board/{branch_id}", response_model=TVBoard)
-def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)]) -> TVBoard:
+def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)], response: Response) -> TVBoard:
     """Public (no auth): consumed by the standalone TV page at /tv/{branch_id}.
 
     Deliberately exposes only privacy-safe data — ticket numbers, rooms and
     anonymized patient labels (see `_patient_label`). Keep it that way.
+    ACAO:* lets the board page run from file:// or another host (it is
+    credential-free, so the wildcard is safe here).
     """
+    response.headers["Access-Control-Allow-Origin"] = "*"
     rows = list(
         db.execute(
             select(QueueTicket)

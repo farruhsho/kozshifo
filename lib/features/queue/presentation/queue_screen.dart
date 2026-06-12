@@ -183,7 +183,9 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                 return Padding(
                   padding: const EdgeInsets.all(16),
                   child: wide
-                      ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: panels)
+                      ? Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: panels)
                       : Column(children: panels),
                 );
               },
@@ -230,28 +232,35 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
           children: [
             Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            if (items.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Center(child: Text('Пусто')),
-              )
-            else
-              for (final t in items)
-                ListTile(
-                  dense: true,
-                  leading: CircleAvatar(
-                    radius: 22,
-                    child: Text(t.ticketNumber,
-                        style: const TextStyle(fontSize: 11)),
-                  ),
-                  title: Text(
-                      [t.statusLabel, if (t.room != null) t.room!].join(' · ')),
-                  subtitle: Text(
-                      'создан ${t.createdAt.replaceFirst('T', ' ').split('.').first}'),
-                  trailing: canManage
-                      ? Row(mainAxisSize: MainAxisSize.min, children: actions(t))
-                      : null,
-                ),
+            // Список скроллится внутри панели — загруженный филиал легко
+            // держит 20+ талонов, колонка без скролла переполнялась бы.
+            Expanded(
+              child: items.isEmpty
+                  ? const Center(child: Text('Пусто'))
+                  : ListView.builder(
+                      itemCount: items.length,
+                      itemBuilder: (context, i) {
+                        final t = items[i];
+                        return ListTile(
+                          dense: true,
+                          leading: CircleAvatar(
+                            radius: 22,
+                            child: Text(t.ticketNumber,
+                                style: const TextStyle(fontSize: 11)),
+                          ),
+                          title: Text([t.statusLabel, if (t.room != null) t.room!]
+                              .join(' · ')),
+                          subtitle: Text(
+                              'создан ${t.createdAt.replaceFirst('T', ' ').split('.').first}'),
+                          trailing: canManage
+                              ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: actions(t))
+                              : null,
+                        );
+                      },
+                    ),
+            ),
           ],
         ),
       ),

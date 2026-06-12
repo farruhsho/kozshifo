@@ -23,19 +23,20 @@ tokens re-deriving the project from scratch.
 ## 1. Status at a glance (2026-06)
 
 - **Phase 0 — Backend core: ✅ done & tested.**
-- **Phase 1 — Flutter client: 🚧 in progress** (auth + dashboard + patients + doctor card + devices done; Reception/Queue/TV screens remain).
+- **Phase 1 — Flutter client: 🚧 nearly done** (auth, dashboard, patients, reception, queue, doctor card, devices screens live; remaining = backend hardening: Alembic, Docker, refresh tokens).
 - **Phase 2 — Clinical core (EMR + Devices): ✅ done & tested** (Epic 2, `docs/prompts/02`).
 - **Everything else: ⬜ planned** — see `PLATFORM.md` §4 matrix.
 
-**Works end-to-end today:**
-`Register patient → open Visit → add billed Services → take Payment → receipt →
-auto-issue Queue ticket → call to room → TV board → Director KPIs`, plus the
-clinical loop `Doctor opens patient card (Form 025-8) → fills/edits eye exam →
-pulls refraction from the RMK-700 device result → prints official card.pdf`,
-on top of **JWT auth · dynamic RBAC (no hardcoded roles) · audit log on every
-mutation · multi-branch**.
+**Works end-to-end today (all clickable in the app):**
+`Reception screen: register patient → service cart → open Visit → take Payment →
+receipt + auto Queue ticket → Queue screen: call to room / serve / done →
+standalone TV board at /tv/{branch} (no login, privacy-safe) → Director KPIs`,
+plus the clinical loop `Doctor opens patient card (Form 025-8) → fills/edits eye
+exam → pulls refraction from the RMK-700 device result → prints official
+card.pdf`, on top of **JWT auth · dynamic RBAC (no hardcoded roles) · audit log
+on every mutation · multi-branch**.
 
-**Verified green:** backend `pytest` = 17 passed · Flutter `flutter test` = 7 passed
+**Verified green:** backend `pytest` = 23 passed · Flutter `flutter test` = 12 passed
 · `flutter analyze` = no issues · `flutter build web` = builds.
 
 ## 2. Repo map (where things live)
@@ -60,7 +61,8 @@ lib/                         Flutter app
   app/         entrypoint (main.dart), theme, router (auth-guarded)
   core/        network (Dio+JWT, ApiException, Page), storage, widgets, utils
   features/<x>/{domain,data,application,presentation}   ← Clean Architecture
-               auth · dashboard · patients · doctor (card 025-8) · devices · splash
+               auth · dashboard · patients · reception · queue ·
+               doctor (card 025-8) · devices · splash
 test/          Flutter unit tests
 PLATFORM.md · README.md · CLAUDE.md
 ```
@@ -73,12 +75,15 @@ cd backend
 python -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows path
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload
-./.venv/Scripts/python.exe -m pytest -q                         # 17 passed
+./.venv/Scripts/python.exe -m pytest -q                         # 23 passed
 
 # Flutter  (separate terminal, from repo root)
 flutter pub get
 flutter run -d chrome                                           # dev: any localhost port OK
-flutter test                                                    # 7 passed
+flutter test                                                    # 12 passed
+
+# TV board (waiting-room screen): open in any browser, no login required
+#   http://127.0.0.1:8000/tv/<branch_id>   (link dialog: Queue screen → TV icon)
 ```
 Login: **`director@kozshifo.uz` / `Director!2026`** (auto-seeded on first backend run).
 
@@ -132,12 +137,17 @@ Deferred from it (note before building adjacent code): binary upload/serving of
 B-scan files (only `file_path` strings are recorded today), serial/HL7/DICOM
 transports (stubs in `core/devices/adapters.py`), IOL-power calculation.
 
-**Track A — finish the visible journey (Phase 1):**
-1. Flutter **Visits API client** + **Reception screen** (register → add services → pay → receipt + ticket).
-2. Flutter **Queue** screen + full-screen **TV board** (backend endpoints exist: `/queue`, `/queue/tv-board/{branch}`).
-3. Backend hardening: **Alembic** migrations (now overdue — `create_all()` does
-   not add columns to existing tables; dev workaround is deleting `kozshifo.db`),
-   **Docker Compose** (+Postgres), **refresh tokens**.
+**✅ Track A UI is DONE (2026-06)** — Reception screen (register → cart → pay →
+receipt + ticket), Queue management screen, and the **standalone TV board**:
+`GET /tv/{branch_id}` serves a self-contained HTML page (no login; consumes the
+now-public privacy-safe `/queue/tv-board/{branch}`); the Queue screen's TV icon
+shows/opens the link.
+
+**Next — backend hardening (rest of Phase 1):**
+1. **Alembic** migrations (overdue — `create_all()` does not add columns to
+   existing tables; dev workaround is deleting `kozshifo.db`).
+2. **Docker Compose** (+Postgres).
+3. **Refresh tokens** (+ move Flutter token off `shared_preferences`).
 
 Full roadmap: `PLATFORM.md` §6.
 

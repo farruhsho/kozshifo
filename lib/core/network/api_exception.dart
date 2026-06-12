@@ -17,7 +17,16 @@ class ApiException implements Exception {
       final status = error.response?.statusCode;
       final data = error.response?.data;
       if (data is Map && data['detail'] != null) {
-        return ApiException(data['detail'].toString(), statusCode: status);
+        final detail = data['detail'];
+        // Pydantic 422 sends a list of {loc, msg, ...} dicts — show just the
+        // human messages, not the raw structure dump.
+        if (detail is List) {
+          final msgs = detail
+              .map((e) => e is Map ? (e['msg'] ?? e).toString() : e.toString())
+              .join('; ');
+          return ApiException('Некорректные данные: $msgs', statusCode: status);
+        }
+        return ApiException(detail.toString(), statusCode: status);
       }
       switch (error.type) {
         case DioExceptionType.connectionTimeout:

@@ -47,6 +47,15 @@ class ReceptionRepository {
     }
   }
 
+  /// Aborts an unpaid open visit (patient declined / wrong services billed).
+  Future<void> cancelVisit(String visitId) async {
+    try {
+      await _dio.post('/visits/$visitId/cancel');
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   Future<PaymentResult> takePayment({
     required String visitId,
     required String amount,

@@ -15,6 +15,8 @@ def test_tv_board_endpoint_is_public(client, auth):
     body = resp.json()
     assert body["branch_id"] == branch_id
     assert "now_serving" in body and "waiting" in body
+    # Wildcard CORS lets the board page run from file:// or another host.
+    assert resp.headers["access-control-allow-origin"] == "*"
 
 
 def test_tv_board_is_privacy_safe(client, auth):

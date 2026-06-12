@@ -24,7 +24,12 @@ class AuthRepository {
         data: {'username': email, 'password': password},
         options: Options(contentType: Headers.formUrlEncodedContentType),
       );
-      await _storage.write(resp.data['access_token'] as String);
+      final data = resp.data as Map<String, dynamic>;
+      await _storage.write(data['access_token'] as String);
+      final refresh = data['refresh_token'] as String?;
+      if (refresh != null && refresh.isNotEmpty) {
+        await _storage.writeRefresh(refresh);
+      }
     } on DioException catch (e) {
       throw ApiException.from(e);
     }

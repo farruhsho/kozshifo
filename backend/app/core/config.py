@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Generate a real one for production: python -c "import secrets;print(secrets.token_urlsafe(48))"
     secret_key: str = "dev-insecure-change-me-please-0123456789abcdef"
     access_token_expire_minutes: int = 480
+    refresh_token_expire_days: int = 30
     algorithm: str = "HS256"
 
     # Database — SQLite by default so the platform runs with zero external setup.

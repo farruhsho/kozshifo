@@ -1,9 +1,13 @@
 # KO'Z SHIFO — backend + Postgres.
 #   docker compose up --build        → API on http://localhost:8000 (Swagger /docs)
 #
-# Secrets come from a `.env` file next to this compose file (repo root) via
-# ${VAR:-default} interpolation — nothing sensitive is baked into the images.
-# Minimum for production:  SECRET_KEY=<python -c "import secrets;print(secrets.token_urlsafe(48))">
+# Secrets come from a `.env` file next to this compose file (repo root).
+# REQUIRED there (compose fails fast if missing, and the app re-checks at boot):
+#   SECRET_KEY=<python -c "import secrets;print(secrets.token_urlsafe(48))">
+#   SEED_DIRECTOR_PASSWORD=<strong owner password, NOT the repo default>
+# Optional:
+#   POSTGRES_PASSWORD — MUST be URL-safe (letters/digits/-_~.) because it is
+#   spliced into the SQLAlchemy DSN below; use secrets.token_urlsafe here too.
 
 name: kozshifo
 
@@ -20,8 +24,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      # -U/-d explicit so the probe checks the real app database, not "postgres".
-      test: ["CMD-SHELL", "pg_isready -U kozshifo -d kozshifo"]
+      # -h forces TCP: during first-boot initdb a temporary socket-only server
+      # answers pg_isready, which would release the api before TCP is up.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U kozshifo -d kozshifo"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -37,9 +42,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # "db" is the Compose service DNS name; password must match POSTGRES_PASSWORD above.
+      # "db" is the Compose service DNS name; password must match POSTGRES_PASSWORD
+      # above and be URL-safe (it is spliced into this DSN unescaped).
       DATABASE_URL: postgresql+psycopg://kozshifo:${POSTGRES_PASSWORD:-kozshifo}@db:5432/kozshifo
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-.env}
+      # Required-variable syntax: `docker compose up` fails fast when these are
+      # not set in the repo-root .env — production must never run on the
+      # repo-committed defaults (the app's config validator double-checks).
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in repo-root .env}
+      SEED_DIRECTOR_PASSWORD: ${SEED_DIRECTOR_PASSWORD:?SEED_DIRECTOR_PASSWORD must be set in repo-root .env}
       ENVIRONMENT: production
       # Seed is idempotent (permissions, roles, MAIN branch, director account) — safe to keep on.
       SEED_ON_STARTUP: "true"

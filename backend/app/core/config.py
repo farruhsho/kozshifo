@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEV_SECRET_KEY = "dev-insecure-change-me-please-0123456789abcdef"
+_DEV_DIRECTOR_PASSWORD = "Director!2026"
 
 
 class Settings(BaseSettings):
@@ -18,7 +21,7 @@ class Settings(BaseSettings):
 
     # Security — placeholder is >=32 bytes so local dev runs warning-free.
     # Generate a real one for production: python -c "import secrets;print(secrets.token_urlsafe(48))"
-    secret_key: str = "dev-insecure-change-me-please-0123456789abcdef"
+    secret_key: str = _DEV_SECRET_KEY
     access_token_expire_minutes: int = 480
     refresh_token_expire_days: int = 30
     algorithm: str = "HS256"
@@ -31,7 +34,7 @@ class Settings(BaseSettings):
 
     # Seed
     seed_director_email: str = "director@kozshifo.uz"
-    seed_director_password: str = "Director!2026"
+    seed_director_password: str = _DEV_DIRECTOR_PASSWORD
     seed_on_startup: bool = True
 
     @field_validator("cors_origins", mode="before")
@@ -40,6 +43,26 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
+
+    @model_validator(mode="after")
+    def _production_guards(self) -> "Settings":
+        """Fail fast instead of running production with repo-public secrets.
+
+        Both values are committed to the repository — running a JWT issuer or
+        seeding an is_superuser account with them in production would let
+        anyone who can read the repo forge tokens / log in as the owner.
+        """
+        if self.environment == "production":
+            if self.secret_key == _DEV_SECRET_KEY or len(self.secret_key) < 32:
+                raise ValueError(
+                    "SECRET_KEY must be a unique value of at least 32 chars in production "
+                    "(generate: python -c \"import secrets;print(secrets.token_urlsafe(48))\")"
+                )
+            if self.seed_on_startup and self.seed_director_password == _DEV_DIRECTOR_PASSWORD:
+                raise ValueError(
+                    "SEED_DIRECTOR_PASSWORD must be changed from the repo default in production"
+                )
+        return self
 
     @property
     def is_sqlite(self) -> bool:

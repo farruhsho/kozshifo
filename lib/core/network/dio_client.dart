@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../constants/api_constants.dart';
 import '../storage/token_storage.dart';
+import 'session_events.dart';
 
 /// Marker on retried requests so a second 401 never triggers another refresh.
 const _kRetriedFlag = 'jwt_refresh_retried';
@@ -42,20 +43,27 @@ final dioProvider = Provider<Dio>((ref) {
           return handler.next(error);
         }
 
-        final newAccess = await refresher.refresh();
-        if (newAccess == null) {
-          // Refresh failed -> session is over; propagate the original 401.
-          await storage.clear();
-          return handler.next(error);
-        }
-
-        try {
-          options.extra[_kRetriedFlag] = true;
-          options.headers['Authorization'] = 'Bearer $newAccess';
-          final response = await dio.fetch<dynamic>(options);
-          return handler.resolve(response);
-        } on DioException catch (retryError) {
-          return handler.next(retryError);
+        final outcome = await refresher.refresh();
+        switch (outcome.status) {
+          case _RefreshStatus.denied:
+            // The server definitively rejected the refresh token — the
+            // session is over. Wipe it and tell the auth layer.
+            await storage.clear();
+            ref.read(sessionExpiredTickProvider.notifier).state++;
+            return handler.next(error);
+          case _RefreshStatus.unavailable:
+            // Transient failure (network/5xx): the 30-day refresh token is
+            // still valid — keep it and just surface the original error.
+            return handler.next(error);
+          case _RefreshStatus.success:
+            try {
+              options.extra[_kRetriedFlag] = true;
+              options.headers['Authorization'] = 'Bearer ${outcome.accessToken}';
+              final response = await dio.fetch<dynamic>(options);
+              return handler.resolve(response);
+            } on DioException catch (retryError) {
+              return handler.next(retryError);
+            }
         }
       },
     ),
@@ -63,6 +71,25 @@ final dioProvider = Provider<Dio>((ref) {
 
   return dio;
 });
+
+enum _RefreshStatus {
+  /// New pair obtained — retry the original request.
+  success,
+
+  /// The server rejected the refresh token (4xx) or none is stored:
+  /// the session is over, tokens must be cleared.
+  denied,
+
+  /// Transient problem (network, timeout, 5xx) — keep the tokens.
+  unavailable,
+}
+
+class _RefreshOutcome {
+  const _RefreshOutcome(this.status, [this.accessToken]);
+
+  final _RefreshStatus status;
+  final String? accessToken;
+}
 
 /// Exchanges the stored refresh token for a new access+refresh pair.
 ///
@@ -73,16 +100,18 @@ class _TokenRefresher {
   _TokenRefresher(this._storage);
 
   final TokenStorage _storage;
-  Future<String?>? _inFlight;
+  Future<_RefreshOutcome>? _inFlight;
 
-  Future<String?> refresh() {
+  Future<_RefreshOutcome> refresh() {
     return _inFlight ??=
         _doRefresh().whenComplete(() => _inFlight = null);
   }
 
-  Future<String?> _doRefresh() async {
+  Future<_RefreshOutcome> _doRefresh() async {
     final refreshToken = await _storage.readRefresh();
-    if (refreshToken == null || refreshToken.isEmpty) return null;
+    if (refreshToken == null || refreshToken.isEmpty) {
+      return const _RefreshOutcome(_RefreshStatus.denied);
+    }
 
     try {
       final bare = Dio(
@@ -104,9 +133,15 @@ class _TokenRefresher {
       if (rotated != null && rotated.isNotEmpty) {
         await _storage.writeRefresh(rotated);
       }
-      return access;
-    } on DioException {
-      return null;
+      return _RefreshOutcome(_RefreshStatus.success, access);
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      // Only a definitive server verdict kills the session; a flaky network
+      // or a 5xx must never destroy a still-valid 30-day refresh token.
+      if (status != null && status >= 400 && status < 500) {
+        return const _RefreshOutcome(_RefreshStatus.denied);
+      }
+      return const _RefreshOutcome(_RefreshStatus.unavailable);
     }
   }
 }

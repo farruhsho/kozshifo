@@ -21,9 +21,12 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Dev convenience: build schema and seed bootstrap data on startup.
-    # Production replaces create_all() with Alembic migrations (see README).
-    create_all()
+    # Dev convenience only: build schema on startup. In production the schema
+    # is owned exclusively by Alembic (the Docker CMD runs `alembic upgrade
+    # head` before uvicorn) — an unconditional create_all() here would
+    # silently mask missing migrations and corrupt the alembic lineage.
+    if settings.environment == "development":
+        create_all()
     if settings.seed_on_startup:
         run_seed()
     yield

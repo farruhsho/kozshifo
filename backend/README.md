@@ -143,7 +143,10 @@ The baseline revision captures all 18 tables. The Docker image runs
 docker compose up --build        # api on :8000 + Postgres 16 (named volume)
 ```
 
-Secrets come from a repo-root `.env` (`SECRET_KEY`, `POSTGRES_PASSWORD`) — see
+A repo-root `.env` **must** define `SECRET_KEY` and `SEED_DIRECTOR_PASSWORD`
+(compose fails fast without them, and the app re-validates at boot — the
+repo-committed defaults never run in production). `POSTGRES_PASSWORD` is
+optional but must be URL-safe (it is spliced into the DSN). See
 `backend/.env.example`. **Note:** authored statically; the dev machine has no
 Docker, so run the first real build on a Docker-capable host.
 

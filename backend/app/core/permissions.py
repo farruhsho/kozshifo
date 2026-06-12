@@ -56,6 +56,15 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("inventory.read", "inventory", "View warehouse stock & catalog"),
     ("inventory.manage", "inventory", "Manage products / suppliers / receipts"),
     ("inventory.write_off", "inventory", "Write off stock"),
+    # Operations (surgery)
+    ("operations.read", "operations", "View operations & types"),
+    ("operations.manage", "operations", "Manage operation types"),
+    ("operations.prescribe", "operations", "Prescribe / cancel operations"),
+    ("operations.perform", "operations", "Perform operations (auto write-off)"),
+    # Treatment
+    ("treatments.read", "treatment", "View treatment prescriptions"),
+    ("treatments.prescribe", "treatment", "Prescribe / cancel treatments"),
+    ("treatments.perform", "treatment", "Dispense / complete treatments"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("audit.read", "audit", "View audit log"),
@@ -73,6 +82,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "queue.read", "queue.manage",
         "services.read", "branches.read",
         "exams.read",
+        "operations.read", "treatments.read",
     ],
     "Cashier": [
         "patients.read", "visits.read",
@@ -85,6 +95,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "exams.read", "exams.write",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",
+        "operations.read", "operations.prescribe", "operations.perform",
+        "treatments.read", "treatments.prescribe", "treatments.perform",
     ],
     "Warehouse": [
         "inventory.read", "inventory.manage", "inventory.write_off",

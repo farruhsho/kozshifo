@@ -5,6 +5,7 @@ from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device, DeviceResult
 from app.models.exam import EyeExam
 from app.models.inventory import InventoryCategory, Product, StockBatch, StockMovement, Supplier
+from app.models.operation import Operation, OperationType, OperationTypeConsumable, Treatment
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -19,6 +20,9 @@ __all__ = [
     "DeviceResult",
     "EyeExam",
     "InventoryCategory",
+    "Operation",
+    "OperationType",
+    "OperationTypeConsumable",
     "Permission",
     "Product",
     "Role",
@@ -30,6 +34,7 @@ __all__ = [
     "StockBatch",
     "StockMovement",
     "Supplier",
+    "Treatment",
     "User",
     "Visit",
     "VisitItem",

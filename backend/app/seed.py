@@ -19,6 +19,7 @@ from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device
 from app.models.inventory import InventoryCategory, Product, Supplier
+from app.models.operation import OperationType, OperationTypeConsumable
 from app.models.rbac import Permission, Role
 from app.models.user import User
 
@@ -174,6 +175,52 @@ def _seed_inventory(db: Session) -> None:
     db.flush()
 
 
+# Surgery catalog. Operation prices live on the linked Service (single pricing
+# source); consumable templates reference warehouse products by stable SKU.
+_OPERATION_SERVICES = [
+    ("PHACO", "Факоэмульсификация катаракты с ИОЛ", 5000000),
+    ("IVI", "Интравитреальная инъекция", 1500000),
+]
+
+# (code, name, service_code, duration_minutes, [(sku, qty), ...])
+_OPERATION_TYPES: list[tuple[str, str, str, int, list[tuple[str, int]]]] = [
+    ("PHACO", "Факоэмульсификация катаракты с ИОЛ", "PHACO", 40,
+     [("IOL-001", 1), ("VISC-001", 1), ("KNIFE-275", 1), ("SYR-1", 2), ("GLOVES-ST", 3)]),
+    ("IVI", "Интравитреальная инъекция", "IVI", 15,
+     [("SYR-1", 1), ("GLOVES-ST", 2)]),
+]
+
+
+def _seed_operations(db: Session) -> None:
+    """Idempotent by code. Must run AFTER _seed_inventory (SKU lookups)."""
+    category = db.execute(
+        select(ServiceCategory).where(ServiceCategory.name == "Операции")
+    ).scalar_one_or_none()
+    if category is None:
+        category = ServiceCategory(name="Операции", description="Хирургические операции")
+        db.add(category)
+        db.flush()
+    for code, name, price in _OPERATION_SERVICES:
+        if db.execute(select(Service).where(Service.code == code)).scalar_one_or_none() is None:
+            db.add(Service(code=code, name=name, price=Decimal(price), category_id=category.id))
+    db.flush()
+
+    for code, name, service_code, duration, consumables in _OPERATION_TYPES:
+        if db.execute(select(OperationType).where(OperationType.code == code)).scalar_one_or_none():
+            continue
+        service = db.execute(select(Service).where(Service.code == service_code)).scalar_one()
+        op_type = OperationType(
+            code=code, name=name, service_id=service.id, duration_minutes=duration,
+        )
+        for sku, qty in consumables:
+            product = db.execute(select(Product).where(Product.sku == sku)).scalar_one()
+            op_type.consumables.append(
+                OperationTypeConsumable(product_id=product.id, quantity=Decimal(qty))
+            )
+        db.add(op_type)
+    db.flush()
+
+
 def run_seed() -> None:
     db = SessionLocal()
     try:
@@ -184,6 +231,7 @@ def run_seed() -> None:
         _seed_services(db)
         _seed_devices(db, branch)
         _seed_inventory(db)
+        _seed_operations(db)
         db.commit()
     finally:
         db.close()

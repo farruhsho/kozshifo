@@ -47,6 +47,11 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # EMR (Form 025-8 eye exam)
     ("exams.read", "emr", "View eye exams / print Form 025-8"),
     ("exams.write", "emr", "Create / edit eye exams"),
+    # Medical devices
+    ("devices.read", "devices", "View medical devices"),
+    ("devices.manage", "devices", "Register / edit medical devices"),
+    ("device_results.read", "devices", "View device measurement results"),
+    ("device_results.create", "devices", "Record / import device results"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("audit.read", "audit", "View audit log"),
@@ -74,5 +79,6 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "patients.read", "visits.read", "visits.update",
         "queue.read", "services.read",
         "exams.read", "exams.write",
+        "devices.read", "device_results.read", "device_results.create",
     ],
 }

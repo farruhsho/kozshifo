@@ -5,6 +5,7 @@ duplicates. The director bootstrap account is the system owner.
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from app.core.permissions import PERMISSIONS, ROLE_TEMPLATES
 from app.core.security import hash_password
 from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
+from app.models.device import Device
 from app.models.rbac import Permission, Role
 from app.models.user import User
 
@@ -95,6 +97,45 @@ def _seed_services(db: Session) -> None:
     db.flush()
 
 
+# The clinic's two real instruments (docs/DOMAIN.md §1) — idempotent by serial_no.
+_REAL_DEVICES: list[dict] = [
+    {
+        "name": "Авторефрактометр Supore RMK-700",
+        "device_type": "refractometer",
+        "model": "RMK-700",
+        "manufacturer": "Shanghai Supore Instruments Co., Ltd",
+        "serial_no": "2103540749",
+        "asset_code": "CP-RMK-700A00749",
+        "connection_type": "manual",
+        "status": "active",
+        "address": "No.800, Yeji Road, Shanghai, China",
+        "useful_life_years": 10,
+    },
+    {
+        "name": "Офтальмологический A/B УЗ-сканер CAS-2000BER",
+        "device_type": "ab_ultrasound",
+        "model": "CAS-2000BER",
+        "manufacturer": "Chongqing Kanghuaruiming S&T Co., Ltd",
+        "serial_no": "53789467",  # last digit partly obscured on the plate — verify
+        "connection_type": "file",
+        "status": "active",
+        "manufacture_date": date(2019, 3, 1),
+        "eu_rep": "LUXUS LEBENSWELT GMBH — Kochstr. 1, 47877, Willich, Germany",
+        "address": "No.5, Road 1, TongJiaXi Industry Park, Beibei, Chongqing, China",
+    },
+]
+
+
+def _seed_devices(db: Session, branch: Branch) -> None:
+    for spec in _REAL_DEVICES:
+        existing = db.execute(
+            select(Device).where(Device.serial_no == spec["serial_no"])
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(Device(branch_id=branch.id, **spec))
+    db.flush()
+
+
 def run_seed() -> None:
     db = SessionLocal()
     try:
@@ -103,6 +144,7 @@ def run_seed() -> None:
         branch = _seed_branch(db)
         _seed_director(db, branch, roles)
         _seed_services(db)
+        _seed_devices(db, branch)
         db.commit()
     finally:
         db.close()

@@ -23,7 +23,9 @@ tokens re-deriving the project from scratch.
 ## 1. Status at a glance (2026-06)
 
 - **Phase 0 — Backend core: ✅ done & tested.**
-- **Phase 1 — Flutter client: 🚧 nearly done** (auth, dashboard, patients, reception, queue, doctor card, devices screens live; remaining = backend hardening: Alembic, Docker, refresh tokens).
+- **Phase 1 — Flutter client + hardening: ✅ done** (all screens live; Alembic
+  baseline, Dockerfile + Compose with Postgres, JWT refresh-token rotation —
+  ⚠️ Docker artifacts are authored but **untested locally**: this machine has no Docker).
 - **Phase 2 — Clinical core (EMR + Devices): ✅ done & tested** (Epic 2, `docs/prompts/02`).
 - **Everything else: ⬜ planned** — see `PLATFORM.md` §4 matrix.
 
@@ -36,8 +38,9 @@ exam → pulls refraction from the RMK-700 device result → prints official
 card.pdf`, on top of **JWT auth · dynamic RBAC (no hardcoded roles) · audit log
 on every mutation · multi-branch**.
 
-**Verified green:** backend `pytest` = 23 passed · Flutter `flutter test` = 12 passed
-· `flutter analyze` = no issues · `flutter build web` = builds.
+**Verified green:** backend `pytest` = 30 passed · Flutter `flutter test` = 12 passed
+· `flutter analyze` = no issues · `flutter build web` = builds ·
+`alembic upgrade head` + `alembic check` = clean baseline.
 
 ## 2. Repo map (where things live)
 
@@ -75,7 +78,11 @@ cd backend
 python -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows path
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload
-./.venv/Scripts/python.exe -m pytest -q                         # 23 passed
+./.venv/Scripts/python.exe -m pytest -q                         # 30 passed
+./.venv/Scripts/alembic.exe upgrade head                        # migrations (prod path)
+
+# Docker (on a Docker-capable host; dev machine has none)
+docker compose up --build                                       # api :8000 + Postgres 16
 
 # Flutter  (separate terminal, from repo root)
 flutter pub get
@@ -102,7 +109,7 @@ Login: **`director@kozshifo.uz` / `Director!2026`** (auto-seeded on first backen
 - **RBAC is data-driven.** Never hardcode role names in logic — check permission *codes*. Director user is `is_superuser` (bypasses checks).
 - **Money** = `Numeric(12,2)`; it is serialized to the client as a **decimal string** (`"150000.00"`). Never use float for money.
 - **Human IDs** (MRN, visit/receipt/ticket no) come from `app/core/sequences.py` (count-based; replace with Postgres `SEQUENCE` for production concurrency).
-- **DB:** SQLite by default; the app runs `create_all()` + idempotent `seed` on startup. Switch to Postgres by setting `DATABASE_URL`. **No Alembic yet** (Phase 1).
+- **DB:** SQLite by default; dev startup still runs `create_all()` + idempotent `seed`. **Alembic now owns schema evolution**: after changing models run `alembic revision --autogenerate -m "…"`; prod (and the Docker image) applies `alembic upgrade head`. Adopt an existing dev DB with `alembic stamp head`.
 
 ## 5. Frontend conventions — how to extend
 
@@ -143,11 +150,18 @@ receipt + ticket), Queue management screen, and the **standalone TV board**:
 now-public privacy-safe `/queue/tv-board/{branch}`); the Queue screen's TV icon
 shows/opens the link.
 
-**Next — backend hardening (rest of Phase 1):**
-1. **Alembic** migrations (overdue — `create_all()` does not add columns to
-   existing tables; dev workaround is deleting `kozshifo.db`).
-2. **Docker Compose** (+Postgres).
-3. **Refresh tokens** (+ move Flutter token off `shared_preferences`).
+**✅ Phase-1 hardening is DONE (2026-06)** — Alembic baseline (18 tables,
+`alembic check` clean), `backend/Dockerfile` + root `docker-compose.yml`
+(api + Postgres 16; ⚠️ authored statically, first real `docker compose up`
+must happen on a Docker-capable host), JWT **refresh-token rotation**
+(`POST /auth/refresh`, 30-day refresh JWT with `jti`; Flutter Dio interceptor
+retries one 401 transparently).
+
+**Next (Phase 3 — Operations & Inventory), plus known leftovers:**
+1. Operations/Treatment plans + Warehouse (batches/expiry/auto write-off) — see `PLATFORM.md` §6.
+2. Tokens still live in `shared_preferences` (web localStorage) — secure-storage hardening pending the build_runner/native-hooks issue (§6).
+3. Refresh tokens are stateless — add a `jti` revocation list when Postgres/Redis lands.
+4. Epic-2/3 leftovers: binary B-scan upload/serving, serial/HL7/DICOM transports, IOL calc.
 
 Full roadmap: `PLATFORM.md` §6.
 

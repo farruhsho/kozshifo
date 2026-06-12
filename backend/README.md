@@ -85,6 +85,7 @@ Copy `.env.example` → `.env`. Key settings:
 | `DATABASE_URL` | `sqlite:///./kozshifo.db` | Set a `postgresql+psycopg://…` DSN for prod |
 | `SECRET_KEY` | dev placeholder | **Must** be replaced in production |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | refresh-token lifetime (rotation on each use) |
 | `CORS_ORIGINS` | localhost dev ports | comma-separated |
 | `SEED_ON_STARTUP` | `true` | idempotent; safe to leave on |
 
@@ -109,7 +110,7 @@ tests/
 
 | Area | Endpoints |
 |------|-----------|
-| Auth | `POST /auth/login`, `GET /auth/me` |
+| Auth | `POST /auth/login` (access+refresh pair), `POST /auth/refresh` (rotation), `GET /auth/me` |
 | Identity | `GET /permissions`, `CRUD /roles`, `CRUD /users` |
 | Branches | `GET/POST/PATCH /branches` |
 | Patients | `GET/POST/PATCH/DELETE /patients` (search by name/MRN/phone) |
@@ -122,15 +123,37 @@ tests/
 | EMR | `PUT/GET /visits/{id}/exam`, `GET /visits/{id}/exam/card.pdf` (Form 025-8), `GET /patients/{id}/exams` |
 | Devices | `GET/POST/PATCH /devices`, `POST/GET /devices/{id}/results`, `GET /visits/{id}/device-results`, `POST /visits/{id}/exam/apply-refraction?result_id=…` |
 
-## Production notes (deliberately deferred)
+## Migrations (Alembic)
 
-- **Migrations:** dev uses `create_all()`. For production, add **Alembic**
-  (`alembic init`) and replace the startup `create_all()` with migrations.
+Dev still auto-creates the schema on startup (`create_all()` + idempotent seed).
+Alembic owns schema evolution from here on:
+
+```powershell
+.\.venv\Scripts\alembic.exe upgrade head      # apply migrations (uses DATABASE_URL)
+.\.venv\Scripts\alembic.exe revision --autogenerate -m "describe change"
+.\.venv\Scripts\alembic.exe stamp head        # adopt an existing dev kozshifo.db
+```
+
+The baseline revision captures all 18 tables. The Docker image runs
+`alembic upgrade head` before starting uvicorn.
+
+## Docker / Compose
+
+```bash
+docker compose up --build        # api on :8000 + Postgres 16 (named volume)
+```
+
+Secrets come from a repo-root `.env` (`SECRET_KEY`, `POSTGRES_PASSWORD`) — see
+`backend/.env.example`. **Note:** authored statically; the dev machine has no
+Docker, so run the first real build on a Docker-capable host.
+
+## Production notes (remaining)
+
 - **Sequences:** MRN/visit/receipt/ticket numbers are count-based for the
   foundation. Under high concurrency, move to Postgres `SEQUENCE`s or a locked
   counters table (see `core/sequences.py`).
 - **Money** is serialized as a decimal **string** (e.g. `"150000.00"`) to avoid
   float precision loss — parse with `Decimal` on the client.
-- **Containerization** (Docker/Compose with Postgres) is a Phase-1 task; the app
-  is already 12-factor / env-driven and ready for it.
+- **Refresh tokens** rotate but are stateless — old ones stay valid until expiry;
+  the `jti` claim is the hook for a future revocation list.
 ```

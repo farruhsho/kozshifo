@@ -111,12 +111,12 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 
 - **Phase 0 — Foundation ✅ (done):** backend core, auth, RBAC, audit, Patient
   Journey slice, tests.
-- **Phase 1 — Hardening & Flutter client 🚧 (in progress):**
-  ✅ Flutter foundation (Riverpod · GoRouter · Dio · Freezed, Clean Architecture)
-  with auth-guarded routing, director **dashboard**, **patients**,
-  **reception** (bill → pay → receipt + ticket), **queue management**, and the
-  standalone **TV board** page — analyzes clean, compiles to web, unit-tested.
-  ▫ Remaining: Alembic migrations, Docker Compose (+Postgres), refresh tokens.
+- **Phase 1 — Hardening & Flutter client ✅ (done):**
+  Flutter client (auth-guarded routing, dashboard, patients, reception, queue,
+  doctor card, devices + standalone TV board) and backend hardening: **Alembic**
+  baseline migrations (18 tables, autogenerate-clean), **Dockerfile + Compose**
+  with Postgres 16 (authored statically — first build needs a Docker host),
+  **JWT refresh-token rotation** with transparent 401 retry on the client.
 - **Phase 2 — Clinical ✅ (done):** EMR eye exam (Form 025-8, 1:1 with visit)
   + printable `card.pdf`, medical-device registry with the 2 real instruments
   seeded, device results attached to visits, refractometer → exam auto-fill.
@@ -146,9 +146,10 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
   RBAC/history/PDF) + devices (seed/results/apply-refraction/RBAC) + TV board
   (public/privacy/page) + reception abort & queue state machine — `23 passed`;
   Flutter `12 passed`. Target the executable-spec style already established.
-- **Deployment:** app is 12-factor/env-driven. Phase 1 adds Dockerfile +
-  docker-compose (api + Postgres), Alembic migrations, and CI. Until then it runs
-  with `uvicorn app.main:app` on SQLite.
+- **Deployment:** 12-factor/env-driven. `docker compose up --build` runs
+  api + Postgres 16; the image applies `alembic upgrade head` before uvicorn.
+  Dev still runs `uvicorn app.main:app` on SQLite with `create_all()` + seed.
+  CI is the remaining ops gap.
 
 ---
 

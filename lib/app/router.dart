@@ -8,6 +8,7 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
 import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
+import '../features/inventory/presentation/inventory_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
@@ -36,6 +37,7 @@ final routerProvider = Provider<GoRouter>((ref) {
                 PatientCardScreen(patientId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
+          GoRoute(path: '/inventory', builder: (_, _) => const InventoryScreen()),
         ],
       ),
     ],

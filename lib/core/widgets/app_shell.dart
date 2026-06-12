@@ -25,6 +25,8 @@ const _allDestinations = <_Destination>[
   _Destination(Icons.people_outline, Icons.people, 'Пациенты', '/patients'),
   _Destination(Icons.biotech_outlined, Icons.biotech, 'Оборудование', '/devices',
       permission: 'devices.read'),
+  _Destination(Icons.inventory_2_outlined, Icons.inventory_2, 'Склад',
+      '/inventory', permission: 'inventory.read'),
 ];
 
 /// App chrome: a navigation rail + the routed page body.

@@ -10,6 +10,7 @@ email-validator>=2.1
 PyJWT>=2.8,<3.0
 bcrypt>=4.1,<5.0
 python-multipart>=0.0.9
+reportlab>=4.1,<5.0
 
 # ── Dev / test ────────────────────────────────────────────────────────────────
 pytest>=8.0

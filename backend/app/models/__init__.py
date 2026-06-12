@@ -2,6 +2,7 @@
 from app.models.audit import AuditLog
 from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
+from app.models.exam import EyeExam
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -12,6 +13,7 @@ from app.models.visit import Visit, VisitItem
 __all__ = [
     "AuditLog",
     "Branch",
+    "EyeExam",
     "Permission",
     "Role",
     "Patient",

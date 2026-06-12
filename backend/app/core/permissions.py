@@ -44,6 +44,9 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Queue
     ("queue.read", "queue", "View queue & TV board"),
     ("queue.manage", "queue", "Call / serve / skip tickets"),
+    # EMR (Form 025-8 eye exam)
+    ("exams.read", "emr", "View eye exams / print Form 025-8"),
+    ("exams.write", "emr", "Create / edit eye exams"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("audit.read", "audit", "View audit log"),
@@ -60,6 +63,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "payments.read", "payments.create",
         "queue.read", "queue.manage",
         "services.read", "branches.read",
+        "exams.read",
     ],
     "Cashier": [
         "patients.read", "visits.read",
@@ -69,5 +73,6 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     "Doctor": [
         "patients.read", "visits.read", "visits.update",
         "queue.read", "services.read",
+        "exams.read", "exams.write",
     ],
 }

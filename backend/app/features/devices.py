@@ -25,7 +25,7 @@ from app.core.devices.adapters import (
     adapter_for_source,
     validate_refraction_payload,
 )
-from app.core.files import media_type_for, resolve_stored, save_upload
+from app.core.files import ALLOWED_EXTENSIONS, MAX_FILE_BYTES, media_type_for, resolve_stored, save_upload
 from app.features.exams import get_or_404_visit
 from app.models.device import Device, DeviceResult
 from app.models.exam import EyeExam
@@ -187,7 +187,15 @@ def upload_device_result_file(
         )
 
     original_name = file.filename or ""
-    content = file.file.read()
+    # DoS guard: reject by declared size first, then read at most cap+1 bytes —
+    # a multi-GB upload must never be materialized in RAM before the check.
+    if file.size is not None and file.size > MAX_FILE_BYTES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"File too large (max {MAX_FILE_BYTES // (1024 * 1024)} MB)")
+    content = file.file.read(MAX_FILE_BYTES + 1)
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"File too large (max {MAX_FILE_BYTES // (1024 * 1024)} MB)")
     try:
         stored_name = save_upload(content, original_name)
     except ValueError as exc:
@@ -238,11 +246,19 @@ def download_device_result_file(
         raise not_found from None  # never leak why the stored name was rejected
     if not path.is_file():
         raise not_found
+    # The payload is attacker-influencable JSON (the plain results endpoint
+    # accepts arbitrary dicts): only a str with a whitelisted extension may
+    # become the download filename — anything else falls back to the stored
+    # uuid name (non-str would 500 inside FileResponse; .html would let a
+    # whitelisted png masquerade as a web page once saved locally).
     original = result.payload.get("original_name") if isinstance(result.payload, dict) else None
+    safe_name = result.file_path
+    if isinstance(original, str) and Path(original).suffix.lower() in ALLOWED_EXTENSIONS:
+        safe_name = original
     return FileResponse(
         path,
         media_type=media_type_for(result.file_path),
-        filename=original or result.file_path,
+        filename=safe_name,
     )
 
 

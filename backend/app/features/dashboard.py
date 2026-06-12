@@ -18,6 +18,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.dates import business_today
 from app.core.deps import require_permission
 from app.models.inventory import Product, StockBatch
 from app.models.operation import Operation
@@ -90,20 +91,29 @@ def summary(db: Annotated[Session, Depends(get_db)]) -> DashboardSummary:
     ).scalar_one()
 
     # ── Warehouse alerts (system-wide, matching the rest of the summary's scope) ──
-    # "Usable" mirrors the FEFO engine's predicate in app.core.stock._usable_filter:
-    # positive remainder AND not expired — expired lots must never mask a shortage.
-    today = day.date()
+    # "Usable" mirrors the FEFO engine's predicate in app.core.stock._usable_filter,
+    # including the SAME business date (server-local) — a UTC date here disagreed
+    # with the engine for ~5h/day on UTC+5 hosts.
+    today = business_today()
+    # min_stock is a PER-BRANCH threshold (notify.check_low_stock and the stock
+    # view both evaluate it per branch) — so group per (product, branch) and
+    # count products that are low in ANY stocked branch, plus active products
+    # with no usable stock anywhere (the outerjoin NULL row).
     usable_qty = (
-        select(StockBatch.product_id, func.sum(StockBatch.quantity).label("qty"))
+        select(
+            StockBatch.product_id,
+            StockBatch.branch_id,
+            func.sum(StockBatch.quantity).label("qty"),
+        )
         .where(
             StockBatch.quantity > 0,
             or_(StockBatch.expiry_date.is_(None), StockBatch.expiry_date >= today),
         )
-        .group_by(StockBatch.product_id)
+        .group_by(StockBatch.product_id, StockBatch.branch_id)
         .subquery()
     )
     low_stock_count = db.execute(
-        select(func.count()).select_from(Product)
+        select(func.count(func.distinct(Product.id))).select_from(Product)
         .outerjoin(usable_qty, usable_qty.c.product_id == Product.id)
         .where(
             Product.is_active.is_(True),

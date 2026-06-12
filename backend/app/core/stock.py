@@ -30,6 +30,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
+from app.core.dates import business_today
 from app.models.inventory import StockBatch, StockMovement
 
 
@@ -51,7 +52,7 @@ def _usable_filter(allow_expired: bool):
     conditions = [StockBatch.quantity > 0]
     if not allow_expired:
         conditions.append(
-            or_(StockBatch.expiry_date.is_(None), StockBatch.expiry_date >= date.today())
+            or_(StockBatch.expiry_date.is_(None), StockBatch.expiry_date >= business_today())
         )
     return conditions
 

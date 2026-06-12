@@ -1,4 +1,4 @@
-"""Binary device-result files: upload, download, validation, RBAC, traversal."""
+﻿"""Binary device-result files: upload, download, validation, RBAC, traversal."""
 from __future__ import annotations
 
 import pytest
@@ -126,3 +126,39 @@ def test_resolve_stored_rejects_traversal():
                  "..", "C:evil.png", ""):
         with pytest.raises(ValueError):
             resolve_stored(evil)
+
+
+def test_oversized_upload_rejected_without_buffering(client, auth):
+    """21MB > 20MB cap -> 422; 26MB > 25MB middleware cap -> 413."""
+    cas = _device_by_serial(client, auth, "53789467")
+    big = b"x" * (21 * 1024 * 1024)
+    resp = client.post(f"{API}/devices/{cas['id']}/results/file",
+                       files={"file": ("big.png", big, "image/png")}, headers=auth)
+    assert resp.status_code == 422
+    assert "too large" in resp.json()["detail"].lower()
+
+    huge = b"x" * (26 * 1024 * 1024)
+    resp2 = client.post(f"{API}/devices/{cas['id']}/results/file",
+                        files={"file": ("huge.png", huge, "image/png")}, headers=auth)
+    assert resp2.status_code == 413
+
+
+def test_download_survives_malicious_original_name(client, auth):
+    """A non-str / spoofed original_name must never 500 or rename the download."""
+    cas = _device_by_serial(client, auth, "53789467")
+    up = client.post(f"{API}/devices/{cas['id']}/results/file",
+                     files={"file": ("scan.png", b"\x89PNGdata", "image/png")}, headers=auth)
+    stored = up.json()["file_path"]
+
+    # Craft a result via the JSON endpoint pointing at the real stored file
+    # with hostile payload metadata (the JSON payload is arbitrary by design).
+    for bad_name in (123, "page.html"):
+        crafted = client.post(
+            f"{API}/devices/{cas['id']}/results", headers=auth,
+            json={"result_type": "file", "file_path": stored, "source": "import",
+                  "payload": {"original_name": bad_name}},
+        ).json()
+        resp = client.get(f"{API}/device-results/{crafted['id']}/file", headers=auth)
+        assert resp.status_code == 200  # not 500
+        # Fallback to the stored uuid name: hostile name never reaches the header.
+        assert stored in resp.headers["content-disposition"]

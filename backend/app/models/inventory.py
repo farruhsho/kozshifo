@@ -81,7 +81,9 @@ class StockBatch(UUIDPKMixin, TimestampMixin, Base):
 
     @property
     def expired(self) -> bool:
-        return self.expiry_date is not None and self.expiry_date < date.today()
+        from app.core.dates import business_today  # local: avoid models↔core cycle
+
+        return self.expiry_date is not None and self.expiry_date < business_today()
 
 
 class StockMovement(UUIDPKMixin, TimestampMixin, Base):

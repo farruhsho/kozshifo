@@ -99,3 +99,24 @@ def test_notifications_rbac(client, auth):
     allowed = client.get(f"{API}/notifications", headers=warehouse)
     assert allowed.status_code == 200, allowed.text
     assert isinstance(allowed.json(), list)
+
+
+def test_notification_title_truncated_to_column_size(client, auth):
+    """255-char product names must degrade to a truncated title, not a lost row."""
+    branch_id = client.get(f"{API}/branches", headers=auth).json()[0]["id"]
+    long_name = "Т" * 250
+    product = client.post(f"{API}/inventory/products", headers=auth,
+                          json={"sku": "LONG-NAME-1", "name": long_name,
+                                "unit": "шт", "min_stock": "5"}).json()
+    client.post(f"{API}/inventory/receipts", headers=auth, json={
+        "branch_id": branch_id,
+        "items": [{"product_id": product["id"], "quantity": "6", "unit_cost": "1"}]})
+    client.post(f"{API}/inventory/write-off", headers=auth, json={
+        "product_id": product["id"], "branch_id": branch_id,
+        "quantity": "2", "reason": "тест"})
+
+    notes = client.get(f"{API}/notifications", headers=auth,
+                       params={"event": "low_stock", "limit": 200}).json()
+    row = next(n for n in notes if n["ref_id"] == product["id"])
+    assert len(row["title"]) <= 255
+    assert row["title"].startswith("Дефицит: ")

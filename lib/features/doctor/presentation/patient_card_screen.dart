@@ -651,12 +651,14 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
       if (file == null || bytes == null) return; // отмена выбора
       final repo = ref.read(devicesRepositoryProvider);
       final devices = await repo.list();
+      // Скан атрибутируется ТОЛЬКО активному A/B-сканеру — молчаливый fallback
+      // на «первый попавшийся прибор» портил бы происхождение медзаписи.
       final device = devices.items
-              .where((d) => d.deviceType == 'ab_ultrasound')
-              .firstOrNull ??
-          devices.items.firstOrNull;
+          .where((d) => d.deviceType == 'ab_ultrasound' && d.status == 'active')
+          .firstOrNull;
       if (device == null) {
-        _snack('Нет зарегистрированных приборов', error: true);
+        _snack('Активный A/B-сканер не зарегистрирован — загрузка невозможна',
+            error: true);
         return;
       }
       await repo.uploadResultFile(

@@ -7,12 +7,17 @@ Contract:
   wrapped so a Telegram outage, a DB hiccup or a programming error degrades to
   "no notification", not to a 500 on the write-off/operation that fired it.
 - Always writes a channel="log" row (the in-system journal). If a Telegram bot
-  token + chat id are configured, additionally pushes the message and records a
-  channel="telegram" row with sent/failed status.
+  token + chat id are configured, additionally records a channel="telegram" row
+  (status "queued") and delivers it from a daemon thread — the HTTP request that
+  fired the event never waits on Telegram. The thread updates the row to
+  sent/failed in its own session.
+- The bot token must never appear in stored errors or logs (httpx exception
+  text includes the request URL, which embeds the token) — see _sanitize.
 """
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -29,19 +34,47 @@ from app.models.notification import Notification
 
 logger = logging.getLogger(__name__)
 
-_TELEGRAM_TIMEOUT_S = 5.0
+_TELEGRAM_TIMEOUT_S = 3.0
 _LOW_STOCK_DEBOUNCE = timedelta(hours=24)
 
 
-def _send_telegram(title: str, body: str | None) -> None:
-    """Push one message to the configured chat. Raises on any failure."""
-    url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
-    response = httpx.post(
-        url,
-        json={"chat_id": settings.telegram_chat_id, "text": f"{title}\n{body or ''}"},
-        timeout=_TELEGRAM_TIMEOUT_S,
-    )
-    response.raise_for_status()
+def _sanitize(text: str) -> str:
+    """Strip the bot token from any error/log text (httpx errors embed the URL)."""
+    token = settings.telegram_bot_token
+    if token:
+        text = text.replace(token, "***")
+    return text[:512]
+
+
+def _deliver_telegram(notification_id: uuid.UUID, text: str) -> None:
+    """Daemon-thread worker: push to Telegram, update the queued row's status."""
+    from app.core.database import SessionLocal  # local import: no cycles at module load
+
+    status, error = "sent", None
+    try:
+        url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+        response = httpx.post(
+            url,
+            json={"chat_id": settings.telegram_chat_id, "text": text},
+            timeout=_TELEGRAM_TIMEOUT_S,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        status, error = "failed", _sanitize(str(exc))
+        logger.warning("Telegram notification failed: %s", error)
+
+    try:
+        db = SessionLocal()
+        try:
+            row = db.get(Notification, notification_id)
+            if row is not None:
+                row.status = status
+                row.error = error
+                db.commit()
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Could not record Telegram delivery status")
 
 
 def notify(
@@ -61,6 +94,11 @@ def notify(
     failure of the business request that triggered it.
     """
     try:
+        # Column-capped: a 255-char product name must degrade to a truncated
+        # title, never to a silently lost row (Postgres enforces VARCHAR sizes).
+        title = title[:255]
+        body = body[:1000] if body else body
+
         rows: list[Notification] = [
             Notification(
                 event=event, channel="log", title=title, body=body,
@@ -68,23 +106,25 @@ def notify(
             )
         ]
 
+        telegram_row: Notification | None = None
         if settings.telegram_bot_token and settings.telegram_chat_id:
-            tg_status, tg_error = "sent", None
-            try:
-                _send_telegram(title, body)
-            except Exception as exc:  # network/HTTP/anything — record, don't raise
-                tg_status, tg_error = "failed", str(exc)[:512]
-                logger.warning("Telegram notification failed: %s", exc)
-            rows.append(
-                Notification(
-                    event=event, channel="telegram", title=title, body=body,
-                    status=tg_status, error=tg_error,
-                    ref_type=ref_type, ref_id=ref_id, branch_id=branch_id,
-                )
+            telegram_row = Notification(
+                event=event, channel="telegram", title=title, body=body,
+                status="queued", ref_type=ref_type, ref_id=ref_id, branch_id=branch_id,
             )
+            rows.append(telegram_row)
 
+        # Persist FIRST (debounce queries these rows), deliver asynchronously —
+        # a slow Telegram must never stall the clinical request thread.
         db.add_all(rows)
         db.commit()
+
+        if telegram_row is not None:
+            threading.Thread(
+                target=_deliver_telegram,
+                args=(telegram_row.id, f"{title}\n{body or ''}"),
+                daemon=True,
+            ).start()
         return rows
     except Exception:  # last resort: notifications never break the request
         logger.exception("notify() failed for event %s", event)

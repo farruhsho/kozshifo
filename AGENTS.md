@@ -30,6 +30,10 @@ tokens re-deriving the project from scratch.
 - **Phase 3 — Operations & Inventory: ✅ core done & tested** (warehouse with
   batches/expiry + FEFO engine, operations bill the visit and auto-write-off
   consumables on perform, treatment prescriptions with dispensing).
+- **Phase 4 — Integrations: 🚧 core done** (✅ B-scan binary upload/serving +
+  Flutter preview · ✅ notification core: log + optional Telegram, low-stock
+  alerts with 24h anti-spam · ✅ extended director KPIs; remaining: real device
+  transports, SMS, notification UI).
 - **Everything else: ⬜ planned** — see `PLATFORM.md` §4 matrix.
 
 **Works end-to-end today (all clickable in the app):**
@@ -41,9 +45,9 @@ exam → pulls refraction from the RMK-700 device result → prints official
 card.pdf`, on top of **JWT auth · dynamic RBAC (no hardcoded roles) · audit log
 on every mutation · multi-branch**.
 
-**Verified green:** backend `pytest` = 46 passed · Flutter `flutter test` = 22 passed
+**Verified green:** backend `pytest` = 63 passed · Flutter `flutter test` = 24 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (3 revisions).
+`alembic upgrade head` + `alembic check` = clean (4 revisions).
 
 ## 2. Repo map (where things live)
 
@@ -53,7 +57,8 @@ backend/                     FastAPI service (system of record)
     core/      config, database, security (JWT/bcrypt), deps (auth+RBAC),
                repository, audit, permissions catalog, id sequences,
                print_forms (Form 025-8 PDF), devices/adapters (integration seam),
-               stock (FEFO write-off engine)
+               stock (FEFO write-off engine), files (upload storage),
+               notify (log/Telegram + low-stock alerts)
     models/    SQLAlchemy 2.0 ORM (user, rbac, branch, patient, catalog,
                visit, payment, queue, audit, exam, device, inventory, operation)
     schemas/   Pydantic v2 DTOs
@@ -83,7 +88,7 @@ cd backend
 python -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows path
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload
-./.venv/Scripts/python.exe -m pytest -q                         # 46 passed
+./.venv/Scripts/python.exe -m pytest -q                         # 63 passed
 ./.venv/Scripts/alembic.exe upgrade head                        # migrations (prod path)
 
 # Docker (on a Docker-capable host; dev machine has none)
@@ -92,7 +97,7 @@ docker compose up --build                                       # api :8000 + Po
 # Flutter  (separate terminal, from repo root)
 flutter pub get
 flutter run -d chrome                                           # dev: any localhost port OK
-flutter test                                                    # 22 passed
+flutter test                                                    # 24 passed
 
 # TV board (waiting-room screen): open in any browser, no login required
 #   http://127.0.0.1:8000/tv/<branch_id>   (link dialog: Queue screen → TV icon)
@@ -170,9 +175,14 @@ linked service, perform auto-writes-off FEFO atomically), treatments
 sections in the doctor card. Deferred from it: purchase orders, inter-branch
 transfers, stocktake, barcode-scanning UI, treatment courses/schedules.
 
-**Next (Phase 4–5 candidates), plus known leftovers:**
-1. Device gateway transports (serial/HL7/DICOM stubs in `core/devices/adapters.py`), binary B-scan upload/serving, notifications (SMS/Telegram).
-2. Full Director KPI suite + Reports engine; double-entry ledger.
+**✅ Phase 4 core is DONE (2026-06)** — B-scan binary upload/serving (+doctor-card
+preview via file_picker), notification core (`core/notify.py`: log rows always,
+Telegram when TELEGRAM_BOT_TOKEN/CHAT_ID set; low-stock alerts on every
+write-off path, 24h anti-spam), director KPIs (operations, deficit, expiring lots).
+
+**Next (Phase 5 candidates), plus known leftovers:**
+1. Real device transports (serial/HL7/DICOM stubs in `core/devices/adapters.py`), SMS provider, notification UI screen.
+2. Full Director KPI suite (conversions, LTV, forecasts) + Reports engine; double-entry ledger.
 3. Tokens still live in `shared_preferences` — secure-storage hardening pending the build_runner/native-hooks issue (§6).
 4. Refresh tokens are stateless — add a `jti` revocation list when Postgres/Redis lands.
 5. First real `docker compose up --build` on a Docker-capable host; CI.

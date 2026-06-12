@@ -80,11 +80,11 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 5 | Queue | ✅ | Tickets, call/serve/skip + Flutter management screen |
 | 6 | TV Queue | ✅ | Public privacy-safe endpoint + standalone TV page `GET /tv/{branch}` (self-contained HTML, 4s polling) |
 | 7 | Service Catalog | ✅ | Categories, priced services |
-| 8 | Director Dashboard | 🚧 | Revenue/avg-check/counts; full KPI suite ⬜ |
+| 8 | Director Dashboard | 🚧 | Revenue/avg-check/counts + operations & warehouse KPIs (deficit, expiring lots); conversions/LTV/forecast ⬜ |
 | 9 | Audit | ✅ | Append-only log on all mutations; viewer UI ⬜ |
 | 10 | Branches | ✅ | Multi-branch CRUD |
 | 11 | Diagnostics | ✅ | Folded into the EMR eye exam (refraction, IOP, biomicroscopy, A/B-scan note) |
-| 12 | Medical Devices (HL7/DICOM/serial…) | ✅ | Registry + results + adapter seam; 2 real devices seeded (RMK-700, CAS-2000BER); manual/file adapters live, serial/HL7/DICOM = Phase-4 stubs |
+| 12 | Medical Devices (HL7/DICOM/serial…) | ✅ | Registry + results + adapter seam; 2 real devices seeded; binary upload/serving + Flutter preview for B-scans; serial/HL7/DICOM transports = stubs |
 | 13 | Doctors / EMR | ✅ | **Form 025-8** exam (1:1 visit) + printable `card.pdf`; Flutter doctor card with refractometer auto-fill; treatment plans ⬜ Phase 3 |
 | 14 | Treatment | ✅ | Prescriptions (procedure/medication), dispense writes stock off; courses/schedules ⬜ |
 | 15 | Operations | ✅ | Types with consumable templates, prescribe→bills the visit, perform→FEFO auto write-off |
@@ -93,7 +93,7 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 18 | Payroll | ⬜ | Phase 5 |
 | 19 | CRM | ⬜ | Phase 5 |
 | 20 | Reports / Analytics | 🚧 | KPI summary live; reporting engine ⬜ Phase 5 |
-| 21 | Notifications | ⬜ | Phase 4 |
+| 21 | Notifications | ✅ | Core: log + optional Telegram, low-stock alerts with anti-spam, notification ledger + API; SMS & UI screen ⬜ |
 | 22 | Settings | 🚧 | Env config + seed; settings UI/API ⬜ |
 | 23 | Director Control Center | 🚧 | Dashboard + identity/catalog mgmt; full center ⬜ |
 
@@ -133,8 +133,10 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
   bills the visit, perform auto-writes-off FEFO), Treatment prescriptions with
   medication dispensing. Deferred: purchase orders, inter-branch transfers,
   stocktake, barcode-scanning UI.
-- **Phase 4 — Integrations:** Medical device gateway (REST/TCP/serial/HL7/DICOM),
-  Notifications (SMS/Telegram), printing/PDF.
+- **Phase 4 — Integrations 🚧 (core done):** ✅ binary device files (B-scan
+  upload/serving + preview), ✅ notification core (log + Telegram, low-stock
+  alerts), ✅ extended director KPIs. Remaining: real device transports
+  (serial/HL7/DICOM — adapter stubs ready), SMS provider, notification UI.
 - **Phase 5 — Intelligence & ops:** full KPI suite, Reports/Analytics engine,
   Payroll, CRM, forecasting.
 
@@ -152,8 +154,9 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 
 - **Testing:** pytest end-to-end Patient Journey, EMR exam, devices, TV board,
   reception/queue state machines, auth refresh, production config guards,
-  inventory FEFO atomicity, operations billing + auto write-off — `46 passed`;
-  Flutter `22 passed`. Target the executable-spec style already established.
+  inventory FEFO atomicity, operations billing + auto write-off, binary device
+  files, notifications, dashboard KPIs — `63 passed`; Flutter `24 passed`.
+  Target the executable-spec style already established.
 - **Deployment:** 12-factor/env-driven. `docker compose up --build` runs
   api + Postgres 16; the image applies `alembic upgrade head` before uvicorn.
   Dev still runs `uvicorn app.main:app` on SQLite with `create_all()` + seed.

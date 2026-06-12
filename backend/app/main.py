@@ -58,6 +58,21 @@ def create_app() -> FastAPI:
             content={"detail": "Database constraint violated (duplicate or invalid reference)."},
         )
 
+    # Cheap first line against oversized uploads: uvicorn has no body limit and
+    # Starlette spools multipart parts to disk before handlers run. The upload
+    # endpoint additionally enforces its own per-file cap with a chunked read.
+    max_body = 25 * 1024 * 1024
+
+    @app.middleware("http")
+    async def _limit_request_body(request: Request, call_next):
+        length = request.headers.get("content-length")
+        if length and length.isdigit() and int(length) > max_body:
+            return JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content={"detail": "Request body too large"},
+            )
+        return await call_next(request)
+
     @app.get("/health", tags=["System"])
     def health() -> dict:
         return {"status": "ok", "app": settings.app_name, "version": __version__, "env": settings.environment}

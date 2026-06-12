@@ -86,6 +86,8 @@ Copy `.env.example` → `.env`. Key settings:
 | `SECRET_KEY` | dev placeholder | **Must** be replaced in production |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `480` | |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | refresh-token lifetime (rotation on each use) |
+| `UPLOAD_DIR` | `./uploads` | device-result binaries; in Docker use `/app/data/uploads` |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | unset | enable Telegram notifications (otherwise log-only) |
 | `CORS_ORIGINS` | localhost dev ports | comma-separated |
 | `SEED_ON_STARTUP` | `true` | idempotent; safe to leave on |
 
@@ -124,7 +126,8 @@ tests/
 | Inventory | `/inventory/{categories,suppliers,products,receipts,stock,write-off}` — batches/expiry, FEFO, min-stock |
 | Operations | `GET/POST /operation-types`, `POST /visits/{id}/operations` (bills the visit), `/operations/{id}/perform` (FEFO auto write-off) / `cancel` |
 | Treatment | `POST/GET /visits/{id}/treatments`, `/treatments/{id}/dispense` (stock write-off) / `complete` / `cancel` |
-| Devices | `GET/POST/PATCH /devices`, `POST/GET /devices/{id}/results`, `GET /visits/{id}/device-results`, `POST /visits/{id}/exam/apply-refraction?result_id=…` |
+| Notifications | `GET /notifications` — log/Telegram ledger (low-stock alerts fire on every write-off path) |
+| Devices | `GET/POST/PATCH /devices`, `POST/GET /devices/{id}/results`, `POST /devices/{id}/results/file` (multipart B-scan), `GET /device-results/{id}/file`, `GET /visits/{id}/device-results`, `POST /visits/{id}/exam/apply-refraction?result_id=…` |
 
 ## Migrations (Alembic)
 

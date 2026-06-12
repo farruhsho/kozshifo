@@ -114,3 +114,27 @@ def test_operations_counters_after_perform(client, auth):
     assert after["operations_today"] == before["operations_today"] + 1
     assert after["operations_today"] >= 1
     assert after["operations_month"] >= after["operations_today"]
+
+
+def test_low_stock_is_per_branch_not_cross_branch_sum(client, auth):
+    """A branch deficit must count even when another branch is well stocked."""
+    second = client.post(f"{API}/branches", headers=auth,
+                         json={"name": "Филиал КПИ", "code": "KPI-B"}).json()
+    product = client.post(f"{API}/inventory/products", headers=auth,
+                          json={"sku": "KPI-BR-1", "name": "Межфилиальный тест",
+                                "unit": "шт", "min_stock": "5"}).json()
+
+    # Healthy in the second branch only -> not low (it has a stocked branch
+    # above the minimum, and no branch holds it below while stocked).
+    client.post(f"{API}/inventory/receipts", headers=auth, json={
+        "branch_id": second["id"],
+        "items": [{"product_id": product["id"], "quantity": "10", "unit_cost": "1"}]})
+    before = client.get(f"{API}/dashboard/summary", headers=auth).json()["low_stock_count"]
+
+    # Drop the SAME branch to 4 <= 5: per-branch deficit must raise the KPI,
+    # even though a cross-branch sum would once have hidden a multi-branch case.
+    client.post(f"{API}/inventory/write-off", headers=auth, json={
+        "product_id": product["id"], "branch_id": second["id"],
+        "quantity": "6", "reason": "кпи-тест"})
+    after = client.get(f"{API}/dashboard/summary", headers=auth).json()["low_stock_count"]
+    assert after == before + 1

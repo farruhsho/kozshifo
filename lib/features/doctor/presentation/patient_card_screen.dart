@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/utils/file_saver.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../clinical/presentation/operations_section.dart';
+import '../../clinical/presentation/treatments_section.dart';
 import '../../devices/data/devices_repository.dart';
 import '../../devices/domain/device_result.dart';
 import '../../patients/data/patients_repository.dart';
@@ -273,6 +275,18 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                       _examForm(canWrite),
                       const SizedBox(height: 16),
                       _history(),
+                      if (_visitId != null &&
+                          (ref.watch(authControllerProvider).user
+                                  ?.can('operations.read') ??
+                              false))
+                        OperationsSection(
+                            visitId: _visitId!, patientId: widget.patientId),
+                      if (_visitId != null &&
+                          (ref.watch(authControllerProvider).user
+                                  ?.can('treatments.read') ??
+                              false))
+                        TreatmentsSection(
+                            visitId: _visitId!, patientId: widget.patientId),
                     ],
                   ],
                 ),

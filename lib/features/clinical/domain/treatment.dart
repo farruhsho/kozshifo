@@ -1,0 +1,46 @@
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'treatment.freezed.dart';
+part 'treatment.g.dart';
+
+/// A treatment prescription — procedure or medication — within a visit
+/// (mirrors backend `TreatmentOut`). `quantity` is a decimal string.
+@freezed
+abstract class Treatment with _$Treatment {
+  const Treatment._();
+
+  const factory Treatment({
+    required String id,
+    required String visitId,
+    required String patientId,
+    String? doctorId,
+    required String kind,
+    required String name,
+    String? productId,
+    String? quantity,
+    String? instructions,
+    required String status,
+    String? performedAt,
+    required String createdAt,
+  }) = _Treatment;
+
+  factory Treatment.fromJson(Map<String, dynamic> json) =>
+      _$TreatmentFromJson(json);
+
+  bool get isPrescribed => status == 'prescribed';
+  bool get isMedication => kind == 'medication';
+
+  String get kindLabel => switch (kind) {
+        'procedure' => 'Процедура',
+        'medication' => 'Медикамент',
+        _ => kind,
+      };
+
+  String get statusLabel => switch (status) {
+        'prescribed' => 'назначено',
+        'dispensed' => 'выдано',
+        'done' => 'выполнено',
+        'cancelled' => 'отменено',
+        _ => status,
+      };
+}

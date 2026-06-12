@@ -7,17 +7,25 @@ RMK-700 refraction result into the visit's Form 025-8 exam.
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
-from app.core.devices.adapters import AdapterError, adapter_for_source, validate_refraction_payload
+from app.core.devices.adapters import (
+    AdapterError,
+    FileImportAdapter,
+    adapter_for_source,
+    validate_refraction_payload,
+)
+from app.core.files import media_type_for, resolve_stored, save_upload
 from app.features.exams import get_or_404_visit
 from app.models.device import Device, DeviceResult
 from app.models.exam import EyeExam
@@ -140,6 +148,102 @@ def add_device_result(
     db.commit()
     db.refresh(result)
     return result
+
+
+# Result types a binary upload may carry — refraction stays numeric-payload only.
+_UPLOAD_RESULT_TYPES = {"bscan_image", "biometry", "file"}
+
+
+@router.post("/devices/{device_id}/results/file", response_model=DeviceResultOut,
+             status_code=status.HTTP_201_CREATED)
+def upload_device_result_file(
+    device_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("device_results.create"))],
+    file: Annotated[UploadFile, File()],
+    visit_id: Annotated[UUID | None, Form()] = None,
+    patient_id: Annotated[UUID | None, Form()] = None,
+    result_type: Annotated[str | None, Form()] = None,
+) -> DeviceResult:
+    """Upload a device-result binary (B-scan image, biometry printout, PDF).
+
+    The file is stored under a generated name in ``settings.upload_dir``; the
+    original filename survives only as payload metadata. When ``result_type``
+    is omitted it is inferred from the extension (image → ``bscan_image``).
+    """
+    device = _get_or_404_device(db, device_id)
+
+    visit = None
+    if visit_id is not None:
+        visit = get_or_404_visit(db, visit_id)
+        patient_id = patient_id or visit.patient_id
+    if patient_id is not None and db.get(Patient, patient_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown patient")
+
+    if result_type is not None and result_type not in _UPLOAD_RESULT_TYPES:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"result_type must be one of: {', '.join(sorted(_UPLOAD_RESULT_TYPES))}",
+        )
+
+    original_name = file.filename or ""
+    content = file.file.read()
+    try:
+        stored_name = save_upload(content, original_name)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+
+    if result_type is None:
+        is_image = Path(stored_name).suffix.lower() in FileImportAdapter._IMAGE_EXT
+        result_type = "bscan_image" if is_image else "file"
+
+    result = DeviceResult(
+        device_id=device.id,
+        patient_id=patient_id,
+        visit_id=visit_id,
+        result_type=result_type,
+        payload={
+            "original_name": file.filename,
+            "size": len(content),
+            "content_type": file.content_type,
+        },
+        file_path=stored_name,
+        source="import",
+    )
+    db.add(result)
+    db.flush()
+    record_audit(db, action="create", entity_type="device_result", entity_id=result.id, actor_id=actor.id,
+                 branch_id=visit.branch_id if visit else None,
+                 summary=f"Uploaded {result_type} file '{original_name}' "
+                         f"from {device.name} (S/N {device.serial_no})")
+    db.commit()
+    db.refresh(result)
+    return result
+
+
+@router.get("/device-results/{result_id}/file",
+            dependencies=[Depends(require_permission("device_results.read"))])
+def download_device_result_file(
+    result_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> FileResponse:
+    """Serve the stored binary of a device result (404 hides all detail)."""
+    not_found = HTTPException(status.HTTP_404_NOT_FOUND, "Device result file not found")
+    result = db.get(DeviceResult, result_id)
+    if result is None or not result.file_path:
+        raise not_found
+    try:
+        path = resolve_stored(result.file_path)
+    except ValueError:
+        raise not_found from None  # never leak why the stored name was rejected
+    if not path.is_file():
+        raise not_found
+    original = result.payload.get("original_name") if isinstance(result.payload, dict) else None
+    return FileResponse(
+        path,
+        media_type=media_type_for(result.file_path),
+        filename=original or result.file_path,
+    )
 
 
 @router.get("/devices/{device_id}/results", response_model=list[DeviceResultOut],

@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -474,42 +477,265 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
   }
 }
 
+/// Расширения, которые принимает backend для файла B-скана.
+const _scanExtensions = <String>[
+  'jpg', 'jpeg', 'png', 'bmp', 'tif', 'tiff', 'dcm', 'pdf',
+];
+
 /// Прикреплённые к визиту результаты A/B-скана (CAS-2000BER): снимки,
-/// биометрия, файлы — список с метаданными (превью бинарников — позже).
-class _AbScanResults extends ConsumerWidget {
+/// биометрия, файлы — превью по тапу, скачивание и загрузка новых сканов.
+class _AbScanResults extends ConsumerStatefulWidget {
   const _AbScanResults({required this.visitId});
 
   final String visitId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final results = ref.watch(visitDeviceResultsProvider(visitId));
-    return AsyncValueWidget<List<DeviceResult>>(
-      value: results,
-      onRetry: () => ref.invalidate(visitDeviceResultsProvider(visitId)),
-      builder: (items) {
-        final scans = items.where((r) => r.isScan).toList();
-        if (scans.isEmpty) {
-          return Align(
-            alignment: Alignment.centerLeft,
-            child: Text('Прикреплённых сканов нет.',
-                style: Theme.of(context).textTheme.bodySmall),
-          );
-        }
-        return Column(
-          children: [
-            for (final r in scans)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.image_outlined),
-                title: Text(r.filePath ?? r.resultType),
-                subtitle: Text(
-                    '${r.resultType} · ${r.measuredAt.replaceFirst('T', ' ').split('.').first}'),
+  ConsumerState<_AbScanResults> createState() => _AbScanResultsState();
+}
+
+class _AbScanResultsState extends ConsumerState<_AbScanResults> {
+  bool _uploading = false;
+  String? _previewingId;
+
+  /// Имя для отображения: original_name из payload, иначе file_path.
+  String _displayName(DeviceResult r) {
+    final orig = r.payload?['original_name'];
+    if (orig is String && orig.trim().isNotEmpty) return orig;
+    return r.filePath ?? r.resultType;
+  }
+
+  /// Имя файла для скачивания — без директорий из file_path.
+  String _downloadName(DeviceResult r) =>
+      _displayName(r).split(RegExp(r'[\\/]+')).last;
+
+  bool _looksLikeImage(String? name) {
+    if (name == null) return false;
+    final dot = name.lastIndexOf('.');
+    if (dot < 0) return false;
+    const imageExts = {'jpg', 'jpeg', 'png', 'bmp', 'tif', 'tiff'};
+    return imageExts.contains(name.substring(dot + 1).toLowerCase());
+  }
+
+  void _snack(String message, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message),
+      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+    ));
+  }
+
+  Future<void> _saveToDisk(Uint8List bytes, String filename) async {
+    try {
+      final path = await saveBytes(bytes, filename, 'application/octet-stream');
+      _snack(path == null ? 'Файл загружен' : 'Файл сохранён: $path');
+    } catch (e) {
+      _snack('$e', error: true);
+    }
+  }
+
+  /// Тап по строке: тянем байты, картинки показываем в диалоге,
+  /// остальное (DICOM/PDF) предлагаем скачать.
+  Future<void> _openPreview(DeviceResult r) async {
+    if (_previewingId != null) return;
+    setState(() => _previewingId = r.id);
+    try {
+      final bytes =
+          await ref.read(devicesRepositoryProvider).resultFileBytes(r.id);
+      if (!mounted) return;
+      final name = _displayName(r);
+      final isImage = _looksLikeImage(name) || _looksLikeImage(r.filePath);
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => isImage
+            ? _imageDialog(dialogContext, r, bytes, name)
+            : _downloadDialog(dialogContext, r, bytes, name),
+      );
+    } catch (e) {
+      _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _previewingId = null);
+    }
+  }
+
+  Widget _imageDialog(
+      BuildContext dialogContext, DeviceResult r, Uint8List bytes, String name) {
+    return Dialog(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 620),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(name,
+                  style: Theme.of(dialogContext).textTheme.titleMedium,
+                  overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 12),
+              Flexible(
+                child: Image.memory(
+                  bytes,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, _, _) => Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                        'Не удалось отобразить снимок — формат не поддерживается. '
+                        'Скачайте файл, чтобы открыть его локально.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(dialogContext).textTheme.bodyMedium),
+                  ),
+                ),
               ),
-          ],
-        );
-      },
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _saveToDisk(bytes, _downloadName(r)),
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Скачать'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.tonal(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Закрыть'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _downloadDialog(
+      BuildContext dialogContext, DeviceResult r, Uint8List bytes, String name) {
+    return AlertDialog(
+      title: const Text('Файл результата'),
+      content: ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.insert_drive_file_outlined),
+        title: Text(name, overflow: TextOverflow.ellipsis),
+        subtitle: Text('${r.resultType} · ${bytes.length} байт'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('Закрыть'),
+        ),
+        FilledButton.icon(
+          onPressed: () {
+            Navigator.of(dialogContext).pop();
+            _saveToDisk(bytes, _downloadName(r));
+          },
+          icon: const Icon(Icons.download_outlined),
+          label: const Text('Скачать'),
+        ),
+      ],
+    );
+  }
+
+  /// «Загрузить скан»: выбрать файл → выбрать прибор (предпочтительно
+  /// A/B-сканер) → POST multipart → обновить список.
+  Future<void> _upload() async {
+    setState(() => _uploading = true);
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: _scanExtensions,
+        withData: true,
+      );
+      final file = picked?.files.firstOrNull;
+      final bytes = file?.bytes;
+      if (file == null || bytes == null) return; // отмена выбора
+      final repo = ref.read(devicesRepositoryProvider);
+      final devices = await repo.list();
+      final device = devices.items
+              .where((d) => d.deviceType == 'ab_ultrasound')
+              .firstOrNull ??
+          devices.items.firstOrNull;
+      if (device == null) {
+        _snack('Нет зарегистрированных приборов', error: true);
+        return;
+      }
+      await repo.uploadResultFile(
+        deviceId: device.id,
+        visitId: widget.visitId,
+        bytes: bytes,
+        filename: file.name,
+      );
+      if (!mounted) return;
+      ref.invalidate(visitDeviceResultsProvider(widget.visitId));
+      _snack('Скан «${file.name}» прикреплён к визиту');
+    } catch (e) {
+      _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final results = ref.watch(visitDeviceResultsProvider(widget.visitId));
+    final canUpload = ref
+            .watch(authControllerProvider)
+            .user
+            ?.can('device_results.create') ??
+        false;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AsyncValueWidget<List<DeviceResult>>(
+          value: results,
+          onRetry: () =>
+              ref.invalidate(visitDeviceResultsProvider(widget.visitId)),
+          builder: (items) {
+            final scans = items.where((r) => r.isScan).toList();
+            if (scans.isEmpty) {
+              return Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Прикреплённых сканов нет.',
+                    style: Theme.of(context).textTheme.bodySmall),
+              );
+            }
+            return Column(
+              children: [
+                for (final r in scans)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.image_outlined),
+                    title: Text(_displayName(r)),
+                    subtitle: Text(
+                        '${r.resultType} · ${r.measuredAt.replaceFirst('T', ' ').split('.').first}'),
+                    trailing: r.filePath == null
+                        ? null
+                        : (_previewingId == r.id
+                            ? const SizedBox(
+                                height: 16, width: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.visibility_outlined)),
+                    onTap: r.filePath == null ? null : () => _openPreview(r),
+                  ),
+              ],
+            );
+          },
+        ),
+        if (canUpload)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: OutlinedButton.icon(
+              onPressed: _uploading ? null : _upload,
+              icon: _uploading
+                  ? const SizedBox(
+                      height: 16, width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.upload_file_outlined),
+              label: const Text('Загрузить скан'),
+            ),
+          ),
+      ],
     );
   }
 }

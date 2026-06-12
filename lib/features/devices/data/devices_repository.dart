@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -43,6 +45,40 @@ class DevicesRepository {
       return (resp.data as List<dynamic>)
           .map((e) => DeviceResult.fromJson(e as Map<String, dynamic>))
           .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Uploads a scan/report file (B-scan image, biometry PDF, DICOM…) as a
+  /// device result attached to [visitId]. The backend infers `result_type`
+  /// from the extension and stores the original name in the payload.
+  Future<DeviceResult> uploadResultFile({
+    required String deviceId,
+    required String visitId,
+    required List<int> bytes,
+    required String filename,
+  }) async {
+    try {
+      final form = FormData.fromMap({
+        'file': MultipartFile.fromBytes(bytes, filename: filename),
+        'visit_id': visitId,
+      });
+      final resp = await _dio.post('/devices/$deviceId/results/file', data: form);
+      return DeviceResult.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Raw bytes of a previously uploaded result file (for preview/download).
+  Future<Uint8List> resultFileBytes(String resultId) async {
+    try {
+      final resp = await _dio.get(
+        '/device-results/$resultId/file',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(resp.data as List<int>);
     } on DioException catch (e) {
       throw ApiException.from(e);
     }

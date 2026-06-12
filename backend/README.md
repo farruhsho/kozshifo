@@ -121,6 +121,9 @@ tests/
 | TV board | `GET /tv/{branch_id}` — standalone waiting-room page (self-contained HTML, no auth) |
 | Director | `GET /dashboard/summary` |
 | EMR | `PUT/GET /visits/{id}/exam`, `GET /visits/{id}/exam/card.pdf` (Form 025-8), `GET /patients/{id}/exams` |
+| Inventory | `/inventory/{categories,suppliers,products,receipts,stock,write-off}` — batches/expiry, FEFO, min-stock |
+| Operations | `GET/POST /operation-types`, `POST /visits/{id}/operations` (bills the visit), `/operations/{id}/perform` (FEFO auto write-off) / `cancel` |
+| Treatment | `POST/GET /visits/{id}/treatments`, `/treatments/{id}/dispense` (stock write-off) / `complete` / `cancel` |
 | Devices | `GET/POST/PATCH /devices`, `POST/GET /devices/{id}/results`, `GET /visits/{id}/device-results`, `POST /visits/{id}/exam/apply-refraction?result_id=…` |
 
 ## Migrations (Alembic)

@@ -113,6 +113,7 @@ class BatchOut(BaseModel):
     quantity: Decimal
     unit_cost: Decimal
     received_at: datetime
+    expired: bool  # expired batches are never auto-consumed; dispose explicitly
 
 
 # ── Stock view ────────────────────────────────────────────────────────────────
@@ -129,6 +130,9 @@ class WriteOffIn(BaseModel):
     branch_id: UUID
     quantity: Decimal = Field(gt=0)
     reason: str
+    # Disposal path for expired lots: lets the FEFO engine consume expired
+    # batches too (clinical write-offs never set this).
+    include_expired: bool = False
 
 
 class MovementOut(BaseModel):

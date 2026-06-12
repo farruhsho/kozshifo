@@ -45,6 +45,8 @@ def prescribe_treatment(
     visit = db.get(Visit, visit_id)
     if visit is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot prescribe on a {visit.status} visit")
     if payload.kind == "medication":
         if payload.product_id is None or payload.quantity is None:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -110,6 +112,9 @@ def dispense_treatment(
     if treatment.product_id is None or treatment.quantity is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Treatment has no linked product to dispense")
     visit = db.get(Visit, treatment.visit_id)
+    # Real stock must never leave the warehouse against a dead visit.
+    if visit.status == "cancelled":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot dispense on a cancelled visit")
     product = db.get(Product, treatment.product_id)
 
     # Single product: write_off_fefo checks availability before mutating, so a
@@ -154,6 +159,9 @@ def complete_treatment(
         raise HTTPException(status.HTTP_409_CONFLICT,
                             "Only a prescribed procedure can be completed "
                             f"(kind: {treatment.kind}, status: {treatment.status})")
+    visit = db.get(Visit, treatment.visit_id)
+    if visit.status == "cancelled":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot complete on a cancelled visit")
     treatment.status = "done"
     treatment.performed_at = datetime.now(timezone.utc)
     record_audit(db, action="complete", entity_type="treatment", entity_id=treatment.id,

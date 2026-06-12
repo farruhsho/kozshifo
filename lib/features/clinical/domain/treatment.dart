@@ -36,10 +36,11 @@ abstract class Treatment with _$Treatment {
         _ => kind,
       };
 
+  /// The backend's terminal status is always `done`; for a medication that
+  /// means «выдано» (dispensed), for a procedure «выполнено».
   String get statusLabel => switch (status) {
         'prescribed' => 'назначено',
-        'dispensed' => 'выдано',
-        'done' => 'выполнено',
+        'done' => isMedication ? 'выдано' : 'выполнено',
         'cancelled' => 'отменено',
         _ => status,
       };

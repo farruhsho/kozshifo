@@ -245,7 +245,9 @@ class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
                 isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Товар'),
                 items: [
-                  for (final p in items)
+                  // Приход в деактивированный товар backend отклоняет (422) —
+                  // не предлагаем его вовсе.
+                  for (final p in items.where((p) => p.isActive))
                     DropdownMenuItem(
                       value: p.id,
                       child: Text('${p.name} (${p.unit})',

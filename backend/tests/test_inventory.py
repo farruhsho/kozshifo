@@ -158,3 +158,70 @@ def test_inventory_rbac(client, auth):
     )
     assert denied.status_code == 403
     assert "inventory.manage" in denied.json()["detail"]
+
+
+def _create_product(client, auth, sku: str, name: str) -> dict:
+    resp = client.post(f"{API}/inventory/products", headers=auth,
+                       json={"sku": sku, "name": name, "unit": "шт", "min_stock": "1"})
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def test_expired_batches_never_consumed_without_explicit_disposal(client, auth):
+    """Patient safety: expired lots are excluded from on_hand and FEFO."""
+    branch_id = _branch_id(client, auth)
+    product = _create_product(client, auth, "EXP-TEST-1", "Тест-срок")
+
+    client.post(f"{API}/inventory/receipts", headers=auth, json={
+        "branch_id": branch_id,
+        "items": [
+            {"product_id": product["id"], "quantity": "5", "unit_cost": "100",
+             "batch_no": "OLD", "expiry_date": "2020-01-01"},     # уже просрочен
+            {"product_id": product["id"], "quantity": "3", "unit_cost": "100",
+             "batch_no": "FRESH", "expiry_date": "2030-01-01"},
+        ],
+    })
+
+    row = _stock_row(client, auth, branch_id, "EXP-TEST-1")
+    assert Decimal(row["on_hand"]) == Decimal("3")          # only the fresh lot counts
+    flags = {b["batch_no"]: b["expired"] for b in row["batches"]}
+    assert flags == {"OLD": True, "FRESH": False}
+
+    # Auto/FEFO write-off cannot reach the expired lot: 4 > 3 usable -> 409.
+    denied = client.post(f"{API}/inventory/write-off", headers=auth, json={
+        "product_id": product["id"], "branch_id": branch_id,
+        "quantity": "4", "reason": "тест"})
+    assert denied.status_code == 409
+
+    # Explicit disposal path consumes the expired lot too.
+    disposed = client.post(f"{API}/inventory/write-off", headers=auth, json={
+        "product_id": product["id"], "branch_id": branch_id,
+        "quantity": "5", "reason": "утилизация просрочки", "include_expired": True})
+    assert disposed.status_code == 200, disposed.text
+    row2 = _stock_row(client, auth, branch_id, "EXP-TEST-1")
+    assert {b["batch_no"]: b["quantity"] for b in row2["batches"]} == {"FRESH": "3.000"}
+
+
+def test_inactive_product_stock_stays_visible_and_unreceivable(client, auth):
+    branch_id = _branch_id(client, auth)
+    product = _create_product(client, auth, "INACT-1", "Тест-деактивация")
+    client.post(f"{API}/inventory/receipts", headers=auth, json={
+        "branch_id": branch_id,
+        "items": [{"product_id": product["id"], "quantity": "7", "unit_cost": "10"}]})
+
+    off = client.patch(f"{API}/inventory/products/{product['id']}", headers=auth,
+                       json={"is_active": False})
+    assert off.status_code == 200
+
+    # Remaining stock must NOT vanish from the only stock view.
+    row = _stock_row(client, auth, branch_id, "INACT-1")
+    assert row is not None and Decimal(row["on_hand"]) == Decimal("7")
+    assert row["product"]["is_active"] is False
+    assert row["low_stock"] is False  # deactivated products do not raise alerts
+
+    # ...but new stock cannot be received into it.
+    blocked = client.post(f"{API}/inventory/receipts", headers=auth, json={
+        "branch_id": branch_id,
+        "items": [{"product_id": product["id"], "quantity": "1", "unit_cost": "10"}]})
+    assert blocked.status_code == 422
+    assert "deactivated" in blocked.json()["detail"]

@@ -22,7 +22,7 @@ from app.features.visits import _make_item, _recompute_total
 from app.models.catalog import Service
 from app.models.inventory import Product
 from app.models.operation import Operation, OperationType, OperationTypeConsumable
-from app.models.visit import Visit
+from app.models.visit import Visit, VisitItem
 from app.schemas.operation import OperationCreate, OperationOut, OperationTypeCreate, OperationTypeOut
 
 router = APIRouter(tags=["Operations"])
@@ -148,6 +148,11 @@ def perform_operation(
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Only a planned operation can be performed (status: {operation.status})")
     visit = db.get(Visit, operation.visit_id)
+    # A cancelled/closed visit must not consume stock: reception cancelling an
+    # unpaid visit would otherwise leave a performable operation with zero revenue.
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Cannot perform an operation on a {visit.status} visit")
     op_type = operation.operation_type
 
     # Pre-check availability of EVERY template consumable before writing anything
@@ -205,10 +210,29 @@ def cancel_operation(
     if operation.status != "planned":
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Only a planned operation can be cancelled (status: {operation.status})")
+    visit = db.get(Visit, operation.visit_id)
+
+    # De-bill: prescribing added the linked service to the visit, so cancelling
+    # must take it off again — otherwise the patient stays charged for a surgery
+    # that will not happen. A paid item cannot be silently removed (money was
+    # taken): require a refund first.
+    debilled = ""
+    if operation.visit_item_id is not None:
+        item = db.get(VisitItem, operation.visit_item_id)
+        if item is not None:
+            if item.status != "ordered":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The billed item is already paid — refund the payment before cancelling",
+                )
+            visit.items.remove(item)  # delete-orphan cascade removes the row
+            _recompute_total(visit)
+            debilled = f"; removed billed item {item.service_name} ({item.total})"
+
     operation.status = "cancelled"
     record_audit(db, action="cancel", entity_type="operation", entity_id=operation.id,
-                 actor_id=actor.id,
-                 summary=f"Cancelled operation {operation.type_name}")
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Cancelled operation {operation.type_name}{debilled}")
     db.commit()
     db.refresh(operation)
     return operation

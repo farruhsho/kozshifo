@@ -1,4 +1,4 @@
-"""Operations & treatments: seeded catalog, billing on prescribe, FEFO write-off
+﻿"""Operations & treatments: seeded catalog, billing on prescribe, FEFO write-off
 on perform (atomic on shortage), medication dispense, RBAC."""
 from __future__ import annotations
 
@@ -224,3 +224,56 @@ def test_clinical_rbac(client, auth):
     )
     assert denied.status_code == 403
     assert "operations.prescribe" in denied.json()["detail"]
+
+
+def test_cancel_planned_operation_debills_the_visit(client, auth):
+    """Cancelling a planned (unpaid) operation removes its billed item."""
+    visit_id = _new_visit(client, auth, _branch_id(client, auth), "debill")["id"]
+    phaco = _operation_type(client, auth, "PHACO")
+    op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"], "eye": "od"}).json()
+    before = client.get(f"{API}/visits/{visit_id}", headers=auth).json()
+    assert Decimal(before["total_amount"]) == Decimal("5000000.00")
+
+    cancelled = client.post(f"{API}/operations/{op['id']}/cancel", headers=auth)
+    assert cancelled.status_code == 200, cancelled.text
+    after = client.get(f"{API}/visits/{visit_id}", headers=auth).json()
+    assert Decimal(after["total_amount"]) == Decimal("0.00")
+    assert after["items"] == []
+
+
+def test_cancel_paid_operation_requires_refund_first(client, auth):
+    visit_id = _new_visit(client, auth, _branch_id(client, auth), "paidcancel")["id"]
+    phaco = _operation_type(client, auth, "PHACO")
+    op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"], "eye": "ou"}).json()
+    visit = client.get(f"{API}/visits/{visit_id}", headers=auth).json()
+    # issue_queue_ticket=False: a stray waiting ticket would hijack call-next
+    # in the patient-journey test that shares this session DB.
+    client.post(f"{API}/payments", headers=auth,
+                json={"visit_id": visit_id, "amount": visit["balance"],
+                      "issue_queue_ticket": False})
+
+    denied = client.post(f"{API}/operations/{op['id']}/cancel", headers=auth)
+    assert denied.status_code == 409
+    assert "refund" in denied.json()["detail"].lower()
+
+
+def test_perform_blocked_on_cancelled_visit(client, auth):
+    """A visit cancelled at reception must not let its operation consume stock."""
+    visit_id = _new_visit(client, auth, _branch_id(client, auth), "deadvisit")["id"]
+    phaco = _operation_type(client, auth, "PHACO")
+    op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"], "eye": "os"}).json()
+    # Reception aborts the (unpaid) visit; the planned operation must die with it.
+    cancelled = client.post(f"{API}/visits/{visit_id}/cancel", headers=auth)
+    assert cancelled.status_code == 200, cancelled.text
+
+    denied = client.post(f"{API}/operations/{op['id']}/perform", headers=auth)
+    assert denied.status_code == 409
+    assert "cancelled visit" in denied.json()["detail"]
+
+    # Treatments are equally guarded on dead visits.
+    t_denied = client.post(f"{API}/visits/{visit_id}/treatments", headers=auth,
+                           json={"kind": "procedure", "name": "Тест"})
+    assert t_denied.status_code == 409

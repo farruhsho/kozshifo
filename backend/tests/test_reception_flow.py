@@ -27,11 +27,13 @@ def test_cancel_unpaid_visit(client, auth):
     resp = client.post(f"{API}/visits/{visit['id']}/cancel", headers=auth)
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "cancelled"
-    # Idempotence guard: a cancelled visit cannot be cancelled again or paid.
+    # Idempotence guard: a cancelled visit cannot be cancelled again, paid,
+    # or resurrected via close.
     assert client.post(f"{API}/visits/{visit['id']}/cancel", headers=auth).status_code == 409
     pay = client.post(f"{API}/payments", headers=auth,
                       json={"visit_id": visit["id"], "amount": "1.00"})
     assert pay.status_code == 409
+    assert client.post(f"{API}/visits/{visit['id']}/close", headers=auth).status_code == 409
 
 
 def test_cancel_paid_visit_rejected(client, auth):

@@ -156,6 +156,8 @@ def close_visit(
     visit = db.get(Visit, visit_id)
     if visit is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot close a {visit.status} visit")
     visit.status = "completed"
     visit.closed_at = datetime.now(timezone.utc)
     record_audit(db, action="close", entity_type="visit", entity_id=visit.id, actor_id=actor.id,

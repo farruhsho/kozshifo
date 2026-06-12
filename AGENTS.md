@@ -27,6 +27,9 @@ tokens re-deriving the project from scratch.
   baseline, Dockerfile + Compose with Postgres, JWT refresh-token rotation —
   ⚠️ Docker artifacts are authored but **untested locally**: this machine has no Docker).
 - **Phase 2 — Clinical core (EMR + Devices): ✅ done & tested** (Epic 2, `docs/prompts/02`).
+- **Phase 3 — Operations & Inventory: ✅ core done & tested** (warehouse with
+  batches/expiry + FEFO engine, operations bill the visit and auto-write-off
+  consumables on perform, treatment prescriptions with dispensing).
 - **Everything else: ⬜ planned** — see `PLATFORM.md` §4 matrix.
 
 **Works end-to-end today (all clickable in the app):**
@@ -38,9 +41,9 @@ exam → pulls refraction from the RMK-700 device result → prints official
 card.pdf`, on top of **JWT auth · dynamic RBAC (no hardcoded roles) · audit log
 on every mutation · multi-branch**.
 
-**Verified green:** backend `pytest` = 30 passed · Flutter `flutter test` = 12 passed
+**Verified green:** backend `pytest` = 46 passed · Flutter `flutter test` = 22 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean baseline.
+`alembic upgrade head` + `alembic check` = clean (3 revisions).
 
 ## 2. Repo map (where things live)
 
@@ -49,13 +52,14 @@ backend/                     FastAPI service (system of record)
   app/
     core/      config, database, security (JWT/bcrypt), deps (auth+RBAC),
                repository, audit, permissions catalog, id sequences,
-               print_forms (Form 025-8 PDF), devices/adapters (integration seam)
+               print_forms (Form 025-8 PDF), devices/adapters (integration seam),
+               stock (FEFO write-off engine)
     models/    SQLAlchemy 2.0 ORM (user, rbac, branch, patient, catalog,
-               visit, payment, queue, audit, exam, device)
+               visit, payment, queue, audit, exam, device, inventory, operation)
     schemas/   Pydantic v2 DTOs
     features/  one router+service per feature (auth, users, roles, permissions,
                branches, patients, catalog, visits, payments, queue, dashboard,
-               exams, devices)
+               exams, devices, inventory, operations, treatments)
     api.py     aggregates routers under /api/v1
     seed.py    idempotent bootstrap (permissions, roles, branch, director, services)
     main.py    app factory, CORS, lifespan (create schema + seed)
@@ -65,7 +69,8 @@ lib/                         Flutter app
   core/        network (Dio+JWT, ApiException, Page), storage, widgets, utils
   features/<x>/{domain,data,application,presentation}   ← Clean Architecture
                auth · dashboard · patients · reception · queue ·
-               doctor (card 025-8) · devices · splash
+               doctor (card 025-8) · clinical (operations/treatments) ·
+               devices · inventory (Склад) · splash
 test/          Flutter unit tests
 PLATFORM.md · README.md · CLAUDE.md
 ```
@@ -78,7 +83,7 @@ cd backend
 python -m venv .venv
 ./.venv/Scripts/python.exe -m pip install -r requirements.txt   # Windows path
 ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload
-./.venv/Scripts/python.exe -m pytest -q                         # 30 passed
+./.venv/Scripts/python.exe -m pytest -q                         # 46 passed
 ./.venv/Scripts/alembic.exe upgrade head                        # migrations (prod path)
 
 # Docker (on a Docker-capable host; dev machine has none)
@@ -87,7 +92,7 @@ docker compose up --build                                       # api :8000 + Po
 # Flutter  (separate terminal, from repo root)
 flutter pub get
 flutter run -d chrome                                           # dev: any localhost port OK
-flutter test                                                    # 12 passed
+flutter test                                                    # 22 passed
 
 # TV board (waiting-room screen): open in any browser, no login required
 #   http://127.0.0.1:8000/tv/<branch_id>   (link dialog: Queue screen → TV icon)
@@ -157,11 +162,22 @@ must happen on a Docker-capable host), JWT **refresh-token rotation**
 (`POST /auth/refresh`, 30-day refresh JWT with `jti`; Flutter Dio interceptor
 retries one 401 transparently).
 
-**Next (Phase 3 — Operations & Inventory), plus known leftovers:**
-1. Operations/Treatment plans + Warehouse (batches/expiry/auto write-off) — see `PLATFORM.md` §6.
-2. Tokens still live in `shared_preferences` (web localStorage) — secure-storage hardening pending the build_runner/native-hooks issue (§6).
-3. Refresh tokens are stateless — add a `jti` revocation list when Postgres/Redis lands.
-4. Epic-2/3 leftovers: binary B-scan upload/serving, serial/HL7/DICOM transports, IOL calc.
+**✅ Phase 3 core is DONE (2026-06)** — warehouse (products/batches/expiry,
+FEFO engine in `core/stock.py`, movement ledger, goods receipts, min-stock),
+operations (types with consumable templates; prescribe bills the visit's
+linked service, perform auto-writes-off FEFO atomically), treatments
+(prescribe/dispense/complete). Flutter: Склад screen + Операции/Назначения
+sections in the doctor card. Deferred from it: purchase orders, inter-branch
+transfers, stocktake, barcode-scanning UI, treatment courses/schedules.
+
+**Next (Phase 4–5 candidates), plus known leftovers:**
+1. Device gateway transports (serial/HL7/DICOM stubs in `core/devices/adapters.py`), binary B-scan upload/serving, notifications (SMS/Telegram).
+2. Full Director KPI suite + Reports engine; double-entry ledger.
+3. Tokens still live in `shared_preferences` — secure-storage hardening pending the build_runner/native-hooks issue (§6).
+4. Refresh tokens are stateless — add a `jti` revocation list when Postgres/Redis lands.
+5. First real `docker compose up --build` on a Docker-capable host; CI.
+6. Searchable product pickers (dropdowns load one 500-item page today) and an
+   expired-stock disposal UI (backend `include_expired` write-off exists).
 
 Full roadmap: `PLATFORM.md` §6.
 

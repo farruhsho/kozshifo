@@ -133,7 +133,9 @@ void main() {
     expect(t.kindLabel, 'Процедура');
     expect(t.statusLabel, 'выполнено');
 
-    expect(Treatment.fromJson({...medicationJson, 'status': 'dispensed'}).statusLabel,
+    // The backend's terminal status is always 'done'; a dispensed medication
+    // must read «выдано» while a done procedure reads «выполнено».
+    expect(Treatment.fromJson({...medicationJson, 'status': 'done'}).statusLabel,
         'выдано');
     expect(Treatment.fromJson({...medicationJson, 'status': 'cancelled'}).statusLabel,
         'отменено');

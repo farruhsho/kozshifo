@@ -48,7 +48,7 @@ multi-branch) done *properly*, so they're never retrofitted.
 | Audit written in the same transaction as the change | Trail can't drift from reality |
 | UUID primary keys | Safe to merge across branches; non-guessable |
 
-## 3. Database (implemented core — 18 tables)
+## 3. Database (implemented core — 27 tables)
 
 ```
 branches ─┬─< users >──< user_roles >──┬─ roles ──< role_permissions >── permissions
@@ -58,8 +58,12 @@ branches ─┬─< users >──< user_roles >──┬─ roles ──< role_p
           │                 ├─< payments
           │                 ├─< queue_tickets
           │                 ├── eye_exams   (1:1, Form 025-8: refraction/IOP/structures/diagnosis)
-          │                 └─< device_results >── devices  (RMK-700, CAS-2000BER seeded)
-          └─ (branch scoping on patients/visits/payments/queue/devices)
+          │                 ├─< device_results >── devices  (RMK-700, CAS-2000BER seeded)
+          │                 ├─< operations >── operation_types ─< type_consumables >─┐
+          │                 └─< treatments ──────────────────────────┐               │
+          ├─< stock_batches / stock_movements >── products <─────────┴───────────────┘
+          │       (FEFO by expiry; signed-qty ledger)    └── inventory_categories · suppliers
+          └─ (branch scoping on patients/visits/payments/queue/devices/stock)
 audit_logs  (actor, entity_type, entity_id, action, changes JSON, ip, ts)
 ```
 
@@ -82,10 +86,10 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 11 | Diagnostics | ✅ | Folded into the EMR eye exam (refraction, IOP, biomicroscopy, A/B-scan note) |
 | 12 | Medical Devices (HL7/DICOM/serial…) | ✅ | Registry + results + adapter seam; 2 real devices seeded (RMK-700, CAS-2000BER); manual/file adapters live, serial/HL7/DICOM = Phase-4 stubs |
 | 13 | Doctors / EMR | ✅ | **Form 025-8** exam (1:1 visit) + printable `card.pdf`; Flutter doctor card with refractometer auto-fill; treatment plans ⬜ Phase 3 |
-| 14 | Treatment | ⬜ | Phase 3 |
-| 15 | Operations | ⬜ | Phase 3 |
-| 16 | Inventory / Warehouse | ⬜ | Phase 3 (auto write-off ties to Operations) |
-| 17 | Purchasing / Suppliers | ⬜ | Phase 3 |
+| 14 | Treatment | ✅ | Prescriptions (procedure/medication), dispense writes stock off; courses/schedules ⬜ |
+| 15 | Operations | ✅ | Types with consumable templates, prescribe→bills the visit, perform→FEFO auto write-off |
+| 16 | Inventory / Warehouse | ✅ | Products, batches/expiry, FEFO engine, min-stock alerts, movement ledger; transfers/stocktake ⬜ |
+| 17 | Purchasing / Suppliers | 🚧 | Suppliers + goods receipts live; purchase orders ⬜ |
 | 18 | Payroll | ⬜ | Phase 5 |
 | 19 | CRM | ⬜ | Phase 5 |
 | 20 | Reports / Analytics | 🚧 | KPI summary live; reporting engine ⬜ Phase 5 |
@@ -123,8 +127,12 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
   Deferred to later phases: binary file upload/serving for B-scans (paths are
   recorded now), serial/HL7/DICOM transports (adapter stubs in place),
   IOL-power calculation.
-- **Phase 3 — Operations & Inventory:** Operations, Treatment plans, Warehouse
-  with batches/expiry/barcodes, auto write-off on operations, Purchasing/Suppliers.
+- **Phase 3 — Operations & Inventory ✅ (core done):** Warehouse (products,
+  batches/expiry, FEFO write-off engine, min-stock, movement ledger, goods
+  receipts, suppliers), Operations (types with consumable templates; prescribe
+  bills the visit, perform auto-writes-off FEFO), Treatment prescriptions with
+  medication dispensing. Deferred: purchase orders, inter-branch transfers,
+  stocktake, barcode-scanning UI.
 - **Phase 4 — Integrations:** Medical device gateway (REST/TCP/serial/HL7/DICOM),
   Notifications (SMS/Telegram), printing/PDF.
 - **Phase 5 — Intelligence & ops:** full KPI suite, Reports/Analytics engine,
@@ -142,10 +150,10 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 
 ## 8. Testing & Deployment
 
-- **Testing:** pytest end-to-end Patient Journey + EMR exam (upsert/validation/
-  RBAC/history/PDF) + devices (seed/results/apply-refraction/RBAC) + TV board
-  (public/privacy/page) + reception abort & queue state machine — `23 passed`;
-  Flutter `12 passed`. Target the executable-spec style already established.
+- **Testing:** pytest end-to-end Patient Journey, EMR exam, devices, TV board,
+  reception/queue state machines, auth refresh, production config guards,
+  inventory FEFO atomicity, operations billing + auto write-off — `46 passed`;
+  Flutter `22 passed`. Target the executable-spec style already established.
 - **Deployment:** 12-factor/env-driven. `docker compose up --build` runs
   api + Postgres 16; the image applies `alembic upgrade head` before uvicorn.
   Dev still runs `uvicorn app.main:app` on SQLite with `create_all()` + seed.

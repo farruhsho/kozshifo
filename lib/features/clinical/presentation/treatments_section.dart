@@ -72,7 +72,7 @@ class TreatmentsSection extends ConsumerWidget {
       bool canPerform, bool canPrescribe) {
     final statusColor = switch (t.status) {
       'prescribed' => Colors.orange,
-      'dispensed' || 'done' => Colors.green,
+      'done' => Colors.green,
       _ => Colors.grey,
     };
     final details = [
@@ -250,7 +250,9 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
                   decoration:
                       const InputDecoration(labelText: 'Препарат со склада'),
                   items: [
-                    for (final p in items)
+                    // Деактивированный товар назначать нельзя (та же
+                    // active-only конвенция, что у услуг и типов операций).
+                    for (final p in items.where((p) => p.isActive))
                       DropdownMenuItem(
                         value: p.id,
                         child: Text('${p.name} (${p.unit})',

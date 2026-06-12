@@ -79,6 +79,10 @@ class StockBatch(UUIDPKMixin, TimestampMixin, Base):
 
     product: Mapped[Product] = relationship(lazy="joined")
 
+    @property
+    def expired(self) -> bool:
+        return self.expiry_date is not None and self.expiry_date < date.today()
+
 
 class StockMovement(UUIDPKMixin, TimestampMixin, Base):
     """Immutable ledger row: positive quantity = stock in, negative = stock out."""

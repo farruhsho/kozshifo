@@ -34,10 +34,12 @@ class InventoryRepository {
   /// Product catalog (Page envelope; we only need the items for dropdowns).
   Future<List<Product>> products({String? q}) async {
     try {
+      // 500 = backend max page size. Searchable pickers are the real fix once
+      // the catalog outgrows one page (tracked in AGENTS.md §7 leftovers).
       final resp = await _dio.get('/inventory/products', queryParameters: {
         'q': ?q,
         'offset': 0,
-        'limit': 200,
+        'limit': 500,
       });
       return Page.fromJson(resp.data as Map<String, dynamic>, Product.fromJson)
           .items;

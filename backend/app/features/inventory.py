@@ -186,8 +186,13 @@ def create_receipt(
     if payload.supplier_id and db.get(Supplier, payload.supplier_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Supplier not found")
     for item in payload.items:
-        if db.get(Product, item.product_id) is None:
+        product = db.get(Product, item.product_id)
+        if product is None:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Product {item.product_id} not found")
+        if not product.is_active:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                f"Product {product.name} ({product.sku}) is deactivated — "
+                                "reactivate it before receiving stock")
 
     batches = [
         receive_stock(
@@ -217,9 +222,10 @@ def stock_overview(
     branch_id: UUID,
     low_only: bool = Query(False, description="Only rows at or below min_stock"),
 ) -> list[StockRowOut]:
-    products = db.execute(
-        select(Product).where(Product.is_active.is_(True)).order_by(Product.name)
-    ).scalars().all()
+    # All products, not only active ones: a deactivated product with remaining
+    # batches must stay visible here (this is the only stock view) — otherwise
+    # inventory value silently disappears from reporting.
+    products = db.execute(select(Product).order_by(Product.name)).scalars().all()
     batches = db.execute(
         select(StockBatch)
         .where(StockBatch.branch_id == branch_id, StockBatch.quantity > 0)
@@ -232,8 +238,15 @@ def stock_overview(
     rows: list[StockRowOut] = []
     for product in products:
         product_batches = by_product.get(product.id, [])
-        total = sum((Decimal(b.quantity) for b in product_batches), Decimal("0"))
-        low = total <= Decimal(product.min_stock)
+        if not product.is_active and not product_batches:
+            continue  # deactivated and empty — nothing to report
+        # on_hand counts only usable (non-expired) units, matching what the
+        # FEFO engine will actually consume; expired lots stay listed below
+        # with their flag so they can be disposed of.
+        total = sum(
+            (Decimal(b.quantity) for b in product_batches if not b.expired), Decimal("0")
+        )
+        low = product.is_active and total <= Decimal(product.min_stock)
         if low_only and not low:
             continue
         rows.append(
@@ -266,8 +279,10 @@ def write_off(
             reason=payload.reason,
             ref_type="manual",
             actor_id=actor.id,
+            allow_expired=payload.include_expired,
         )
     except InsufficientStockError as exc:
+        db.rollback()
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"Insufficient stock for {product.name} ({product.sku}): "

@@ -17,5 +17,16 @@ abstract class VisitSummary with _$VisitSummary {
 
   factory VisitSummary.fromJson(Map<String, dynamic> json) => _$VisitSummaryFromJson(json);
 
-  String get label => '$visitNo · ${openedAt.split('T').first}';
+  String get statusLabel => switch (status) {
+        'completed' => 'закрыт',
+        'cancelled' => 'отменён',
+        'in_progress' => 'в работе',
+        _ => status,
+      };
+
+  /// Closed/cancelled visits must be distinguishable in the picker — the
+  /// backend rejects prescribing on them with 409.
+  String get label =>
+      '$visitNo · ${openedAt.split('T').first}'
+      '${status == 'open' ? '' : ' · $statusLabel'}';
 }

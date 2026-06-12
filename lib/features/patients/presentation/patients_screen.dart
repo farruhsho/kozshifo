@@ -38,7 +38,8 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
   @override
   Widget build(BuildContext context) {
     final patients = ref.watch(patientsListProvider);
-    final canCreate = ref.watch(authControllerProvider).user?.can('patients.create') ?? false;
+    final canCreate =
+        ref.watch(authControllerProvider).user?.can('patients.create') ?? false;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Пациенты')),
@@ -108,8 +109,10 @@ class _PatientList extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: Text('Всего: ${page.total}',
-                style: Theme.of(context).textTheme.bodySmall),
+            child: Text(
+              'Всего: ${page.total}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
         ),
         Expanded(
@@ -121,7 +124,9 @@ class _PatientList extends StatelessWidget {
               return ListTile(
                 leading: CircleAvatar(child: Text(p.initials)),
                 title: Text(p.fullName),
-                subtitle: Text([p.mrn, if (p.phone != null) p.phone!].join('  ·  ')),
+                subtitle: Text(
+                  [p.mrn, if (p.phone != null) p.phone!].join('  ·  '),
+                ),
                 trailing: TextButton.icon(
                   onPressed: () => context.go('/patients/${p.id}/card'),
                   icon: const Icon(Icons.medical_information_outlined),
@@ -140,17 +145,23 @@ class _PatientList extends StatelessWidget {
 /// Регистрация пациента. Возвращает созданного [Patient] через `Navigator.pop`
 /// (используется и списком пациентов, и экраном ресепшена).
 class RegisterPatientDialog extends ConsumerStatefulWidget {
-  const RegisterPatientDialog({super.key});
+  const RegisterPatientDialog({super.key, this.initialPhone});
+
+  /// Предзаполнить телефон (ресепшен: поиск по номеру без результатов).
+  final String? initialPhone;
 
   @override
-  ConsumerState<RegisterPatientDialog> createState() => _RegisterPatientDialogState();
+  ConsumerState<RegisterPatientDialog> createState() =>
+      _RegisterPatientDialogState();
 }
 
 class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
   final _formKey = GlobalKey<FormState>();
   final _lastName = TextEditingController();
   final _firstName = TextEditingController();
-  final _phone = TextEditingController();
+  late final _phone = TextEditingController(text: widget.initialPhone ?? '');
+  final _firstNameFocus = FocusNode();
+  final _phoneFocus = FocusNode();
   bool _saving = false;
   String? _error;
 
@@ -159,6 +170,8 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
     _lastName.dispose();
     _firstName.dispose();
     _phone.dispose();
+    _firstNameFocus.dispose();
+    _phoneFocus.dispose();
     super.dispose();
   }
 
@@ -170,7 +183,9 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
     });
     try {
       final branchId = ref.read(authControllerProvider).user?.branchId;
-      final patient = await ref.read(patientsRepositoryProvider).create(
+      final patient = await ref
+          .read(patientsRepositoryProvider)
+          .create(
             lastName: _lastName.text.trim(),
             firstName: _firstName.text.trim(),
             phone: _phone.text.trim(),
@@ -193,26 +208,44 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Поток без мыши: фамилия → Enter → имя → Enter → телефон → Enter
+            // = сохранить.
             TextFormField(
               controller: _lastName,
+              autofocus: true,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _firstNameFocus.requestFocus(),
               decoration: const InputDecoration(labelText: 'Фамилия'),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Обязательное поле' : null,
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'Обязательное поле' : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _firstName,
+              focusNode: _firstNameFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
               decoration: const InputDecoration(labelText: 'Имя'),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Обязательное поле' : null,
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'Обязательное поле' : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
               controller: _phone,
+              focusNode: _phoneFocus,
               keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(labelText: 'Телефон (необязательно)'),
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _save(),
+              decoration: const InputDecoration(
+                labelText: 'Телефон (необязательно)',
+              ),
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ],
           ],
         ),
@@ -225,7 +258,11 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
         FilledButton(
           onPressed: _saving ? null : _save,
           child: _saving
-              ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Сохранить'),
         ),
       ],

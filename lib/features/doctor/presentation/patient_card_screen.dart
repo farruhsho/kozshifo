@@ -1,7 +1,9 @@
-import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/file_saver.dart';
@@ -15,6 +17,7 @@ import '../../devices/domain/device_result.dart';
 import '../../patients/data/patients_repository.dart';
 import '../../queue/data/queue_repository.dart';
 import '../data/doctor_repository.dart';
+import '../data/exam_draft_store.dart';
 import '../domain/eye_exam.dart';
 import '../domain/timeline_event.dart';
 import '../domain/visit_summary.dart';
@@ -36,13 +39,36 @@ const _structureFields = <(String, String)>[
 ];
 
 const _allFieldKeys = <String>[
-  'complaints', 'anamnesis',
-  'od_va', 'od_sph', 'od_cyl', 'od_axis', 'od_va_cc',
-  'os_va', 'os_sph', 'os_cyl', 'os_axis', 'os_va_cc',
-  'iop_od', 'iop_os',
-  'orbit', 'eyeball', 'eyelids', 'conjunctiva', 'lacrimal', 'cornea',
-  'anterior_chamber', 'iris', 'pupil', 'lens', 'vitreous', 'fundus',
-  'ab_scan_note', 'diagnosis', 'icd10', 'recommendations',
+  'complaints',
+  'anamnesis',
+  'od_va',
+  'od_sph',
+  'od_cyl',
+  'od_axis',
+  'od_va_cc',
+  'os_va',
+  'os_sph',
+  'os_cyl',
+  'os_axis',
+  'os_va_cc',
+  'iop_od',
+  'iop_os',
+  'orbit',
+  'eyeball',
+  'eyelids',
+  'conjunctiva',
+  'lacrimal',
+  'cornea',
+  'anterior_chamber',
+  'iris',
+  'pupil',
+  'lens',
+  'vitreous',
+  'fundus',
+  'ab_scan_note',
+  'diagnosis',
+  'icd10',
+  'recommendations',
 ];
 
 /// Карта пациента (Form 025-8): осмотр окулиста по выбранному визиту,
@@ -69,12 +95,49 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
   bool _applyingRefraction = false;
   bool _finishing = false;
 
+  /// Автосейв черновика: любой ввод помечает форму «грязной», периодический
+  /// таймер раз в 3 c сбрасывает грязную форму в [ExamDraftStore].
+  Timer? _autosaveTimer;
+  bool _dirty = false;
+  bool _draftRestored = false;
+
+  @override
+  void initState() {
+    super.initState();
+    for (final c in _c.values) {
+      c.addListener(_markDirty);
+    }
+  }
+
   @override
   void dispose() {
+    _autosaveTimer?.cancel();
     for (final c in _c.values) {
       c.dispose();
     }
     super.dispose();
+  }
+
+  void _markDirty() {
+    _dirty = true;
+    _autosaveTimer ??= Timer.periodic(
+      const Duration(seconds: 3),
+      _autosaveTick,
+    );
+  }
+
+  /// Тик автосейва: грязная форма пишется в черновик, чистая — гасит таймер
+  /// (следующий ввод запустит его заново).
+  void _autosaveTick(Timer timer) {
+    if (!_dirty) {
+      timer.cancel();
+      if (identical(_autosaveTimer, timer)) _autosaveTimer = null;
+      return;
+    }
+    _dirty = false;
+    final visitId = _visitId;
+    if (visitId == null) return;
+    unawaited(ref.read(examDraftStoreProvider).saveDraft(visitId, _payload()));
   }
 
   void _populate(EyeExam? exam) {
@@ -111,20 +174,49 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     _c['recommendations']!.text = s(exam?.recommendations);
   }
 
+  /// Заполняет форму из карты черновика (ключи — [_allFieldKeys]).
+  void _populateFromMap(Map<String, dynamic> draft) {
+    for (final key in _allFieldKeys) {
+      _c[key]!.text = draft[key]?.toString() ?? '';
+    }
+  }
+
   Future<void> _selectVisit(String visitId) async {
+    // Несохранённый ввод предыдущего визита уходит в ЕГО черновик —
+    // переключение визитов не теряет работу врача.
+    final previous = _visitId;
+    if (_dirty && previous != null) {
+      unawaited(
+        ref.read(examDraftStoreProvider).saveDraft(previous, _payload()),
+      );
+    }
+    _dirty = false;
     setState(() {
       _visitId = visitId;
       _loadingExam = true;
+      _draftRestored = false;
     });
     try {
-      final exam = await ref.read(doctorRepositoryProvider).examForVisit(visitId);
-      if (!mounted) return;
+      final exam = await ref
+          .read(doctorRepositoryProvider)
+          .examForVisit(visitId);
+      if (!mounted || _visitId != visitId) return;
       setState(() => _exam = exam);
       _populate(exam);
+      _dirty = false;
+      // Есть черновик, отличающийся от серверной версии? Восстанавливаем его
+      // и даём врачу выбор «Оставить / Отменить» в баннере.
+      final draft = await ref.read(examDraftStoreProvider).readDraft(visitId);
+      if (!mounted || _visitId != visitId) return;
+      if (draft != null && !mapEquals(draft, _payload())) {
+        _populateFromMap(draft);
+        _dirty = false;
+        setState(() => _draftRestored = true);
+      }
     } catch (e) {
       if (mounted) _snack('$e', error: true);
     } finally {
-      if (mounted) setState(() => _loadingExam = false);
+      if (mounted && _visitId == visitId) setState(() => _loadingExam = false);
     }
   }
 
@@ -141,7 +233,10 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
 
     return {
       for (final key in _allFieldKeys)
-        if (key == 'od_axis' || key == 'os_axis') key: intOf(key) else key: v(key),
+        if (key == 'od_axis' || key == 'os_axis')
+          key: intOf(key)
+        else
+          key: v(key),
     };
   }
 
@@ -150,13 +245,21 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     if (visitId == null) return;
     setState(() => _saving = true);
     try {
-      final exam =
-          await ref.read(doctorRepositoryProvider).upsertExam(visitId, _payload());
+      final exam = await ref
+          .read(doctorRepositoryProvider)
+          .upsertExam(visitId, _payload());
       if (!mounted) return;
-      setState(() => _exam = exam);
+      setState(() {
+        _exam = exam;
+        _draftRestored = false;
+      });
       _populate(exam);
+      _dirty = false;
+      // Сервер теперь — истина: черновик больше не нужен.
+      unawaited(ref.read(examDraftStoreProvider).clearDraft(visitId));
       ref.invalidate(examHistoryProvider(widget.patientId));
       ref.invalidate(patientTimelineProvider(widget.patientId));
+      ref.invalidate(frequentDiagnosesProvider);
       _snack('Осмотр сохранён');
     } catch (e) {
       if (mounted) _snack('$e', error: true);
@@ -171,8 +274,11 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     setState(() => _printing = true);
     try {
       final bytes = await ref.read(doctorRepositoryProvider).cardPdf(visitId);
-      final path =
-          await saveBytes(bytes, 'card-025-8-$visitId.pdf', 'application/pdf');
+      final path = await saveBytes(
+        bytes,
+        'card-025-8-$visitId.pdf',
+        'application/pdf',
+      );
       if (!mounted) return;
       _snack(path == null ? 'PDF формы 025-8 загружен' : 'PDF сохранён: $path');
     } catch (e) {
@@ -189,8 +295,9 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     if (visitId == null) return;
     setState(() => _applyingRefraction = true);
     try {
-      final results =
-          await ref.read(devicesRepositoryProvider).resultsForVisit(visitId);
+      final results = await ref
+          .read(devicesRepositoryProvider)
+          .resultsForVisit(visitId);
       final refraction = results.where((r) => r.isRefraction).firstOrNull;
       if (refraction == null) {
         _snack('Для этого визита нет результатов рефрактометра', error: true);
@@ -202,6 +309,7 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
       if (!mounted) return;
       setState(() => _exam = exam);
       _populate(exam);
+      _dirty = false; // apply-refraction уже сохранён сервером
       ref.invalidate(visitDeviceResultsProvider(visitId));
       ref.invalidate(examHistoryProvider(widget.patientId));
       ref.invalidate(patientTimelineProvider(widget.patientId));
@@ -235,8 +343,9 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     try {
       final repo = ref.read(queueRepositoryProvider);
       final tickets = await repo.list(branchId: branchId, track: 'doctor');
-      final ticket =
-          tickets.where((t) => t.visitId == visitId && t.isActive).firstOrNull;
+      final ticket = tickets
+          .where((t) => t.visitId == visitId && t.isActive)
+          .firstOrNull;
       if (ticket == null) {
         _snack('Нет активного талона приёма');
         return;
@@ -254,10 +363,12 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
   }
 
   void _snack(String message, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
   }
 
   @override
@@ -291,8 +402,10 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                 onPressed: _finishing ? null : _finishAppointment,
                 icon: _finishing
                     ? const SizedBox(
-                        height: 16, width: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Icon(Icons.task_alt),
                 label: const Text('Завершить приём'),
               ),
@@ -304,115 +417,143 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                 onPressed: _printing ? null : _print,
                 icon: _printing
                     ? const SizedBox(
-                        height: 16, width: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Icon(Icons.print_outlined),
                 label: const Text('Печать 025-8'),
               ),
             ),
         ],
       ),
-      body: AsyncValueWidget<List<VisitSummary>>(
-        value: visits,
-        onRetry: () => ref.invalidate(patientVisitsProvider(widget.patientId)),
-        builder: (items) {
-          if (items.isEmpty) {
-            return const Center(
-                child: Text('У пациента нет визитов — карта осмотра ведётся в рамках визита.'));
-          }
-          // Широкий экран → две панели: карта+осмотр слева, диагностика и
-          // клинические секции справа — врач работает без переключения экранов.
-          final wide = MediaQuery.sizeOf(context).width >= 1200;
-          const examSpinner = Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(child: CircularProgressIndicator()),
-          );
-          // Склад проверяется по филиалу ВИЗИТА (perform спишет именно там);
-          // филиал врача — лишь fallback для старых записей без branch_id.
-          final visitBranchId = items
-              .where((v) => v.id == _visitId)
-              .map((v) => v.branchId)
-              .firstOrNull;
-          final clinicalSections = <Widget>[
-            if (_visitId != null &&
-                (ref.watch(authControllerProvider).user
-                        ?.can('operations.read') ??
-                    false))
-              OperationsSection(
-                  visitId: _visitId!,
-                  patientId: widget.patientId,
-                  branchId: visitBranchId),
-            if (_visitId != null &&
-                (ref.watch(authControllerProvider).user
-                        ?.can('treatments.read') ??
-                    false))
-              TreatmentsSection(
-                  visitId: _visitId!, patientId: widget.patientId),
-          ];
-          final Widget content;
-          if (wide) {
-            content = Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _visitPicker(items),
-                      const SizedBox(height: 12),
-                      if (_loadingExam)
-                        examSpinner
-                      else
-                        _examForm(canWrite, withAbScan: false),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 2,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (!_loadingExam) ...[
-                        _abScanSection(canWrite),
-                        _history(),
-                        _timeline(),
-                        ...clinicalSections,
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            );
-          } else {
-            content = Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _visitPicker(items),
-                const SizedBox(height: 12),
-                if (_loadingExam)
-                  examSpinner
-                else ...[
-                  _examForm(canWrite),
-                  const SizedBox(height: 16),
-                  _history(),
-                  _timeline(),
-                  ...clinicalSections,
-                ],
-              ],
-            );
-          }
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1400),
-                child: content,
-              ),
-            ),
-          );
+      // Горячие клавиши врача (только этот экран): Ctrl+S — сохранить осмотр,
+      // F7 — печать 025-8. Работают и при фокусе в текстовом поле.
+      body: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): () {
+            if (canWrite && !_saving) _save();
+          },
+          const SingleActivator(LogicalKeyboardKey.f7): () {
+            if (_visitId != null && _exam != null && !_printing) _print();
+          },
         },
+        child: Focus(
+          autofocus: true,
+          child: AsyncValueWidget<List<VisitSummary>>(
+            value: visits,
+            onRetry: () =>
+                ref.invalidate(patientVisitsProvider(widget.patientId)),
+            builder: (items) {
+              if (items.isEmpty) {
+                return const Center(
+                  child: Text(
+                    'У пациента нет визитов — карта осмотра ведётся в рамках визита.',
+                  ),
+                );
+              }
+              // Широкий экран → две панели: карта+осмотр слева, диагностика и
+              // клинические секции справа — врач работает без переключения экранов.
+              final wide = MediaQuery.sizeOf(context).width >= 1200;
+              const examSpinner = Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(child: CircularProgressIndicator()),
+              );
+              // Склад проверяется по филиалу ВИЗИТА (perform спишет именно там);
+              // филиал врача — лишь fallback для старых записей без branch_id.
+              final visitBranchId = items
+                  .where((v) => v.id == _visitId)
+                  .map((v) => v.branchId)
+                  .firstOrNull;
+              final clinicalSections = <Widget>[
+                if (_visitId != null &&
+                    (ref
+                            .watch(authControllerProvider)
+                            .user
+                            ?.can('operations.read') ??
+                        false))
+                  OperationsSection(
+                    visitId: _visitId!,
+                    patientId: widget.patientId,
+                    branchId: visitBranchId,
+                  ),
+                if (_visitId != null &&
+                    (ref
+                            .watch(authControllerProvider)
+                            .user
+                            ?.can('treatments.read') ??
+                        false))
+                  TreatmentsSection(
+                    visitId: _visitId!,
+                    patientId: widget.patientId,
+                  ),
+              ];
+              final Widget content;
+              if (wide) {
+                content = Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _visitPicker(items),
+                          const SizedBox(height: 12),
+                          if (_loadingExam)
+                            examSpinner
+                          else
+                            _examForm(canWrite, withAbScan: false),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (!_loadingExam) ...[
+                            _abScanSection(canWrite),
+                            _history(),
+                            _timeline(),
+                            ...clinicalSections,
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              } else {
+                content = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _visitPicker(items),
+                    const SizedBox(height: 12),
+                    if (_loadingExam)
+                      examSpinner
+                    else ...[
+                      _examForm(canWrite),
+                      const SizedBox(height: 16),
+                      _history(),
+                      _timeline(),
+                      ...clinicalSections,
+                    ],
+                  ],
+                );
+              }
+              return SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 1400),
+                    child: content,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -464,6 +605,7 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (_draftRestored) _draftBanner(),
         _section('ОКУЛИСТ КУРИГИ (осмотр окулиста)', [
           _text('complaints', 'Шикоятлари (жалобы)', enabled, maxLines: 2),
           _text('anamnesis', 'Анамнез', enabled, maxLines: 2),
@@ -479,28 +621,39 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                 onPressed: _applyingRefraction ? null : _pullFromRefractometer,
                 icon: _applyingRefraction
                     ? const SizedBox(
-                        height: 16, width: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Icon(Icons.download_outlined),
                 label: const Text('Подтянуть из рефрактометра'),
               ),
             ),
         ]),
         _section('Кўз ички босими (ВГД, мм рт.ст.)', [
-          Row(children: [
-            Expanded(child: _text('iop_od', 'OD', enabled)),
-            const SizedBox(width: 12),
-            Expanded(child: _text('iop_os', 'OS', enabled)),
-          ]),
+          Row(
+            children: [
+              Expanded(child: _text('iop_od', 'OD', enabled)),
+              const SizedBox(width: 12),
+              Expanded(child: _text('iop_os', 'OS', enabled)),
+            ],
+          ),
         ]),
         _section('Биомикроскопия (по бланку)', [
-          for (final (key, label) in _structureFields) _text(key, label, enabled),
+          for (final (key, label) in _structureFields)
+            _text(key, label, enabled),
         ]),
         if (withAbScan) _abScanSection(canWrite),
         _section('Ташхис / Тавсия (заключение)', [
+          if (enabled) _frequentDiagnosisChips(),
           _text('diagnosis', 'Ташхис (диагноз)', enabled, maxLines: 2),
           _text('icd10', 'МКБ-10 (код)', enabled),
-          _text('recommendations', 'Тавсия (рекомендации)', enabled, maxLines: 2),
+          _text(
+            'recommendations',
+            'Тавсия (рекомендации)',
+            enabled,
+            maxLines: 2,
+          ),
         ]),
         const SizedBox(height: 12),
         if (canWrite)
@@ -508,15 +661,80 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
             onPressed: (_saving || _visitId == null) ? null : _save,
             icon: _saving
                 ? const SizedBox(
-                    height: 16, width: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.save_outlined),
             label: const Text('Сохранить осмотр'),
           )
         else
-          const Text('Режим просмотра — нет права exams.write',
-              textAlign: TextAlign.center),
+          const Text(
+            'Режим просмотра — нет права exams.write',
+            textAlign: TextAlign.center,
+          ),
       ],
+    );
+  }
+
+  /// Баннер «Восстановлен черновик»: врач решает — оставить восстановленный
+  /// ввод или вернуть серверную версию (черновик при этом удаляется).
+  Widget _draftBanner() {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      color: scheme.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        child: Row(
+          children: [
+            Icon(
+              Icons.history_edu_outlined,
+              size: 18,
+              color: scheme.onTertiaryContainer,
+            ),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Восстановлен черновик (не сохранён)')),
+            TextButton(
+              onPressed: () => setState(() => _draftRestored = false),
+              child: const Text('Оставить'),
+            ),
+            TextButton(onPressed: _discardDraft, child: const Text('Отменить')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// «Отменить» в баннере черновика: форма — из серверного осмотра,
+  /// черновик — в корзину.
+  Future<void> _discardDraft() async {
+    final visitId = _visitId;
+    if (visitId == null) return;
+    _populate(_exam);
+    _dirty = false;
+    setState(() => _draftRestored = false);
+    await ref.read(examDraftStoreProvider).clearDraft(visitId);
+  }
+
+  /// Чипы частых диагнозов текущего врача — тап подставляет текст в «Ташхис».
+  Widget _frequentDiagnosisChips() {
+    final frequent = ref.watch(frequentDiagnosesProvider).valueOrNull;
+    if (frequent == null || frequent.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          for (final d in frequent)
+            ActionChip(
+              visualDensity: VisualDensity.compact,
+              label: Text('${d.diagnosis} ×${d.count}'),
+              onPressed: () => _c['diagnosis']!.text = d.diagnosis,
+            ),
+        ],
+      ),
     );
   }
 
@@ -539,17 +757,19 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
       children: [
         Text(title, style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 6),
-        Row(children: [
-          Expanded(child: _text('${eye}_va', 'Visus (б/к)', enabled)),
-          const SizedBox(width: 8),
-          Expanded(child: _text('${eye}_sph', 'sph', enabled)),
-          const SizedBox(width: 8),
-          Expanded(child: _text('${eye}_cyl', 'cyl', enabled)),
-          const SizedBox(width: 8),
-          Expanded(child: _text('${eye}_axis', 'ax (0–180)', enabled)),
-          const SizedBox(width: 8),
-          Expanded(child: _text('${eye}_va_cc', 'Visus с корр.', enabled)),
-        ]),
+        Row(
+          children: [
+            Expanded(child: _text('${eye}_va', 'Visus (б/к)', enabled)),
+            const SizedBox(width: 8),
+            Expanded(child: _text('${eye}_sph', 'sph', enabled)),
+            const SizedBox(width: 8),
+            Expanded(child: _text('${eye}_cyl', 'cyl', enabled)),
+            const SizedBox(width: 8),
+            Expanded(child: _text('${eye}_axis', 'ax (0–180)', enabled)),
+            const SizedBox(width: 8),
+            Expanded(child: _text('${eye}_va_cc', 'Visus с корр.', enabled)),
+          ],
+        ),
       ],
     );
   }
@@ -642,7 +862,9 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
             children: [
               for (final e in items)
                 ExpansionTile(
-                  title: Text('${e.examDate ?? '—'} · ${e.diagnosis ?? 'без диагноза'}'),
+                  title: Text(
+                    '${e.examDate ?? '—'} · ${e.diagnosis ?? 'без диагноза'}',
+                  ),
                   childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   expandedCrossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -650,7 +872,8 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                     Text(e.visusLine('OS')),
                     if (e.iopOd != null || e.iopOs != null)
                       Text('ВГД: OD ${e.iopOd ?? '—'} / OS ${e.iopOs ?? '—'}'),
-                    if (e.recommendations != null) Text('Тавсия: ${e.recommendations}'),
+                    if (e.recommendations != null)
+                      Text('Тавсия: ${e.recommendations}'),
                   ],
                 ),
             ],
@@ -663,7 +886,14 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
 
 /// Расширения, которые принимает backend для файла B-скана.
 const _scanExtensions = <String>[
-  'jpg', 'jpeg', 'png', 'bmp', 'tif', 'tiff', 'dcm', 'pdf',
+  'jpg',
+  'jpeg',
+  'png',
+  'bmp',
+  'tif',
+  'tiff',
+  'dcm',
+  'pdf',
 ];
 
 /// Прикреплённые к визиту результаты A/B-скана (CAS-2000BER): снимки,
@@ -702,10 +932,12 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
 
   void _snack(String message, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
   }
 
   Future<void> _saveToDisk(Uint8List bytes, String filename) async {
@@ -723,8 +955,9 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
     if (_previewingId != null) return;
     setState(() => _previewingId = r.id);
     try {
-      final bytes =
-          await ref.read(devicesRepositoryProvider).resultFileBytes(r.id);
+      final bytes = await ref
+          .read(devicesRepositoryProvider)
+          .resultFileBytes(r.id);
       if (!mounted) return;
       final name = _displayName(r);
       final isImage = _looksLikeImage(name) || _looksLikeImage(r.filePath);
@@ -742,7 +975,11 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
   }
 
   Widget _imageDialog(
-      BuildContext dialogContext, DeviceResult r, Uint8List bytes, String name) {
+    BuildContext dialogContext,
+    DeviceResult r,
+    Uint8List bytes,
+    String name,
+  ) {
     return Dialog(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760, maxHeight: 620),
@@ -752,9 +989,11 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(name,
-                  style: Theme.of(dialogContext).textTheme.titleMedium,
-                  overflow: TextOverflow.ellipsis),
+              Text(
+                name,
+                style: Theme.of(dialogContext).textTheme.titleMedium,
+                overflow: TextOverflow.ellipsis,
+              ),
               const SizedBox(height: 12),
               Flexible(
                 child: Image.memory(
@@ -763,10 +1002,11 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
                   errorBuilder: (_, _, _) => Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                        'Не удалось отобразить снимок — формат не поддерживается. '
-                        'Скачайте файл, чтобы открыть его локально.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(dialogContext).textTheme.bodyMedium),
+                      'Не удалось отобразить снимок — формат не поддерживается. '
+                      'Скачайте файл, чтобы открыть его локально.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(dialogContext).textTheme.bodyMedium,
+                    ),
                   ),
                 ),
               ),
@@ -794,7 +1034,11 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
   }
 
   Widget _downloadDialog(
-      BuildContext dialogContext, DeviceResult r, Uint8List bytes, String name) {
+    BuildContext dialogContext,
+    DeviceResult r,
+    Uint8List bytes,
+    String name,
+  ) {
     return AlertDialog(
       title: const Text('Файл результата'),
       content: ListTile(
@@ -841,8 +1085,10 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
           .where((d) => d.deviceType == 'ab_ultrasound' && d.status == 'active')
           .firstOrNull;
       if (device == null) {
-        _snack('Активный A/B-сканер не зарегистрирован — загрузка невозможна',
-            error: true);
+        _snack(
+          'Активный A/B-сканер не зарегистрирован — загрузка невозможна',
+          error: true,
+        );
         return;
       }
       await repo.uploadResultFile(
@@ -864,10 +1110,8 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
   @override
   Widget build(BuildContext context) {
     final results = ref.watch(visitDeviceResultsProvider(widget.visitId));
-    final canUpload = ref
-            .watch(authControllerProvider)
-            .user
-            ?.can('device_results.create') ??
+    final canUpload =
+        ref.watch(authControllerProvider).user?.can('device_results.create') ??
         false;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -881,8 +1125,10 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
             if (scans.isEmpty) {
               return Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Прикреплённых сканов нет.',
-                    style: Theme.of(context).textTheme.bodySmall),
+                child: Text(
+                  'Прикреплённых сканов нет.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               );
             }
             return Column(
@@ -894,14 +1140,19 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
                     leading: const Icon(Icons.image_outlined),
                     title: Text(_displayName(r)),
                     subtitle: Text(
-                        '${r.resultType} · ${r.measuredAt.replaceFirst('T', ' ').split('.').first}'),
+                      '${r.resultType} · ${r.measuredAt.replaceFirst('T', ' ').split('.').first}',
+                    ),
                     trailing: r.filePath == null
                         ? null
                         : (_previewingId == r.id
-                            ? const SizedBox(
-                                height: 16, width: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.visibility_outlined)),
+                              ? const SizedBox(
+                                  height: 16,
+                                  width: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.visibility_outlined)),
                     onTap: r.filePath == null ? null : () => _openPreview(r),
                   ),
               ],
@@ -915,8 +1166,10 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
               onPressed: _uploading ? null : _upload,
               icon: _uploading
                   ? const SizedBox(
-                      height: 16, width: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2))
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : const Icon(Icons.upload_file_outlined),
               label: const Text('Загрузить скан'),
             ),

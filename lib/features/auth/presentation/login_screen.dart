@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/storage/ui_prefs.dart';
 import '../application/auth_controller.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -11,17 +12,38 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  // Pre-filled with the seeded director account for a one-click demo.
-  final _email = TextEditingController(text: 'director@kozshifo.uz');
-  final _password = TextEditingController(text: 'Director!2026');
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
+  bool _obscurePassword = true;
+  bool _remember = true;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _prefillRememberedEmail();
+  }
+
+  /// Restores the last remembered email (if «Запомнить логин» was on) and
+  /// jumps the cursor straight to the password — one field away from working.
+  Future<void> _prefillRememberedEmail() async {
+    final saved = await ref.read(uiPrefsProvider).readRememberedEmail();
+    if (!mounted || saved == null || saved.isEmpty) return;
+    if (_email.text.isNotEmpty) return; // user already started typing
+    setState(() => _email.text = saved);
+    _passwordFocus.requestFocus();
+  }
 
   @override
   void dispose() {
     _email.dispose();
     _password.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -31,8 +53,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _loading = true;
       _error = null;
     });
+    // Captured before any await: on success the router disposes this screen.
+    final prefs = ref.read(uiPrefsProvider);
+    final auth = ref.read(authControllerProvider.notifier);
+    final email = _email.text.trim();
     try {
-      await ref.read(authControllerProvider.notifier).login(_email.text.trim(), _password.text);
+      await auth.login(email, _password.text);
+      // Persist (or clear) the remembered email only after a successful login.
+      await prefs.writeRememberedEmail(_remember ? email : null);
       // Router redirect handles navigation on success.
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -72,7 +100,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       const SizedBox(height: 28),
                       TextFormField(
                         controller: _email,
+                        focusNode: _emailFocus,
+                        autofocus: true,
                         keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
                         decoration: const InputDecoration(
                             labelText: 'Email', prefixIcon: Icon(Icons.person_outline)),
                         validator: (v) => (v == null || !v.contains('@')) ? 'Введите email' : null,
@@ -80,17 +112,40 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       const SizedBox(height: 16),
                       TextFormField(
                         controller: _password,
-                        obscureText: true,
+                        focusNode: _passwordFocus,
+                        obscureText: _obscurePassword,
+                        textInputAction: TextInputAction.done,
                         onFieldSubmitted: (_) => _submit(),
-                        decoration: const InputDecoration(
-                            labelText: 'Пароль', prefixIcon: Icon(Icons.lock_outline)),
+                        decoration: InputDecoration(
+                          labelText: 'Пароль',
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          suffixIcon: IconButton(
+                            tooltip: _obscurePassword ? 'Показать пароль' : 'Скрыть пароль',
+                            icon: Icon(_obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined),
+                            onPressed: () =>
+                                setState(() => _obscurePassword = !_obscurePassword),
+                          ),
+                        ),
                         validator: (v) => (v == null || v.isEmpty) ? 'Введите пароль' : null,
+                      ),
+                      const SizedBox(height: 8),
+                      CheckboxListTile(
+                        value: _remember,
+                        onChanged: _loading
+                            ? null
+                            : (v) => setState(() => _remember = v ?? true),
+                        title: const Text('Запомнить логин'),
+                        controlAffinity: ListTileControlAffinity.leading,
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: 16),
                         Text(_error!, style: TextStyle(color: scheme.error)),
                       ],
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 16),
                       FilledButton(
                         onPressed: _loading ? null : _submit,
                         child: _loading

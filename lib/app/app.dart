@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/theme/theme_controller.dart';
 import 'router.dart';
 import 'theme.dart';
 
@@ -15,6 +16,7 @@ class KozShifoApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: KozTheme.light(),
       darkTheme: KozTheme.dark(),
+      themeMode: ref.watch(themeModeProvider),
       routerConfig: router,
     );
   }

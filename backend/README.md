@@ -129,6 +129,7 @@ tests/
 | Notifications | `GET /notifications` — log/Telegram ledger (low-stock alerts fire on every write-off path) |
 | Timeline | `GET /patients/{id}/timeline` — automatic chronological history (visits, payments, exams, devices, operations, treatments) |
 | Insights | `GET /dashboard/insights` — owner attention list (criticals auto-notify, 24h debounce). Visits carry an auto-managed `flow_status` (event-driven, no manual writes) |
+| Search | `GET /search?q=` — one box for patients (name/phone/MRN), visits, receipts; sections permission-scoped. `GET /exams/frequent-diagnoses` — the doctor's top-10 for one-tap reuse |
 | Devices | `GET/POST/PATCH /devices`, `POST/GET /devices/{id}/results`, `POST /devices/{id}/results/file` (multipart B-scan), `GET /device-results/{id}/file`, `GET /visits/{id}/device-results`, `POST /visits/{id}/exam/apply-refraction?result_id=…` |
 
 ## Migrations (Alembic)

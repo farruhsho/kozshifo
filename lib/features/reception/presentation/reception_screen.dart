@@ -9,7 +9,8 @@ import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../patients/data/patients_repository.dart';
 import '../../patients/domain/patient.dart';
-import '../../patients/presentation/patients_screen.dart' show RegisterPatientDialog;
+import '../../patients/presentation/patients_screen.dart'
+    show RegisterPatientDialog;
 import '../data/reception_repository.dart';
 import '../domain/payment_result.dart';
 import '../domain/reception_visit.dart';
@@ -30,6 +31,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   Timer? _debounce;
   List<Patient> _found = const [];
   bool _searching = false;
+  String _lastQuery = '';
 
   Patient? _patient;
   final Map<Service, int> _cart = {};
@@ -48,17 +50,23 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
 
   void _onSearchChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () => _search(value.trim()));
+    _debounce = Timer(
+      const Duration(milliseconds: 350),
+      () => _search(value.trim()),
+    );
   }
 
   Future<void> _search(String q) async {
+    _lastQuery = q;
     if (q.isEmpty) {
       setState(() => _found = const []);
       return;
     }
     setState(() => _searching = true);
     try {
-      final page = await ref.read(patientsRepositoryProvider).list(q: q, limit: 8);
+      final page = await ref
+          .read(patientsRepositoryProvider)
+          .list(q: q, limit: 8);
       if (mounted) setState(() => _found = page.items);
     } catch (e) {
       if (mounted) _snack('$e', error: true);
@@ -67,10 +75,17 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
   }
 
-  Future<void> _registerNew() async {
+  /// Похоже на телефон: только цифры/+/пробелы/дефисы и минимум 7 цифр —
+  /// тогда «пациента нет» превращается в регистрацию с этим номером.
+  static bool _looksLikePhone(String q) {
+    if (!RegExp(r'^[0-9+\s\-]+$').hasMatch(q)) return false;
+    return RegExp(r'[0-9]').allMatches(q).length >= 7;
+  }
+
+  Future<void> _registerNew({String? initialPhone}) async {
     final created = await showDialog<Patient>(
       context: context,
-      builder: (_) => const RegisterPatientDialog(),
+      builder: (_) => RegisterPatientDialog(initialPhone: initialPhone),
     );
     if (created != null) setState(() => _patient = created);
   }
@@ -90,7 +105,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
     setState(() => _busy = true);
     try {
-      final visit = await ref.read(receptionRepositoryProvider).createVisit(
+      final visit = await ref
+          .read(receptionRepositoryProvider)
+          .createVisit(
             patientId: patient.id,
             branchId: branchId,
             items: [
@@ -117,13 +134,17 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     final remaining = double.tryParse(result.visitBalance) ?? 0;
     if (remaining > 0) {
       // Частичная оплата: обновляем остаток и оставляем кнопку оплаты доступной.
-      setState(() => _visit = visit.copyWith(
-            balance: result.visitBalance,
-            status: result.visitStatus,
-          ));
-      _snack('Чек ${result.payment.receiptNo}: принято '
-          '${formatMoney(result.payment.amount)}. '
-          'Остаток: ${formatMoney(result.visitBalance)}');
+      setState(
+        () => _visit = visit.copyWith(
+          balance: result.visitBalance,
+          status: result.visitStatus,
+        ),
+      );
+      _snack(
+        'Чек ${result.payment.receiptNo}: принято '
+        '${formatMoney(result.payment.amount)}. '
+        'Остаток: ${formatMoney(result.visitBalance)}',
+      );
     } else {
       setState(() => _result = result);
     }
@@ -151,15 +172,18 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       _visit = null;
       _result = null;
       _found = const [];
+      _lastQuery = '';
       _searchController.clear();
     });
   }
 
   void _snack(String message, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      ),
+    );
   }
 
   // ── UI ─────────────────────────────────────────────────────────────────────
@@ -168,7 +192,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider).user;
     final canBill =
-        (user?.can('visits.create') ?? false) && (user?.can('payments.create') ?? false);
+        (user?.can('visits.create') ?? false) &&
+        (user?.can('payments.create') ?? false);
     final canRegister = user?.can('patients.create') ?? false;
     final services = ref.watch(activeServicesProvider);
     final wide = MediaQuery.sizeOf(context).width >= 1000;
@@ -219,8 +244,10 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                       ? const Padding(
                           padding: EdgeInsets.all(12),
                           child: SizedBox(
-                              height: 16, width: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
                         )
                       : const Icon(Icons.search),
                   isDense: true,
@@ -240,8 +267,29 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             dense: true,
             leading: CircleAvatar(radius: 14, child: Text(p.initials)),
             title: Text(p.fullName),
-            subtitle: Text([p.mrn, if (p.phone != null) p.phone!].join('  ·  ')),
+            subtitle: Text(
+              [p.mrn, if (p.phone != null) p.phone!].join('  ·  '),
+            ),
             onTap: () => setState(() => _patient = p),
+          ),
+        // Телефон набран, пациента нет → регистрация в один тап с этим номером.
+        if (canRegister &&
+            _found.isEmpty &&
+            !_searching &&
+            _looksLikePhone(_lastQuery))
+          ListTile(
+            leading: Icon(
+              Icons.person_add_alt_1,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            title: Text(
+              'Зарегистрировать нового пациента с телефоном $_lastQuery',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            onTap: () => _registerNew(initialPhone: _lastQuery),
           ),
       ] else
         ListTile(
@@ -281,8 +329,13 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                     IconButton(
                       icon: const Icon(Icons.add_circle_outline),
                       onPressed: (canBill && !locked)
-                          ? () => setState(() =>
-                              _cart.update(s, (q) => q + 1, ifAbsent: () => 1))
+                          ? () => setState(
+                              () => _cart.update(
+                                s,
+                                (q) => q + 1,
+                                ifAbsent: () => 1,
+                              ),
+                            )
                           : null,
                     ),
                   ],
@@ -297,8 +350,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   Widget _cartSection(bool canBill) {
     final result = _result;
     final visit = _visit;
-    final preTotal =
-        cartTotalValue(_cart.entries.map((e) => (e.key.price, e.value)));
+    final preTotal = cartTotalValue(
+      _cart.entries.map((e) => (e.key.price, e.value)),
+    );
 
     return _card('3. Оплата', [
       if (_cart.isEmpty && visit == null)
@@ -307,7 +361,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         for (final e in _cart.entries)
           Row(
             children: [
-              Expanded(child: Text(e.key.name, overflow: TextOverflow.ellipsis)),
+              Expanded(
+                child: Text(e.key.name, overflow: TextOverflow.ellipsis),
+              ),
               if (visit == null) ...[
                 IconButton(
                   icon: const Icon(Icons.remove_circle_outline, size: 20),
@@ -338,10 +394,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
               visit != null
                   ? formatMoney(visit.totalAmount)
                   : '≈ ${formatMoney(preTotal.toStringAsFixed(2))}',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -356,8 +411,10 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
               : null,
           icon: _busy
               ? const SizedBox(
-                  height: 16, width: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  height: 16,
+                  width: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Icon(Icons.assignment_add),
           label: const Text('Открыть визит'),
         )
@@ -403,14 +460,17 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Оплата принята',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(fontWeight: FontWeight.bold)),
+          Text(
+            'Оплата принята',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 6),
-          Text('Чек: ${r.payment.receiptNo} · ${formatMoney(r.payment.amount)}'
-              ' (${r.payment.method})'),
+          Text(
+            'Чек: ${r.payment.receiptNo} · ${formatMoney(r.payment.amount)}'
+            ' (${r.payment.method})',
+          ),
           Text('Остаток по визиту: ${formatMoney(r.visitBalance)}'),
           if (r.queueTicketNumber != null)
             Padding(
@@ -419,11 +479,12 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                 children: [
                   const Icon(Icons.confirmation_number_outlined),
                   const SizedBox(width: 8),
-                  Text('Талон диагностики: ${r.queueTicketNumber}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    'Талон диагностики: ${r.queueTicketNumber}',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -466,8 +527,9 @@ class _PaymentDialog extends ConsumerStatefulWidget {
 }
 
 class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
-  late final TextEditingController _amount =
-      TextEditingController(text: widget.visit.balance);
+  late final TextEditingController _amount = TextEditingController(
+    text: widget.visit.balance,
+  );
   final _room = TextEditingController(text: 'Каб. 1');
   String _method = 'cash';
   bool _paying = false;
@@ -486,7 +548,9 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
       _error = null;
     });
     try {
-      final result = await ref.read(receptionRepositoryProvider).takePayment(
+      final result = await ref
+          .read(receptionRepositoryProvider)
+          .takePayment(
             visitId: widget.visit.id,
             // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
             amount: _amount.text.trim().replaceAll(',', '.'),
@@ -528,12 +592,15 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
           TextField(
             controller: _room,
             decoration: const InputDecoration(
-                labelText: 'Кабинет (для талона очереди)'),
+              labelText: 'Кабинет (для талона очереди)',
+            ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ],
         ],
       ),
@@ -546,8 +613,10 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
           onPressed: _paying ? null : _pay,
           child: _paying
               ? const SizedBox(
-                  height: 18, width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Оплатить'),
         ),
       ],

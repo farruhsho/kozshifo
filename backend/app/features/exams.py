@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -21,6 +21,7 @@ from app.models.exam import EyeExam
 from app.models.patient import Patient
 from app.models.visit import Visit
 from app.schemas.exam import EyeExamOut, EyeExamUpsert
+from app.schemas.search import FrequentDiagnosis
 
 router = APIRouter(tags=["EMR"])
 
@@ -98,6 +99,29 @@ def exam_card_pdf(visit_id: UUID, db: Annotated[Session, Depends(get_db)]) -> Re
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="card-025-8-{visit.visit_no}.pdf"'},
     )
+
+
+# NOTE: literal path — safe from route shadowing because this router has no
+# parameterized /exams/{...} sibling (its routes live under /visits/{id}/exam
+# and /patients/{id}/exams).
+@router.get("/exams/frequent-diagnoses", response_model=list[FrequentDiagnosis])
+def frequent_diagnoses(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("exams.read"))],
+) -> list[FrequentDiagnosis]:
+    """The CURRENT doctor's top-10 most-used diagnoses, for one-click reuse."""
+    rows = db.execute(
+        select(EyeExam.diagnosis, func.count().label("cnt"))
+        .where(
+            EyeExam.doctor_id == actor.id,
+            EyeExam.diagnosis.is_not(None),
+            func.trim(EyeExam.diagnosis) != "",
+        )
+        .group_by(EyeExam.diagnosis)
+        .order_by(func.count().desc(), EyeExam.diagnosis.asc())
+        .limit(10)
+    ).all()
+    return [FrequentDiagnosis(diagnosis=diagnosis, count=count) for diagnosis, count in rows]
 
 
 @router.get(

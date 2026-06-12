@@ -99,9 +99,13 @@ def skip_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
     return _transition(db, ticket_id, actor, "skipped", None)
 
 
-@router.get("/tv-board/{branch_id}", response_model=TVBoard,
-            dependencies=[Depends(require_permission("queue.read"))])
+@router.get("/tv-board/{branch_id}", response_model=TVBoard)
 def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)]) -> TVBoard:
+    """Public (no auth): consumed by the standalone TV page at /tv/{branch_id}.
+
+    Deliberately exposes only privacy-safe data — ticket numbers, rooms and
+    anonymized patient labels (see `_patient_label`). Keep it that way.
+    """
     rows = list(
         db.execute(
             select(QueueTicket)

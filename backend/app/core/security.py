@@ -31,6 +31,9 @@ def create_access_token(subject: str, extra_claims: dict | None = None) -> str:
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
         "type": "access",
+        # iat has 1-second resolution — without jti two logins in the same
+        # second mint byte-identical tokens; jti also enables revocation later.
+        "jti": uuid.uuid4().hex,
     }
     if extra_claims:
         payload.update(extra_claims)

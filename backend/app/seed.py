@@ -18,6 +18,7 @@ from app.core.security import hash_password
 from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device
+from app.models.inventory import InventoryCategory, Product, Supplier
 from app.models.rbac import Permission, Role
 from app.models.user import User
 
@@ -136,6 +137,43 @@ def _seed_devices(db: Session, branch: Branch) -> None:
     db.flush()
 
 
+# Warehouse starter data. SKUs are stable contracts — operation templates and
+# tests reference them. No stock batches are seeded: stock arrives via receipts.
+_INVENTORY_PRODUCTS: list[tuple[str, str, str, str, Decimal, str]] = [
+    # (sku, name, product_type, unit, min_stock, category)
+    ("VISC-001", "Вискоэластик (метилцеллюлоза) 1 мл", "consumable", "шт", Decimal("10"), "Расходные материалы"),
+    ("IOL-001", "ИОЛ моноблочная акриловая", "material", "шт", Decimal("5"), "Расходные материалы"),
+    ("KNIFE-275", "Нож офтальмологический 2.75 мм", "instrument", "шт", Decimal("5"), "Инструменты"),
+    ("SYR-1", "Шприц 1 мл", "consumable", "шт", Decimal("50"), "Расходные материалы"),
+    ("GLOVES-ST", "Перчатки стерильные (пара)", "consumable", "пара", Decimal("50"), "Расходные материалы"),
+]
+
+
+def _seed_inventory(db: Session) -> None:
+    categories: dict[str, InventoryCategory] = {}
+    for name in ("Расходные материалы", "Лекарства", "Инструменты"):
+        category = db.execute(
+            select(InventoryCategory).where(InventoryCategory.name == name)
+        ).scalar_one_or_none()
+        if category is None:
+            category = InventoryCategory(name=name)
+            db.add(category)
+        categories[name] = category
+    db.flush()
+
+    supplier_name = "ООО MedSupply Tashkent"
+    if db.execute(select(Supplier).where(Supplier.name == supplier_name)).scalar_one_or_none() is None:
+        db.add(Supplier(name=supplier_name, phone="+998 71 200 00 00", address="Toshkent"))
+
+    for sku, name, product_type, unit, min_stock, category_name in _INVENTORY_PRODUCTS:
+        if db.execute(select(Product).where(Product.sku == sku)).scalar_one_or_none() is None:
+            db.add(Product(
+                sku=sku, name=name, product_type=product_type, unit=unit,
+                min_stock=min_stock, category_id=categories[category_name].id,
+            ))
+    db.flush()
+
+
 def run_seed() -> None:
     db = SessionLocal()
     try:
@@ -145,6 +183,7 @@ def run_seed() -> None:
         _seed_director(db, branch, roles)
         _seed_services(db)
         _seed_devices(db, branch)
+        _seed_inventory(db)
         db.commit()
     finally:
         db.close()

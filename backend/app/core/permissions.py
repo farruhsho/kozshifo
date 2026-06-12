@@ -52,6 +52,10 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("devices.manage", "devices", "Register / edit medical devices"),
     ("device_results.read", "devices", "View device measurement results"),
     ("device_results.create", "devices", "Record / import device results"),
+    # Inventory / warehouse
+    ("inventory.read", "inventory", "View warehouse stock & catalog"),
+    ("inventory.manage", "inventory", "Manage products / suppliers / receipts"),
+    ("inventory.write_off", "inventory", "Write off stock"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("audit.read", "audit", "View audit log"),
@@ -80,5 +84,10 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "queue.read", "services.read",
         "exams.read", "exams.write",
         "devices.read", "device_results.read", "device_results.create",
+        "inventory.read",
+    ],
+    "Warehouse": [
+        "inventory.read", "inventory.manage", "inventory.write_off",
+        "branches.read",
     ],
 }

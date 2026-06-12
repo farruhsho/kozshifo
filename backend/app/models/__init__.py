@@ -4,6 +4,7 @@ from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device, DeviceResult
 from app.models.exam import EyeExam
+from app.models.inventory import InventoryCategory, Product, StockBatch, StockMovement, Supplier
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -17,13 +18,18 @@ __all__ = [
     "Device",
     "DeviceResult",
     "EyeExam",
+    "InventoryCategory",
     "Permission",
+    "Product",
     "Role",
     "Patient",
     "Payment",
     "QueueTicket",
     "Service",
     "ServiceCategory",
+    "StockBatch",
+    "StockMovement",
+    "Supplier",
     "User",
     "Visit",
     "VisitItem",

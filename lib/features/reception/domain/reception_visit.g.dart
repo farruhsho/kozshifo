@@ -15,6 +15,11 @@ _ReceptionVisit _$ReceptionVisitFromJson(Map<String, dynamic> json) =>
       totalAmount: json['total_amount'] as String,
       paidAmount: json['paid_amount'] as String,
       balance: json['balance'] as String,
+      discountPercent: json['discount_percent'] as String?,
+      discountAmount: json['discount_amount'] as String?,
+      discountReason: json['discount_reason'] as String?,
+      discountValue: json['discount_value'] as String?,
+      payable: json['payable'] as String?,
       items:
           (json['items'] as List<dynamic>?)
               ?.map(
@@ -33,6 +38,11 @@ Map<String, dynamic> _$ReceptionVisitToJson(_ReceptionVisit instance) =>
       'total_amount': instance.totalAmount,
       'paid_amount': instance.paidAmount,
       'balance': instance.balance,
+      'discount_percent': instance.discountPercent,
+      'discount_amount': instance.discountAmount,
+      'discount_reason': instance.discountReason,
+      'discount_value': instance.discountValue,
+      'payable': instance.payable,
       'items': instance.items.map((e) => e.toJson()).toList(),
     };
 

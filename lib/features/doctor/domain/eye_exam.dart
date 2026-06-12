@@ -32,6 +32,12 @@ abstract class EyeExam with _$EyeExam {
     int? osAxis,
     String? odVaCc,
     String? osVaCc,
+    // VA with the patient's own glasses/lenses (TZ «своими» — optional)
+    String? odVaOwn,
+    String? osVaOwn,
+
+    // Visual field — поле зрения (TZ Modul 4)
+    String? visualField,
 
     // Tonometry, mmHg
     String? iopOd,

@@ -46,13 +46,16 @@ const _allFieldKeys = <String>[
   'od_cyl',
   'od_axis',
   'od_va_cc',
+  'od_va_own',
   'os_va',
   'os_sph',
   'os_cyl',
   'os_axis',
   'os_va_cc',
+  'os_va_own',
   'iop_od',
   'iop_os',
+  'visual_field',
   'orbit',
   'eyeball',
   'eyelids',
@@ -149,13 +152,16 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     _c['od_cyl']!.text = s(exam?.odCyl);
     _c['od_axis']!.text = s(exam?.odAxis);
     _c['od_va_cc']!.text = s(exam?.odVaCc);
+    _c['od_va_own']!.text = s(exam?.odVaOwn);
     _c['os_va']!.text = s(exam?.osVa);
     _c['os_sph']!.text = s(exam?.osSph);
     _c['os_cyl']!.text = s(exam?.osCyl);
     _c['os_axis']!.text = s(exam?.osAxis);
     _c['os_va_cc']!.text = s(exam?.osVaCc);
+    _c['os_va_own']!.text = s(exam?.osVaOwn);
     _c['iop_od']!.text = s(exam?.iopOd);
     _c['iop_os']!.text = s(exam?.iopOs);
+    _c['visual_field']!.text = s(exam?.visualField);
     _c['orbit']!.text = s(exam?.orbit);
     _c['eyeball']!.text = s(exam?.eyeball);
     _c['eyelids']!.text = s(exam?.eyelids);
@@ -639,6 +645,9 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
             ],
           ),
         ]),
+        _section('Кўриш майдони (поле зрения)', [
+          _text('visual_field', 'Поле зрения', enabled, maxLines: 3),
+        ]),
         _section('Биомикроскопия (по бланку)', [
           for (final (key, label) in _structureFields)
             _text(key, label, enabled),
@@ -768,6 +777,10 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
             Expanded(child: _text('${eye}_axis', 'ax (0–180)', enabled)),
             const SizedBox(width: 8),
             Expanded(child: _text('${eye}_va_cc', 'Visus с корр.', enabled)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _text('${eye}_va_own', 'Своими очками', enabled),
+            ),
           ],
         ),
       ],

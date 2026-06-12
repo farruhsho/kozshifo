@@ -47,6 +47,35 @@ class ReceptionRepository {
     }
   }
 
+  /// Sets / replaces the reception discount on an open visit — percent XOR
+  /// amount, with a mandatory reason — or removes it ([clear] = true).
+  /// Money math stays on the server: the response is the recalculated visit
+  /// (discount_value / payable / balance). 409 — visit closed or the discount
+  /// would drop payable below what is already paid; 422 — validation.
+  Future<ReceptionVisit> setDiscount({
+    required String visitId,
+    String? percent,
+    String? amount,
+    String? reason,
+    bool clear = false,
+  }) async {
+    try {
+      final resp = await _dio.post(
+        '/visits/$visitId/discount',
+        data: clear
+            ? const {'clear': true}
+            : {
+                'discount_percent': ?percent,
+                'discount_amount': ?amount,
+                'discount_reason': reason,
+              },
+      );
+      return ReceptionVisit.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Aborts an unpaid open visit (patient declined / wrong services billed).
   Future<void> cancelVisit(String visitId) async {
     try {

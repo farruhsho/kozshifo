@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/api_exception.dart';
 import '../../../core/utils/flow_labels.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
@@ -150,6 +151,18 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
   }
 
+  /// Скидка ресепшена (процент XOR сумма + обязательное основание).
+  /// Пересчёт payable/balance делает сервер — диалог возвращает обновлённый визит.
+  Future<void> _editDiscount() async {
+    final visit = _visit;
+    if (visit == null) return;
+    final updated = await showDialog<ReceptionVisit>(
+      context: context,
+      builder: (_) => _DiscountDialog(visit: visit),
+    );
+    if (updated != null && mounted) setState(() => _visit = updated);
+  }
+
   Future<void> _cancelVisit() async {
     final visit = _visit;
     if (visit == null) return;
@@ -195,6 +208,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         (user?.can('visits.create') ?? false) &&
         (user?.can('payments.create') ?? false);
     final canRegister = user?.can('patients.create') ?? false;
+    final canDiscount = user?.can('visits.update') ?? false;
     final services = ref.watch(activeServicesProvider);
     final wide = MediaQuery.sizeOf(context).width >= 1000;
 
@@ -206,7 +220,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         _servicesSection(services, canBill),
       ],
     );
-    final right = _cartSection(canBill);
+    final right = _cartSection(canBill, canDiscount);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Ресепшен')),
@@ -347,7 +361,27 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     ]);
   }
 
-  Widget _cartSection(bool canBill) {
+  /// Скидка установлена сервером (процент XOR сумма) — тогда вместо «Итого»
+  /// показываем Сумма / Скидка / К оплате, и должная цифра — payable.
+  static bool _hasDiscount(ReceptionVisit v) =>
+      v.discountPercent != null || v.discountAmount != null;
+
+  Widget _moneyRow(String label, String value, {bool bold = false}) {
+    final style = bold
+        ? Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)
+        : null;
+    return Row(
+      children: [
+        Text(label, style: style),
+        const Spacer(),
+        Text(value, style: style),
+      ],
+    );
+  }
+
+  Widget _cartSection(bool canBill, bool canDiscount) {
     final result = _result;
     final visit = _visit;
     final preTotal = cartTotalValue(
@@ -386,20 +420,28 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             ],
           ),
         const Divider(),
-        Row(
-          children: [
-            const Text('Итого:'),
-            const Spacer(),
-            Text(
-              visit != null
-                  ? formatMoney(visit.totalAmount)
-                  : '≈ ${formatMoney(preTotal.toStringAsFixed(2))}',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
+        if (visit == null)
+          _moneyRow(
+            'Итого:',
+            '≈ ${formatMoney(preTotal.toStringAsFixed(2))}',
+            bold: true,
+          )
+        else if (!_hasDiscount(visit))
+          _moneyRow('Итого:', formatMoney(visit.totalAmount), bold: true)
+        else ...[
+          _moneyRow('Сумма:', formatMoney(visit.totalAmount)),
+          _moneyRow(
+            'Скидка:',
+            '−${formatMoney(visit.discountValue)}'
+                '${visit.discountReason == null ? '' : ' (${visit.discountReason})'}',
+          ),
+          // payable = total − скидка: именно столько должен пациент.
+          _moneyRow(
+            'К оплате:',
+            formatMoney(visit.payable ?? visit.totalAmount),
+            bold: true,
+          ),
+        ],
       ],
       const SizedBox(height: 12),
       if (result != null)
@@ -419,7 +461,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           label: const Text('Открыть визит'),
         )
       else ...[
-        Text('Визит ${visit.visitNo} · к оплате ${formatMoney(visit.balance)}'),
+        // balance — остаток к доплате (payable − оплачено), его ведёт сервер.
+        Text('Визит ${visit.visitNo} · остаток ${formatMoney(visit.balance)}'),
         const SizedBox(height: 4),
         // Статус пути пациента — read-only, его двигает flow engine на сервере.
         Align(
@@ -437,6 +480,13 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           onPressed: (canBill && !_busy) ? _takePayment : null,
           icon: const Icon(Icons.point_of_sale),
           label: const Text('Принять оплату'),
+        ),
+        const SizedBox(height: 8),
+        // Скидка доступна, пока визит открыт (право visits.update).
+        OutlinedButton.icon(
+          onPressed: (canDiscount && !_busy) ? _editDiscount : null,
+          icon: const Icon(Icons.percent),
+          label: const Text('Скидка'),
         ),
         const SizedBox(height: 8),
         // Аварийный выход: пациент передумал / услуги выбраны неверно.
@@ -584,6 +634,7 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
             items: const [
               DropdownMenuItem(value: 'cash', child: Text('Наличные')),
               DropdownMenuItem(value: 'card', child: Text('Карта')),
+              DropdownMenuItem(value: 'qr', child: Text('QR')),
               DropdownMenuItem(value: 'transfer', child: Text('Перечисление')),
             ],
             onChanged: (v) => setState(() => _method = v ?? 'cash'),
@@ -618,6 +669,223 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Оплатить'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Типовые основания скидки; «Другое» открывает свободный текст.
+const _discountReasons = <String>[
+  'Пенсионер',
+  'Сотрудник',
+  'Повторный пациент',
+  'Акция',
+  'Другое',
+];
+
+/// Диалог скидки: переключатель «Процент / Сумма» (XOR — сервер принимает
+/// ровно одно), обязательное основание, «Убрать скидку» (недоступно после
+/// первой оплаты). Клиентская валидация — инлайн-текстом, ответы сервера
+/// (409 закрытый визит / payable < paid, 422) — SnackBar'ом его текстом.
+class _DiscountDialog extends ConsumerStatefulWidget {
+  const _DiscountDialog({required this.visit});
+
+  final ReceptionVisit visit;
+
+  @override
+  ConsumerState<_DiscountDialog> createState() => _DiscountDialogState();
+}
+
+class _DiscountDialogState extends ConsumerState<_DiscountDialog> {
+  final _value = TextEditingController();
+  final _customReason = TextEditingController();
+  bool _byPercent = true;
+  String? _reason;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // Повторное открытие — редактирование текущей скидки: префилл из визита.
+    final v = widget.visit;
+    _byPercent = v.discountAmount == null;
+    _value.text = v.discountPercent ?? v.discountAmount ?? '';
+    final reason = v.discountReason;
+    if (reason != null) {
+      if (_discountReasons.contains(reason)) {
+        _reason = reason;
+      } else {
+        _reason = 'Другое';
+        _customReason.text = reason;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _value.dispose();
+    _customReason.dispose();
+    super.dispose();
+  }
+
+  bool get _alreadyPaid =>
+      (double.tryParse(widget.visit.paidAmount) ?? 0) > 0;
+
+  Future<void> _apply() async {
+    // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
+    final raw = _value.text.trim().replaceAll(',', '.');
+    final number = double.tryParse(raw);
+    final reason =
+        (_reason == 'Другое' ? _customReason.text.trim() : _reason) ?? '';
+    String? error;
+    if (number == null || number <= 0) {
+      error = _byPercent
+          ? 'Введите процент скидки (больше 0)'
+          : 'Введите сумму скидки (больше 0)';
+    } else if (_byPercent && number > 100) {
+      error = 'Процент скидки не может превышать 100';
+    } else if (reason.isEmpty) {
+      error = 'Укажите основание скидки';
+    }
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    await _send(
+      percent: _byPercent ? raw : null,
+      amount: _byPercent ? null : raw,
+      reason: reason,
+    );
+  }
+
+  Future<void> _send({
+    String? percent,
+    String? amount,
+    String? reason,
+    bool clear = false,
+  }) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final updated = await ref
+          .read(receptionRepositoryProvider)
+          .setDiscount(
+            visitId: widget.visit.id,
+            percent: percent,
+            amount: amount,
+            reason: reason,
+            clear: clear,
+          );
+      if (mounted) Navigator.of(context).pop(updated);
+    } catch (e) {
+      // 409/422 и прочее — текст сервера (ApiException.toString == message).
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e is ApiException ? e.message : '$e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasDiscount =
+        widget.visit.discountPercent != null ||
+        widget.visit.discountAmount != null;
+    return AlertDialog(
+      title: Text('Скидка · визит ${widget.visit.visitNo}'),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: true, label: Text('Процент')),
+                ButtonSegment(value: false, label: Text('Сумма')),
+              ],
+              selected: {_byPercent},
+              onSelectionChanged: (s) =>
+                  setState(() => _byPercent = s.first),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _value,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                labelText: _byPercent ? 'Процент (0–100)' : 'Сумма скидки',
+                suffixText: _byPercent ? '%' : 'сум',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _reason,
+              decoration: const InputDecoration(
+                labelText: 'Основание (обязательно)',
+                isDense: true,
+              ),
+              items: [
+                for (final r in _discountReasons)
+                  DropdownMenuItem(value: r, child: Text(r)),
+              ],
+              onChanged: (v) => setState(() => _reason = v),
+            ),
+            if (_reason == 'Другое') ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _customReason,
+                decoration: const InputDecoration(
+                  labelText: 'Основание (свой вариант)',
+                  isDense: true,
+                ),
+              ),
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        if (hasDiscount)
+          // Снятие скидки разрешено, только пока по визиту ничего не оплачено
+          // (иначе сервер ответит 409) — кнопка гаснет сразу.
+          TextButton(
+            onPressed: (_busy || _alreadyPaid)
+                ? null
+                : () => _send(clear: true),
+            child: const Text('Убрать скидку'),
+          ),
+        FilledButton(
+          onPressed: _busy ? null : _apply,
+          child: _busy
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Применить'),
         ),
       ],
     );

@@ -14,6 +14,13 @@ abstract class ReceptionVisit with _$ReceptionVisit {
     required String totalAmount,
     required String paidAmount,
     required String balance,
+    // Reception discount (TZ Modul 2.2): percent XOR amount + reason.
+    // `payable` (total - discount) is the cashier's due figure, not totalAmount.
+    String? discountPercent,
+    String? discountAmount,
+    String? discountReason,
+    String? discountValue,
+    String? payable,
     @Default(<ReceptionVisitItem>[]) List<ReceptionVisitItem> items,
   }) = _ReceptionVisit;
 

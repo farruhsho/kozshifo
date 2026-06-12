@@ -7,8 +7,8 @@ import '../../features/auth/application/auth_controller.dart';
 import '../../features/search/presentation/search_overlay.dart';
 import '../theme/theme_controller.dart';
 
-class _Destination {
-  const _Destination(
+class AppDestination {
+  const AppDestination(
     this.icon,
     this.selectedIcon,
     this.label,
@@ -24,43 +24,74 @@ class _Destination {
   final String? permission;
 }
 
-const _allDestinations = <_Destination>[
-  _Destination(
+/// Single source of truth for shell navigation AND the router's role-aware
+/// landing/guard: the first destination the user is allowed to see is their
+/// home screen after login.
+const kAppDestinations = <AppDestination>[
+  AppDestination(
     Icons.dashboard_outlined,
     Icons.dashboard,
     'Дашборд',
     '/dashboard',
+    permission: 'dashboard.view',
   ),
-  _Destination(
+  AppDestination(
     Icons.point_of_sale_outlined,
     Icons.point_of_sale,
     'Ресепшен',
     '/reception',
     permission: 'visits.create',
   ),
-  _Destination(
+  AppDestination(
     Icons.confirmation_number_outlined,
     Icons.confirmation_number,
     'Очередь',
     '/queue',
     permission: 'queue.read',
   ),
-  _Destination(Icons.people_outline, Icons.people, 'Пациенты', '/patients'),
-  _Destination(
+  AppDestination(
+    Icons.people_outline,
+    Icons.people,
+    'Пациенты',
+    '/patients',
+    permission: 'patients.read',
+  ),
+  AppDestination(
+    Icons.payments_outlined,
+    Icons.payments,
+    'Финансы',
+    '/finance',
+    permission: 'expenses.read',
+  ),
+  AppDestination(
+    Icons.badge_outlined,
+    Icons.badge,
+    'Учёт времени',
+    '/attendance',
+    permission: 'attendance.read',
+  ),
+  AppDestination(
+    Icons.call_outlined,
+    Icons.call,
+    'Звонки',
+    '/calls',
+    permission: 'calls.read',
+  ),
+  AppDestination(
     Icons.biotech_outlined,
     Icons.biotech,
     'Оборудование',
     '/devices',
     permission: 'devices.read',
   ),
-  _Destination(
+  AppDestination(
     Icons.inventory_2_outlined,
     Icons.inventory_2,
     'Склад',
     '/inventory',
     permission: 'inventory.read',
   ),
-  _Destination(
+  AppDestination(
     Icons.settings_outlined,
     Icons.settings,
     'Администрирование',
@@ -86,7 +117,7 @@ class AppShell extends ConsumerWidget {
     final canSearch = user?.can('patients.read') ?? false;
 
     final destinations = [
-      for (final d in _allDestinations)
+      for (final d in kAppDestinations)
         if (d.permission == null || (user?.can(d.permission!) ?? false)) d,
     ];
 
@@ -112,82 +143,112 @@ class AppShell extends ConsumerWidget {
         // focus still bubbles unhandled keys (like Ctrl+K) up to here.
         child: Focus(
           autofocus: true,
-          child: Row(
-            children: [
-              NavigationRail(
-                extended: extended,
-                selectedIndex: selected,
-                onDestinationSelected: (i) => context.go(destinations[i].route),
-                leading: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.remove_red_eye_outlined,
-                        color: Theme.of(context).colorScheme.primary,
-                        size: 30,
-                      ),
-                      if (canSearch)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: IconButton(
-                            tooltip: 'Поиск (Ctrl+K)',
-                            icon: const Icon(Icons.search),
-                            onPressed: openSearch,
-                          ),
+          child: Builder(
+            builder: (context) {
+              final leading = Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.remove_red_eye_outlined,
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 30,
+                    ),
+                    if (canSearch)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: IconButton(
+                          tooltip: 'Поиск (Ctrl+K)',
+                          icon: const Icon(Icons.search),
+                          onPressed: openSearch,
                         ),
-                    ],
+                      ),
+                  ],
+                ),
+              );
+              final trailing = Expanded(
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (extended && user != null)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                            ),
+                            child: Text(
+                              user.fullName,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        IconButton(
+                          tooltip: 'Тема: ${themeModeLabel(themeMode)}',
+                          icon: const Icon(Icons.brightness_6),
+                          onPressed: () =>
+                              ref.read(themeModeProvider.notifier).cycle(),
+                        ),
+                        IconButton(
+                          tooltip: 'Выйти',
+                          icon: const Icon(Icons.logout),
+                          onPressed: () => ref
+                              .read(authControllerProvider.notifier)
+                              .logout(),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                destinations: [
-                  for (final d in destinations)
-                    NavigationRailDestination(
-                      icon: Icon(d.icon),
-                      selectedIcon: Icon(d.selectedIcon),
-                      label: Text(d.label),
-                    ),
-                ],
-                trailing: Expanded(
-                  child: Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
+              );
+
+              // NavigationRail asserts >= 2 destinations; single-screen roles
+              // (e.g. Склад) get a slim bar with the same leading/trailing.
+              final Widget rail = destinations.length >= 2
+                  ? NavigationRail(
+                      extended: extended,
+                      selectedIndex: selected,
+                      onDestinationSelected: (i) =>
+                          context.go(destinations[i].route),
+                      leading: leading,
+                      destinations: [
+                        for (final d in destinations)
+                          NavigationRailDestination(
+                            icon: Icon(d.icon),
+                            selectedIcon: Icon(d.selectedIcon),
+                            label: Text(d.label),
+                          ),
+                      ],
+                      trailing: trailing,
+                    )
+                  : SizedBox(
+                      width: 80,
                       child: Column(
-                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (extended && user != null)
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              child: Text(
-                                user.fullName,
-                                textAlign: TextAlign.center,
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
+                          leading,
+                          if (destinations.isNotEmpty)
+                            IconButton(
+                              tooltip: destinations.first.label,
+                              isSelected: true,
+                              icon: Icon(destinations.first.selectedIcon),
+                              onPressed: () =>
+                                  context.go(destinations.first.route),
                             ),
-                          IconButton(
-                            tooltip: 'Тема: ${themeModeLabel(themeMode)}',
-                            icon: const Icon(Icons.brightness_6),
-                            onPressed: () =>
-                                ref.read(themeModeProvider.notifier).cycle(),
-                          ),
-                          IconButton(
-                            tooltip: 'Выйти',
-                            icon: const Icon(Icons.logout),
-                            onPressed: () => ref
-                                .read(authControllerProvider.notifier)
-                                .logout(),
-                          ),
+                          trailing,
                         ],
                       ),
-                    ),
-                  ),
-                ),
-              ),
-              const VerticalDivider(width: 1),
-              Expanded(child: child),
-            ],
+                    );
+
+              return Row(
+                children: [
+                  rail,
+                  const VerticalDivider(width: 1),
+                  Expanded(child: child),
+                ],
+              );
+            },
           ),
         ),
       ),

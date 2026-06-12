@@ -84,11 +84,11 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
   }
 
   Future<void> _openRegisterDialog() async {
-    final created = await showDialog<bool>(
+    final created = await showDialog<Patient>(
       context: context,
-      builder: (_) => const _RegisterPatientDialog(),
+      builder: (_) => const RegisterPatientDialog(),
     );
-    if (created == true) ref.invalidate(patientsListProvider);
+    if (created != null) ref.invalidate(patientsListProvider);
   }
 }
 
@@ -137,14 +137,16 @@ class _PatientList extends StatelessWidget {
   }
 }
 
-class _RegisterPatientDialog extends ConsumerStatefulWidget {
-  const _RegisterPatientDialog();
+/// Регистрация пациента. Возвращает созданного [Patient] через `Navigator.pop`
+/// (используется и списком пациентов, и экраном ресепшена).
+class RegisterPatientDialog extends ConsumerStatefulWidget {
+  const RegisterPatientDialog({super.key});
 
   @override
-  ConsumerState<_RegisterPatientDialog> createState() => _RegisterPatientDialogState();
+  ConsumerState<RegisterPatientDialog> createState() => _RegisterPatientDialogState();
 }
 
-class _RegisterPatientDialogState extends ConsumerState<_RegisterPatientDialog> {
+class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
   final _formKey = GlobalKey<FormState>();
   final _lastName = TextEditingController();
   final _firstName = TextEditingController();
@@ -168,13 +170,13 @@ class _RegisterPatientDialogState extends ConsumerState<_RegisterPatientDialog> 
     });
     try {
       final branchId = ref.read(authControllerProvider).user?.branchId;
-      await ref.read(patientsRepositoryProvider).create(
+      final patient = await ref.read(patientsRepositoryProvider).create(
             lastName: _lastName.text.trim(),
             firstName: _firstName.text.trim(),
             phone: _phone.text.trim(),
             branchId: branchId,
           );
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted) Navigator.of(context).pop(patient);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -217,7 +219,7 @@ class _RegisterPatientDialogState extends ConsumerState<_RegisterPatientDialog> 
       ),
       actions: [
         TextButton(
-          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
           child: const Text('Отмена'),
         ),
         FilledButton(

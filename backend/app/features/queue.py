@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.models.branch import Branch
 from app.models.patient import Patient
 from app.models.queue import QueueTicket
 from app.schemas.queue import CallNextRequest, QueueTicketOut, TVBoard, TVBoardEntry
@@ -133,6 +134,9 @@ def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)], response:
     credential-free, so the wildcard is safe here).
     """
     response.headers["Access-Control-Allow-Origin"] = "*"
+    branch = db.get(Branch, branch_id)
+    if branch is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Branch not found")
     rows = list(
         db.execute(
             select(QueueTicket)
@@ -149,4 +153,5 @@ def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)], response:
             status=t.status,
         )
         (now_serving if t.status in _NOW_SERVING else waiting).append(entry)
-    return TVBoard(branch_id=branch_id, now_serving=now_serving, waiting=waiting)
+    return TVBoard(branch_id=branch_id, branch_name=branch.name,
+                   now_serving=now_serving, waiting=waiting)

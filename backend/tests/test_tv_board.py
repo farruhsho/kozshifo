@@ -14,9 +14,13 @@ def test_tv_board_endpoint_is_public(client, auth):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["branch_id"] == branch_id
+    assert body["branch_name"]  # header line on the TV page
     assert "now_serving" in body and "waiting" in body
     # Wildcard CORS lets the board page run from file:// or another host.
     assert resp.headers["access-control-allow-origin"] == "*"
+
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert client.get(f"{API}/queue/tv-board/{missing}").status_code == 404
 
 
 def test_tv_board_is_privacy_safe(client, auth):

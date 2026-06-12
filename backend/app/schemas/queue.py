@@ -37,5 +37,6 @@ class TVBoardEntry(BaseModel):
 
 class TVBoard(BaseModel):
     branch_id: UUID
+    branch_name: str | None = None
     now_serving: list[TVBoardEntry]
     waiting: list[TVBoardEntry]

@@ -1,12 +1,17 @@
 <!DOCTYPE html>
 <!--
-  KO'Z SHIFO — standalone TV queue board (single self-contained file).
+  KO'Z SHIFO — standalone TV queue board (single self-contained file, v2).
 
   Primary use: served by the backend at  GET /tv/{branch_id}  — open that URL
   in any TV browser, press fullscreen, done. Polls the public privacy-safe
-  endpoint /api/v1/queue/tv-board/{branch_id} every 4 seconds.
+  endpoint /api/v1/queue/tv-board/{branch_id} every 4 seconds (the endpoint
+  sends ACAO:*, so the file also works opened from disk or another host).
 
-  Overrides (also lets the file run when opened from disk):
+  v2: branch name in the header, full-screen call splash with chime + voice
+  announcement (mute toggle, persisted), data-freshness indicator, daily
+  auto-reload for 24/7 operation, overflow counters ("+N").
+
+  Overrides:
     ?branch=<uuid>   branch id (otherwise taken from the /tv/{id} path)
     ?api=<base>      API origin, e.g. http://192.168.1.10:8000 (default: same origin)
 -->
@@ -42,10 +47,11 @@
     padding: 1.2vh 2.5vw;
     border-bottom: 2px solid var(--accent-soft);
   }
-  .brand { display: flex; align-items: center; gap: 1vw; }
-  .brand .eye { font-size: 4vh; }
+  .brand { display: flex; align-items: baseline; gap: 1.2vw; }
+  .brand .eye { font-size: 3.6vh; }
   .brand h1 { font-size: 3.6vh; letter-spacing: 0.06em; }
   .brand h1 span { color: var(--accent); }
+  #branch { font-size: 2.4vh; color: var(--muted); }
   #clock { font-size: 4.2vh; font-variant-numeric: tabular-nums; color: var(--muted); }
   main {
     flex: 1;
@@ -70,7 +76,7 @@
     letter-spacing: 0.12em;
     margin-bottom: 1.2vh;
   }
-  #serving { display: flex; flex-direction: column; gap: 1.2vh; overflow: hidden; }
+  #serving { display: flex; flex-direction: column; gap: 1.2vh; overflow: hidden; flex: 1; }
   .serve-row {
     display: flex;
     align-items: center;
@@ -87,7 +93,7 @@
   .serve-row .room { font-size: 5vh; font-weight: 700; color: var(--accent); text-align: right; }
   .serve-row.called .room { color: var(--called); }
   .room .room-hint { display: block; font-size: 2vh; font-weight: 400; color: var(--muted); }
-  #waiting { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2vh; align-content: start; overflow: hidden; }
+  #waiting { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2vh; align-content: start; overflow: hidden; flex: 1; }
   .wait-cell {
     background: rgba(255, 255, 255, 0.04);
     border-radius: 1vh;
@@ -96,21 +102,54 @@
   }
   .wait-cell .ticket { font-size: 4.6vh; font-weight: 700; font-variant-numeric: tabular-nums; }
   .wait-cell .label { font-size: 2vh; color: var(--muted); }
+  .wait-cell.more .ticket { color: var(--muted); }
   .empty { color: var(--muted); font-size: 3vh; padding: 2vh 0; }
   footer {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     padding: 0.8vh 2.5vw;
     font-size: 2vh;
     color: var(--muted);
     border-top: 2px solid var(--accent-soft);
   }
   #status.offline { color: #f87171; }
+  #sound {
+    background: none;
+    border: 1px solid var(--muted);
+    border-radius: 0.8vh;
+    color: var(--muted);
+    font-size: 2vh;
+    padding: 0.3vh 1vw;
+    cursor: pointer;
+  }
+  #sound.unlock { border-color: var(--called); color: var(--called); }
+
+  /* Full-screen call splash: «Талон A-001 → Каб. 2» */
+  #splash {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 18, 32, 0.96);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2vh;
+    z-index: 10;
+  }
+  #splash.show { display: flex; animation: splash-in 0.3s ease-out; }
+  @keyframes splash-in { from { opacity: 0; transform: scale(0.96); } }
+  #splash .invite { font-size: 4vh; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; }
+  #splash .ticket { font-size: 24vh; font-weight: 900; color: var(--called); line-height: 1; font-variant-numeric: tabular-nums; }
+  #splash .room { font-size: 8vh; font-weight: 700; color: var(--accent); }
 </style>
 </head>
 <body>
   <header>
-    <div class="brand"><span class="eye">👁</span><h1>KO'Z <span>SHIFO</span></h1></div>
+    <div class="brand">
+      <span class="eye">👁</span><h1>KO'Z <span>SHIFO</span></h1>
+      <div id="branch"></div>
+    </div>
     <div id="clock">--:--</div>
   </header>
   <main>
@@ -119,14 +158,23 @@
       <div id="serving"><div class="empty">—</div></div>
     </section>
     <section>
-      <h2>Навбат · Очередь</h2>
+      <h2 id="waiting-title">Навбат · Очередь</h2>
       <div id="waiting"><div class="empty">—</div></div>
     </section>
   </main>
   <footer>
     <span>Чакирилгунча кутинг · Ожидайте вызова</span>
-    <span id="status">…</span>
+    <span style="display:flex; gap:1.5vw; align-items:center">
+      <span id="status">…</span>
+      <button id="sound" type="button">🔊 звук вкл</button>
+    </span>
   </footer>
+
+  <div id="splash">
+    <div class="invite">Киринг · Пройдите</div>
+    <div class="ticket" id="splash-ticket"></div>
+    <div class="room" id="splash-room"></div>
+  </div>
 
 <script>
 (function () {
@@ -137,13 +185,28 @@
   var BRANCH = params.get('branch') || (pathMatch ? pathMatch[1] : null);
   var API = (params.get('api') || location.origin).replace(/\/+$/, '');
   var POLL_MS = 4000;
-  var lastCalled = {};   // ticket_number -> first time we saw it "called"
+  var SPLASH_MS = 6000;
+  var MAX_SERVING = 5;
+  var MAX_WAITING = 11; // 12-я ячейка — «+N»
 
   var servingEl = document.getElementById('serving');
   var waitingEl = document.getElementById('waiting');
+  var waitingTitleEl = document.getElementById('waiting-title');
+  var branchEl = document.getElementById('branch');
   var statusEl = document.getElementById('status');
   var clockEl = document.getElementById('clock');
+  var soundBtn = document.getElementById('sound');
+  var splashEl = document.getElementById('splash');
+  var splashTicketEl = document.getElementById('splash-ticket');
+  var splashRoomEl = document.getElementById('splash-room');
 
+  var seenCalled = {};          // ticket_number -> true (уже объявляли)
+  var firstPoll = true;         // не объявляем то, что уже висело при включении
+  var lastOkAt = null;          // мс: когда последний раз получили данные
+  var splashQueue = [];
+  var splashShowing = false;
+
+  // ── Часы и суточный перезапуск (ТВ работает 24/7) ─────────────────────────
   function tickClock() {
     var d = new Date();
     clockEl.textContent =
@@ -151,6 +214,7 @@
   }
   tickClock();
   setInterval(tickClock, 10000);
+  setTimeout(function () { location.reload(); }, 24 * 60 * 60 * 1000);
 
   if (!BRANCH) {
     statusEl.textContent = 'branch не задан: откройте /tv/{branch_id} или добавьте ?branch=<uuid>';
@@ -158,6 +222,96 @@
     return;
   }
 
+  // ── Звук: WebAudio-гонг + озвучка вызова; кнопка mute с памятью ───────────
+  var muted = false;
+  try { muted = localStorage.getItem('tv_muted') === '1'; } catch (e) { /* приватный режим */ }
+  var audioCtx = null;
+
+  function refreshSoundBtn() {
+    if (muted) {
+      soundBtn.textContent = '🔇 звук выкл';
+      soundBtn.className = '';
+    } else if (audioCtx && audioCtx.state === 'suspended') {
+      soundBtn.textContent = '🔇 нажмите для звука';
+      soundBtn.className = 'unlock';
+    } else {
+      soundBtn.textContent = '🔊 звук вкл';
+      soundBtn.className = '';
+    }
+  }
+
+  function ensureAudio() {
+    if (!audioCtx && typeof (window.AudioContext || window.webkitAudioContext) !== 'undefined') {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    refreshSoundBtn();
+  }
+
+  soundBtn.addEventListener('click', function () {
+    muted = !muted;
+    try { localStorage.setItem('tv_muted', muted ? '1' : '0'); } catch (e) { /* ок */ }
+    if (!muted) ensureAudio();
+    refreshSoundBtn();
+  });
+  // Любое первое касание экрана разблокирует автоплей-политику браузера.
+  document.addEventListener('click', function () { if (!muted) ensureAudio(); }, { once: true });
+  refreshSoundBtn();
+
+  function chime() {
+    if (muted) return;
+    ensureAudio();
+    if (!audioCtx || audioCtx.state !== 'running') return;
+    // Двухтоновый «динь-дон» без внешних файлов.
+    [[880, 0], [659.25, 0.28]].forEach(function (note) {
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = note[0];
+      var t = audioCtx.currentTime + note[1];
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.4, t + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.65);
+    });
+  }
+
+  function speak(ticket, room) {
+    if (muted || typeof speechSynthesis === 'undefined') return;
+    try {
+      var spelled = ticket.replace('-', ' ').replace(/0+(\d)/, '$1'); // A-001 -> «A 1»
+      var phrase = 'Талон ' + spelled + (room ? '. ' + room : '');
+      var u = new SpeechSynthesisUtterance(phrase);
+      u.lang = 'ru-RU';
+      u.rate = 0.9;
+      speechSynthesis.speak(u);
+    } catch (e) { /* нет голосов на этом ТВ — не страшно, есть гонг */ }
+  }
+
+  // ── Полноэкранная вспышка вызова ───────────────────────────────────────────
+  function enqueueSplash(ticket, room) {
+    splashQueue.push({ ticket: ticket, room: room });
+    if (!splashShowing) nextSplash();
+  }
+
+  function nextSplash() {
+    var item = splashQueue.shift();
+    if (!item) { splashShowing = false; return; }
+    splashShowing = true;
+    splashTicketEl.textContent = item.ticket;
+    splashRoomEl.textContent = item.room || '';
+    splashEl.className = 'show';
+    chime();
+    speak(item.ticket, item.room);
+    setTimeout(function () {
+      splashEl.className = '';
+      setTimeout(nextSplash, 400); // пауза между подряд идущими вызовами
+    }, SPLASH_MS);
+  }
+
+  // ── Рендер ─────────────────────────────────────────────────────────────────
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -171,9 +325,7 @@
       servingEl.appendChild(el('div', 'empty', 'Ҳозирча бўш · Пока никого'));
       return;
     }
-    rows.slice(0, 5).forEach(function (t) {
-      var isNewCall = t.status === 'called' && !lastCalled[t.ticket_number];
-      if (t.status === 'called') lastCalled[t.ticket_number] = true;
+    rows.slice(0, MAX_SERVING).forEach(function (t) {
       var row = el('div', 'serve-row' + (t.status === 'called' ? ' called' : ''));
       var left = el('div');
       left.appendChild(el('div', 'ticket', t.ticket_number));
@@ -184,27 +336,60 @@
       row.appendChild(left);
       row.appendChild(room);
       servingEl.appendChild(row);
-      if (isNewCall) row.scrollIntoView({ block: 'nearest' });
     });
+    if (rows.length > MAX_SERVING) {
+      servingEl.appendChild(el('div', 'label', '+' + (rows.length - MAX_SERVING) + ' ещё'));
+    }
   }
 
   function renderWaiting(rows) {
     waitingEl.innerHTML = '';
+    waitingTitleEl.textContent = 'Навбат · Очередь' + (rows.length ? ' (' + rows.length + ')' : '');
     if (!rows.length) {
       waitingEl.appendChild(el('div', 'empty', 'Навбат бўш · Очередь пуста'));
       return;
     }
-    rows.slice(0, 12).forEach(function (t) {
+    rows.slice(0, MAX_WAITING).forEach(function (t) {
       var cell = el('div', 'wait-cell');
       cell.appendChild(el('div', 'ticket', t.ticket_number));
       cell.appendChild(el('div', 'label', t.patient_label));
       waitingEl.appendChild(cell);
     });
+    if (rows.length > MAX_WAITING) {
+      var more = el('div', 'wait-cell more');
+      more.appendChild(el('div', 'ticket', '+' + (rows.length - MAX_WAITING)));
+      more.appendChild(el('div', 'label', 'кутмоқда · ожидают'));
+      waitingEl.appendChild(more);
+    }
   }
 
-  // Self-rescheduling poll: never more than one request in flight, and a hung
-  // connection (TV Wi-Fi drop without TCP reset) is aborted after POLL_MS so
-  // the offline indicator actually appears instead of requests piling up.
+  function announceNewCalls(rows) {
+    rows.forEach(function (t) {
+      if (t.status !== 'called') return;
+      if (!seenCalled[t.ticket_number]) {
+        seenCalled[t.ticket_number] = true;
+        // На самом первом опросе только запоминаем состояние — табло могли
+        // перезапустить посреди приёма, повторно объявлять нечего.
+        if (!firstPoll) enqueueSplash(t.ticket_number, t.room);
+      }
+    });
+  }
+
+  // ── Статус свежести данных ─────────────────────────────────────────────────
+  function refreshFreshness() {
+    if (lastOkAt === null) return;
+    var sec = Math.round((Date.now() - lastOkAt) / 1000);
+    if (sec <= POLL_MS / 1000 + 2) {
+      statusEl.textContent = 'онлайн';
+      statusEl.className = '';
+    } else {
+      statusEl.textContent = 'нет связи · данные ' + sec + ' с назад';
+      statusEl.className = 'offline';
+    }
+  }
+  setInterval(refreshFreshness, 1000);
+
+  // ── Самопланирующийся опрос (один запрос в полёте, зависшие — отменяются) ──
   function poll() {
     var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     var killer = ctrl && setTimeout(function () { ctrl.abort(); }, POLL_MS);
@@ -218,19 +403,26 @@
 
     fetch(API + '/api/v1/queue/tv-board/' + BRANCH, opts)
       .then(function (r) {
+        if (r.status === 404) throw new Error('филиал не найден — проверьте ссылку');
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
       .then(function (board) {
         renderServing(board.now_serving || []);
         renderWaiting(board.waiting || []);
-        statusEl.textContent = 'online';
-        statusEl.className = '';
+        announceNewCalls(board.now_serving || []);
+        if (board.branch_name) branchEl.textContent = board.branch_name;
+        firstPoll = false;
+        lastOkAt = Date.now();
+        refreshFreshness();
         schedule();
       })
       .catch(function (e) {
-        statusEl.textContent = 'нет связи с сервером (' + e.message + ')';
-        statusEl.className = 'offline';
+        if (lastOkAt === null) {
+          statusEl.textContent = 'нет связи с сервером (' + e.message + ')';
+          statusEl.className = 'offline';
+        }
+        refreshFreshness();
         schedule();
       });
   }

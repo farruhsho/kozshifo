@@ -44,6 +44,9 @@ class VisitOut(BaseModel):
     doctor_id: UUID | None
     visit_type: str
     status: str
+    # Read-only by design: produced by the Smart Workflow Engine (core/flow.py);
+    # there is deliberately no input DTO / endpoint that accepts this field.
+    flow_status: str
     total_amount: Decimal
     paid_amount: Decimal
     balance: Decimal

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.core.flow import advance_flow
 from app.core.sequences import next_ticket_number
 from app.models.branch import Branch
 from app.models.patient import Patient
@@ -112,6 +113,11 @@ def call_next(
             record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
                          actor_id=actor.id, branch_id=ticket.branch_id,
                          summary=f"Called {ticket.ticket_number} to {payload.room}")
+            if ticket.visit_id is not None:  # workflow engine: patient is now in the room
+                visit = db.get(Visit, ticket.visit_id)
+                if visit is not None:
+                    advance_flow(db, visit,
+                                 "diagnostic_called" if ticket.track == "diagnostic" else "doctor_called")
             db.commit()
             db.refresh(ticket)
             return ticket
@@ -119,12 +125,14 @@ def call_next(
     raise HTTPException(status.HTTP_409_CONFLICT, "Queue is contended, try again")
 
 
-# Enforced state machine: waiting -> called -> serving -> done | skipped.
+# Enforced state machine: waiting -> called -> serving -> done | skipped,
+# plus skipped -> waiting (requeue: a skipped no-show who showed up after all).
 # called -> done is a deliberate shortcut (operator completes without "serve").
 _ALLOWED_FROM: dict[str, tuple[str, ...]] = {
     "serving": ("called",),
     "done": ("called", "serving"),
     "skipped": ("waiting", "called"),
+    "waiting": ("skipped",),
 }
 
 
@@ -197,6 +205,19 @@ def _transition(db: Session, ticket_id: UUID, actor: CurrentUser, new_status: st
                  branch_id=ticket.branch_id, summary=f"Ticket {ticket.ticket_number} -> {new_status}")
     if new_status == "done" and ticket.track == "diagnostic" and ticket.visit_id is not None:
         _auto_advance_to_doctor(db, ticket, actor)
+    if new_status in ("done", "skipped") and ticket.visit_id is not None:
+        visit = db.get(Visit, ticket.visit_id)
+        if visit is not None:  # workflow engine: same transaction as the transition
+            if new_status == "done":
+                advance_flow(db, visit,
+                             "diagnostic_done" if ticket.track == "diagnostic"
+                             else "appointment_finished")
+            else:
+                # No-show skip: the "in the room" claim must be reverted —
+                # the engine itself ignores skips of never-called tickets.
+                advance_flow(db, visit,
+                             "diagnostic_skipped" if ticket.track == "diagnostic"
+                             else "doctor_skipped")
     db.commit()
     db.refresh(ticket)
     return ticket
@@ -218,6 +239,26 @@ def complete_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
 def skip_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
                 actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))]) -> QueueTicket:
     return _transition(db, ticket_id, actor, "skipped", None)
+
+
+@router.post("/{ticket_id}/requeue", response_model=QueueTicketOut)
+def requeue_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
+                   actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))]) -> QueueTicket:
+    """Return a skipped no-show to the waiting line (he showed up after all).
+
+    Without this the only ways back into the queue were refund-then-repay or
+    cancelling the visit — both move real money for a purely logistical event.
+    Only today's tickets can be requeued (active views are day-scoped).
+    """
+    ticket = db.get(QueueTicket, ticket_id)
+    if ticket is not None and ticket.created_at is not None:
+        boundary = _today_start()
+        if ticket.created_at.tzinfo is None:  # SQLite returns naive datetimes
+            boundary = boundary.replace(tzinfo=None)
+        if ticket.created_at < boundary:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "Yesterday's ticket cannot be requeued — issue a new visit")
+    return _transition(db, ticket_id, actor, "waiting", None)
 
 
 def _called_desc_nulls_last(ticket: QueueTicket) -> tuple[bool, float]:

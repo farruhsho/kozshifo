@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.core.flow import advance_flow
 from app.core.sequences import next_visit_no
 from app.models.branch import Branch
 from app.models.catalog import Service
@@ -141,6 +142,7 @@ def cancel_visit(
                             "Visit has payments — refund them before cancelling")
     visit.status = "cancelled"
     visit.closed_at = datetime.now(timezone.utc)
+    advance_flow(db, visit, "visit_cancelled")  # workflow engine (same transaction)
     # The patient leaves the flow: active queue tickets of this visit must not
     # stay on the TV board or auto-advance to the doctor queue later.
     active_tickets = db.execute(
@@ -174,6 +176,7 @@ def close_visit(
         raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot close a {visit.status} visit")
     visit.status = "completed"
     visit.closed_at = datetime.now(timezone.utc)
+    advance_flow(db, visit, "visit_closed")  # workflow engine (same transaction)
     record_audit(db, action="close", entity_type="visit", entity_id=visit.id, actor_id=actor.id,
                  summary=f"Closed visit {visit.visit_no} (balance {visit.balance})")
     db.commit()

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.core.flow import advance_flow, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, write_off_fefo
 from app.models.inventory import Product
@@ -67,6 +68,7 @@ def prescribe_treatment(
     )
     db.add(treatment)
     db.flush()
+    advance_flow(db, visit, "treatment_prescribed")  # workflow engine (same transaction)
     record_audit(db, action="prescribe", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Prescribed {payload.kind} «{payload.name}» on visit {visit.visit_no}")
@@ -188,6 +190,11 @@ def cancel_treatment(
     record_audit(db, action="cancel", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id,
                  summary=f"Cancelled treatment «{treatment.name}»")
+    db.flush()
+    # The lifecycle must stop advertising a plan that no longer exists.
+    visit = db.get(Visit, treatment.visit_id)
+    if visit is not None:
+        recompute_plan(db, visit)
     db.commit()
     db.refresh(treatment)
     return treatment

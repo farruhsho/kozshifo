@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.core.flow import advance_flow
 from app.core.sequences import next_receipt_no, next_ticket_number
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -83,6 +84,7 @@ def take_payment(
         for item in visit.items:
             if item.status == "ordered":
                 item.status = "paid"
+        advance_flow(db, visit, "paid_in_full")  # workflow engine (same transaction)
 
     record_audit(db, action="payment", entity_type="payment", entity_id=payment.id, actor_id=actor.id,
                  branch_id=visit.branch_id,
@@ -91,7 +93,8 @@ def take_payment(
     ticket_number: str | None = None
     if fully_paid and payload.issue_queue_ticket:
         # Dedupe deliberately ignores the track: a patient mid-flow (active D *or*
-        # auto-advanced V ticket) must never be handed a second diagnostic ticket.
+        # auto-advanced V ticket) must never be handed a second diagnostic ticket —
+        # the active ticket's number is just reported back to reception.
         existing = db.execute(
             select(QueueTicket)
             .where(QueueTicket.visit_id == visit.id, QueueTicket.status.in_(_ACTIVE_TICKET))
@@ -99,7 +102,11 @@ def take_payment(
         ).scalar_one_or_none()
         if existing:
             ticket_number = existing.ticket_number
-        else:
+        # A NEW diagnostics ticket is minted only when the JOURNEY starts (flow
+        # is waiting_diagnostic). Settling a later bill — e.g. a prescribed
+        # surgery after the appointment — must never re-queue the patient to
+        # diagnostics, even when no ticket is active anymore.
+        elif visit.flow_status == "waiting_diagnostic":
             ticket = QueueTicket(
                 ticket_number=next_ticket_number(db, visit.branch_id, "diagnostic"),
                 track="diagnostic",

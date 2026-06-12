@@ -32,6 +32,15 @@ class Visit(UUIDPKMixin, TimestampMixin, Base):
     visit_type: Mapped[str] = mapped_column(String(32), default="consultation", nullable=False)
     # open -> in_progress -> completed | cancelled
     status: Mapped[str] = mapped_column(String(16), default="open", index=True, nullable=False)
+    # Smart Workflow Engine lifecycle (app/core/flow.py). NEVER written via the
+    # API — it advances itself from real events (payment, queue calls, doctor
+    # prescriptions, close/cancel). Fixed vocabulary:
+    #   registered, waiting_diagnostic, in_diagnostic, waiting_doctor, in_doctor,
+    #   treatment_assigned, surgery_assigned, surgery_scheduled, surgery_completed,
+    #   follow_up, completed, cancelled.
+    flow_status: Mapped[str] = mapped_column(
+        String(24), default="registered", index=True, nullable=False
+    )
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
     notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)

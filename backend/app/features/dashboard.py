@@ -5,12 +5,19 @@ check, patient/visit counts, live queue load, performed-operation counters and
 warehouse alerts (low stock / expiring batches). The remaining KPIs (margins,
 conversions, forecasts, per-doctor revenue …) are scheduled in later phases once
 the Diagnostics / Treatment / Inventory modules feed the data they require.
+
+It also hosts the self-improvement engine: `GET /dashboard/insights` distills
+the same live data into an "attention list" for the owner's morning glance —
+an empty list IS the good-morning state. Critical findings are additionally
+pushed through the notification seam (Telegram when configured), debounced to
+one alert per insight code per 24h.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import logging
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -20,12 +27,16 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dates import business_today
 from app.core.deps import require_permission
+from app.core.notify import notify
 from app.models.inventory import Product, StockBatch
+from app.models.notification import Notification
 from app.models.operation import Operation
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
 from app.models.visit import Visit
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["Director Dashboard"])
 
@@ -69,6 +80,29 @@ def _count_operations_done(db: Session, since: datetime) -> int:
     ).scalar_one()
 
 
+def _usable_per_branch(today: date):
+    """Usable stock per (product, branch) — mirrors app.core.stock._usable_filter.
+
+    min_stock is a PER-BRANCH threshold (notify.check_low_stock and the stock
+    view both evaluate it per branch), so quantities are grouped per
+    (product, branch); the caller outerjoins it to also catch active products
+    with no usable stock anywhere (the NULL row).
+    """
+    return (
+        select(
+            StockBatch.product_id,
+            StockBatch.branch_id,
+            func.sum(StockBatch.quantity).label("qty"),
+        )
+        .where(
+            StockBatch.quantity > 0,
+            or_(StockBatch.expiry_date.is_(None), StockBatch.expiry_date >= today),
+        )
+        .group_by(StockBatch.product_id, StockBatch.branch_id)
+        .subquery()
+    )
+
+
 @router.get("/summary", response_model=DashboardSummary,
             dependencies=[Depends(require_permission("dashboard.view"))])
 def summary(db: Annotated[Session, Depends(get_db)]) -> DashboardSummary:
@@ -95,23 +129,9 @@ def summary(db: Annotated[Session, Depends(get_db)]) -> DashboardSummary:
     # including the SAME business date (server-local) — a UTC date here disagreed
     # with the engine for ~5h/day on UTC+5 hosts.
     today = business_today()
-    # min_stock is a PER-BRANCH threshold (notify.check_low_stock and the stock
-    # view both evaluate it per branch) — so group per (product, branch) and
-    # count products that are low in ANY stocked branch, plus active products
-    # with no usable stock anywhere (the outerjoin NULL row).
-    usable_qty = (
-        select(
-            StockBatch.product_id,
-            StockBatch.branch_id,
-            func.sum(StockBatch.quantity).label("qty"),
-        )
-        .where(
-            StockBatch.quantity > 0,
-            or_(StockBatch.expiry_date.is_(None), StockBatch.expiry_date >= today),
-        )
-        .group_by(StockBatch.product_id, StockBatch.branch_id)
-        .subquery()
-    )
+    # Count products that are low in ANY stocked branch, plus active products
+    # with no usable stock anywhere (the outerjoin NULL row) — see _usable_per_branch.
+    usable_qty = _usable_per_branch(today)
     low_stock_count = db.execute(
         select(func.count(func.distinct(Product.id))).select_from(Product)
         .outerjoin(usable_qty, usable_qty.c.product_id == Product.id)
@@ -146,3 +166,222 @@ def summary(db: Annotated[Session, Depends(get_db)]) -> DashboardSummary:
         low_stock_count=low_stock_count,
         expiring_soon_count=expiring_soon_count,
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Self-improvement insights — "what needs the owner's attention TODAY".
+# ════════════════════════════════════════════════════════════════════════════
+
+# Rule thresholds (one tunable place; each comment is the business meaning):
+_EXPIRY_WINDOW_DAYS = 30                   # a lot expiring within this many days needs action (use FEFO / return)
+_QUEUE_OVERLOAD_WAITING = 10               # waiting tickets on ONE track today beyond this = overload
+_STALE_VISIT_AGE = timedelta(hours=24)     # an open visit older than this has stalled (money/process stuck)
+_CANCEL_WINDOW = timedelta(days=7)         # cancellation-spike lookback window
+_CANCEL_RATE = Decimal("0.20")             # cancelled share of the window's visits that triggers the spike…
+_CANCEL_MIN = 3                            # …but only with at least this many cancellations (no 1-of-2 noise)
+_REVENUE_DROP_RATIO = Decimal("0.60")      # this month's daily average below 60% of last month's = drop
+_INSIGHT_DEBOUNCE = timedelta(hours=24)    # at most one notification per critical insight code per 24h
+
+_SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
+
+# Human labels for queue tracks (detail strings name the track explicitly).
+_TRACK_LABELS = {"doctor": "врачебная очередь", "diagnostic": "диагностика"}
+
+
+class InsightOut(BaseModel):
+    code: str
+    severity: Literal["info", "warning", "critical"]
+    title: str
+    detail: str
+    value: str | None = None
+
+
+def _notify_critical_insights(db: Session, criticals: list[InsightOut]) -> None:
+    """Push critical insights through the notification seam (log + Telegram).
+
+    Debounce: at most one notification per insight code per 24h — the same
+    idiom as notify.check_low_stock. Fully wrapped: a notification (or
+    debounce-query) failure must never break the dashboard endpoint.
+    """
+    try:
+        since = datetime.now(timezone.utc) - _INSIGHT_DEBOUNCE
+        for insight in criticals:
+            event = f"insight_{insight.code}"
+            already = db.execute(
+                select(Notification.id)
+                .where(Notification.event == event, Notification.created_at >= since)
+                .limit(1)
+            ).scalar_one_or_none()
+            if already is not None:
+                continue
+            notify(db, event=event, title=insight.title, body=insight.detail, branch_id=None)
+    except Exception:  # never break the endpoint over a notification
+        logger.exception("insight notifications failed")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
+@router.get("/insights", response_model=list[InsightOut],
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
+    """Morning attention list: every rule that fired, ordered critical → info.
+
+    An EMPTY list is the good-morning state — nothing needs attention. All
+    rules are set-based queries over live data (same UTC day/month conventions
+    as /summary, same business date as the FEFO engine for stock rules).
+    """
+    now = datetime.now(timezone.utc)
+    day = _day_start()
+    today = business_today()
+    found: list[InsightOut] = []
+
+    # ── low_stock (critical): products at/below min_stock in a stocked branch,
+    #    or active products with no usable stock anywhere — same per-branch
+    #    logic as /summary's low_stock_count, plus names for the detail line.
+    usable_qty = _usable_per_branch(today)
+    low_products = db.execute(
+        select(Product.id, Product.name).distinct()
+        .select_from(Product)
+        .outerjoin(usable_qty, usable_qty.c.product_id == Product.id)
+        .where(
+            Product.is_active.is_(True),
+            func.coalesce(usable_qty.c.qty, 0) <= Product.min_stock,
+        )
+        .order_by(Product.name)
+    ).all()
+    if low_products:
+        names = [name for _, name in low_products[:5]]
+        extra = len(low_products) - len(names)
+        detail = "Под минимумом: " + ", ".join(names)
+        if extra > 0:
+            detail += f" и ещё {extra}"
+        found.append(InsightOut(
+            code="low_stock", severity="critical",
+            title="Дефицит на складе",
+            detail=detail, value=str(len(low_products)),
+        ))
+
+    # ── expiring_lots (warning): batches with stock expiring within the window.
+    expiring = db.execute(
+        select(func.count()).select_from(StockBatch)
+        .where(
+            StockBatch.quantity > 0,
+            StockBatch.expiry_date.is_not(None),
+            StockBatch.expiry_date >= today,
+            StockBatch.expiry_date <= today + timedelta(days=_EXPIRY_WINDOW_DAYS),
+        )
+    ).scalar_one()
+    if expiring:
+        found.append(InsightOut(
+            code="expiring_lots", severity="warning",
+            title="Истекающие партии",
+            detail=f"Партий со сроком годности ≤ {_EXPIRY_WINDOW_DAYS} дней: {expiring} — "
+                   "израсходовать в первую очередь или вернуть поставщику",
+            value=str(expiring),
+        ))
+
+    # ── queue_overload (warning, per track): too many waiting tickets TODAY.
+    waiting_by_track = db.execute(
+        select(QueueTicket.track, func.count())
+        .where(QueueTicket.status == "waiting", QueueTicket.created_at >= day)
+        .group_by(QueueTicket.track)
+        .order_by(QueueTicket.track)
+    ).all()
+    for track, count in waiting_by_track:
+        if count > _QUEUE_OVERLOAD_WAITING:
+            label = _TRACK_LABELS.get(track, track)
+            found.append(InsightOut(
+                code="queue_overload", severity="warning",
+                title="Очередь перегружена",
+                detail=f"{label} ({track}): {count} ожидающих талонов "
+                       f"(порог {_QUEUE_OVERLOAD_WAITING}) — добавить приёмные мощности",
+                value=str(count),
+            ))
+
+    # ── stale_open_visits (warning): visits stuck open for >24h —
+    #    деньги и процессы зависли.
+    stale = db.execute(
+        select(func.count()).select_from(Visit)
+        .where(Visit.status == "open", Visit.opened_at < now - _STALE_VISIT_AGE)
+    ).scalar_one()
+    if stale:
+        found.append(InsightOut(
+            code="stale_open_visits", severity="warning",
+            title="Зависшие визиты",
+            detail=f"Визитов открыто дольше 24 часов: {stale} — деньги и процессы "
+                   "зависли, закройте или отмените их",
+            value=str(stale),
+        ))
+
+    # ── unpaid_balance (info): outstanding money over open visits.
+    outstanding = Decimal(db.execute(
+        select(func.coalesce(func.sum(Visit.total_amount - Visit.paid_amount), 0))
+        .where(Visit.status == "open", Visit.total_amount > Visit.paid_amount)
+    ).scalar_one()).quantize(Decimal("0.01"))
+    if outstanding > 0:
+        found.append(InsightOut(
+            code="unpaid_balance", severity="info",
+            title="Неоплаченный остаток",
+            detail=f"По открытым визитам не оплачено {outstanding} — "
+                   "проверить дебиторку на ресепшене",
+            value=str(outstanding),
+        ))
+
+    # ── cancellation_spike (warning): too many cancellations in the last 7 days.
+    week_ago = now - _CANCEL_WINDOW
+    visits_week = db.execute(
+        select(func.count()).select_from(Visit).where(Visit.opened_at >= week_ago)
+    ).scalar_one()
+    cancelled_week = db.execute(
+        select(func.count()).select_from(Visit)
+        .where(Visit.opened_at >= week_ago, Visit.status == "cancelled")
+    ).scalar_one()
+    if visits_week and cancelled_week >= _CANCEL_MIN:
+        rate = Decimal(cancelled_week) / Decimal(visits_week)
+        if rate > _CANCEL_RATE:
+            found.append(InsightOut(
+                code="cancellation_spike", severity="warning",
+                title="Всплеск отмен",
+                detail=f"За 7 дней отменено {cancelled_week} из {visits_week} визитов "
+                       f"({rate:.0%}) — выяснить причину (сервис? цены? врач?)",
+                value=f"{rate:.0%}",
+            ))
+
+    # ── revenue_drop (critical): this month's daily-average revenue collapsed
+    #    versus last month's. Computed over COMPLETED days only — the morning
+    #    of day 1-2 has no completed days yet, and counting the just-started
+    #    day as fully elapsed fired a guaranteed false «-100%» critical (with
+    #    a Telegram push) every month start.
+    month_start = _month_start()
+    prev_month_start = (month_start - timedelta(days=1)).replace(day=1)
+    prev_days = (month_start - prev_month_start).days
+    prev_revenue = Decimal(db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0))
+        .where(
+            Payment.status == "completed",
+            Payment.created_at >= prev_month_start,
+            Payment.created_at < month_start,
+        )
+    ).scalar_one())
+    days_completed = now.day - 1
+    if prev_revenue > 0 and days_completed >= 2:
+        # Month-to-yesterday revenue: today's partial day must not dilute the average.
+        revenue_completed = _sum_payments(db, month_start) - _sum_payments(db, _day_start())
+        this_avg = revenue_completed / days_completed
+        prev_avg = prev_revenue / prev_days
+        if this_avg < prev_avg * _REVENUE_DROP_RATIO:
+            drop = Decimal(1) - this_avg / prev_avg
+            found.append(InsightOut(
+                code="revenue_drop", severity="critical",
+                title="Падение выручки",
+                detail=f"Средняя дневная выручка этого месяца ниже прошлого на {drop:.0%} "
+                       f"({this_avg:.0f} против {prev_avg:.0f} в день)",
+                value=f"-{drop:.0%}",
+            ))
+
+    # Critical first, info last; stable sort keeps the rule order within a tier.
+    found.sort(key=lambda i: _SEVERITY_RANK[i.severity])
+    _notify_critical_insights(db, [i for i in found if i.severity == "critical"])
+    return found

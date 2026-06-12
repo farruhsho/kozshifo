@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.core.flow import advance_flow, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, on_hand, write_off_fefo
 from app.features.visits import _make_item, _recompute_total
@@ -158,6 +159,8 @@ def prescribe_operation(
     db.add(operation)
     db.flush()  # assign ids so the billing trace can be recorded
     operation.visit_item_id = item.id
+    # Workflow engine: a dated prescription is already "scheduled".
+    advance_flow(db, visit, "surgery_scheduled" if payload.scheduled_at else "surgery_prescribed")
     record_audit(db, action="prescribe", entity_type="operation", entity_id=operation.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Prescribed operation {op_type.name} ({payload.eye}, {payload.priority}) "
@@ -233,6 +236,7 @@ def perform_operation(
 
     operation.status = "done"
     operation.performed_at = datetime.now(timezone.utc)
+    advance_flow(db, visit, "surgery_performed")  # workflow engine (same transaction)
     record_audit(db, action="perform", entity_type="operation", entity_id=operation.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Performed operation {op_type.name} ({operation.eye}); "
@@ -276,6 +280,9 @@ def cancel_operation(
     record_audit(db, action="cancel", entity_type="operation", entity_id=operation.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Cancelled operation {operation.type_name}{debilled}")
+    db.flush()
+    # The lifecycle must stop advertising a surgery that no longer exists.
+    recompute_plan(db, visit)
     db.commit()
     db.refresh(operation)
     return operation

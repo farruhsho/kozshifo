@@ -74,6 +74,31 @@ def test_test_connection_offline_is_graceful(client, auth):
     assert body["error"]
 
 
+def test_configure_push_requires_token(client, auth, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "hikvision_event_token", None)
+    terminal = _make_terminal(client, auth, "Терминал без токена")
+    resp = client.post(
+        f"{API}/access-control/terminals/{terminal['id']}/configure-push",
+        headers=auth, json={},
+    )
+    assert resp.status_code == 422, resp.text  # webhook secret not configured
+
+
+def test_configure_push_offline_is_graceful(client, auth, event_token):
+    terminal = _make_terminal(client, auth, "Терминал автоотправки")
+    resp = client.post(
+        f"{API}/access-control/terminals/{terminal['id']}/configure-push",
+        headers=auth, json={"server_host": "10.0.0.5", "server_port": 8000},
+    )
+    assert resp.status_code == 200, resp.text  # offline device != 500
+    body = resp.json()
+    assert body["configured"] is False
+    assert body["error"]
+    assert "10.0.0.5:8000" in body["url"] and "****" in body["url"]  # token masked
+
+
 # ------------------------------------------------------------------- enrollment
 
 def test_enroll_assigns_employee_no_and_persists_offline(client, auth):

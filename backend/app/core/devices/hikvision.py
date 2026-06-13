@@ -185,6 +185,52 @@ class HikvisionClient:
         )
         return self._check_isapi_ok(resp, "upload_face")
 
+    def enable_event_push(
+        self,
+        server_ip: str,
+        server_port: int,
+        token: str,
+        *,
+        host_id: int = 1,
+    ) -> dict:
+        """Point the terminal at our webhook so it pushes events automatically.
+
+        Sets HTTP host #1 (PUT /ISAPI/Event/notification/httpHosts/{id}) — the
+        device then POSTs every access event to
+        ``http://server_ip:server_port/api/v1/access-control/event/<token>``.
+        Saves the operator a trip into the device web UI. [verify on device] —
+        a few firmwares additionally require enabling "Notify Surveillance
+        Center" linkage on the access events.
+        """
+        url_path = f"/api/v1/access-control/event/{token}"
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<HttpHostNotification version="2.0" '
+            'xmlns="http://www.isapi.org/ver20/XMLSchema">'
+            f"<id>{host_id}</id>"
+            f"<url>{url_path}</url>"
+            "<protocolType>HTTP</protocolType>"
+            "<parameterFormatType>JSON</parameterFormatType>"
+            "<addressingFormatType>ipaddress</addressingFormatType>"
+            f"<ipAddress>{server_ip}</ipAddress>"
+            f"<portNo>{server_port}</portNo>"
+            "<httpAuthenticationMethod>none</httpAuthenticationMethod>"
+            "</HttpHostNotification>"
+        )
+        resp = self._request(
+            "PUT",
+            f"/ISAPI/Event/notification/httpHosts/{host_id}",
+            content=body.encode("utf-8"),
+            headers={"Content-Type": "application/xml"},
+        )
+        if resp.status_code >= 400:
+            raise TerminalError(f"enable_event_push: HTTP {resp.status_code} {resp.text[:200]}")
+        # Success is a ResponseStatus XML with <statusCode>1</statusCode> / "OK".
+        text = resp.text or ""
+        if "<statusCode>" in text and "<statusCode>1<" not in text and "OK" not in text:
+            raise TerminalError(f"enable_event_push: device rejected config — {text[:200]}")
+        return {"url_path": url_path}
+
     def fetch_events(
         self,
         start: datetime,

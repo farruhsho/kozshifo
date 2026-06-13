@@ -25,7 +25,12 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.dates import business_today
+from app.core.dates import (
+    business_today,
+    current_business_month,
+    local_day_bounds_utc,
+    local_month_bounds_utc,
+)
 from app.core.deps import require_permission
 from app.core.notify import notify
 from app.models.inventory import Product, StockBatch
@@ -56,12 +61,15 @@ class DashboardSummary(BaseModel):
     expiring_soon_count: int
 
 
+# Local business day/month start as a UTC instant — the SAME boundaries the
+# finance cash reports use, so the owner's revenue KPIs and the cash reports
+# agree on any host timezone (not just UTC).
 def _day_start() -> datetime:
-    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_day_bounds_utc(business_today())[0]
 
 
 def _month_start() -> datetime:
-    return _day_start().replace(day=1)
+    return local_month_bounds_utc(current_business_month())[0]
 
 
 def _sum_payments(db: Session, since: datetime) -> Decimal:

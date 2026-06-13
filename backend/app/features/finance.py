@@ -15,9 +15,14 @@ Money semantics mirror app/features/payments.py exactly:
   refunded payment from the doctor's revenue automatically — no separate
   subtraction is needed.
 
-Period boundaries on Payment timestamps use UTC day/month starts — the same
-convention as the director dashboard's revenue KPIs. Expense rows carry a
-plain business DATE and are filtered on it directly.
+Period boundaries are the clinic's LOCAL day/month: payment timestamps (UTC)
+are filtered by the local window converted to UTC instants, and expense rows
+(a plain local business DATE) by the matching calendar-date window — so a day's
+takings reconcile with that day's expenses. The director dashboard uses the
+same local boundaries, so its revenue KPIs and these cash reports agree.
+
+Cash reports are branch-scoped to the actor: a non-superuser sees only their
+own branch; the director (superuser) sees the whole clinic.
 
 Payroll payouts are Expense rows too (kind="payroll"), so the cash balance
 stays one query; the (payroll_user_id, payroll_month) unique constraint makes
@@ -442,27 +447,39 @@ def _cash_flow(
     pay_end: datetime,
     exp_start: date,
     exp_end: date,
+    branch_id: UUID | None = None,
 ) -> dict:
-    """Shared aggregate: see the module docstring for the refund semantics."""
+    """Shared aggregate: see the module docstring for the refund semantics.
+
+    ``branch_id`` scopes both income and expenses to one branch (None = whole
+    clinic, for the director).
+    """
+    pay_window = [Payment.created_at >= pay_start, Payment.created_at < pay_end]
+    if branch_id is not None:
+        pay_window.append(Payment.branch_id == branch_id)
     income_by_method = {m: Decimal("0.00") for m in _METHODS}
     for method, total in db.execute(
         select(Payment.method, func.sum(Payment.amount))
-        .where(Payment.created_at >= pay_start, Payment.created_at < pay_end)
+        .where(*pay_window)
         .group_by(Payment.method)
     ).all():
         income_by_method[method] = _q2(total)
     income_total = _q2(sum(income_by_method.values()))
+    refund_window = [
+        Payment.status == "refunded",
+        Payment.updated_at >= pay_start,
+        Payment.updated_at < pay_end,
+    ]
+    if branch_id is not None:
+        refund_window.append(Payment.branch_id == branch_id)
     refund_total = _q2(db.execute(
-        select(func.coalesce(func.sum(Payment.amount), 0))
-        .where(
-            Payment.status == "refunded",
-            Payment.updated_at >= pay_start,
-            Payment.updated_at < pay_end,
-        )
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(*refund_window)
     ).scalar_one())
+    exp_window = [Expense.expense_date >= exp_start, Expense.expense_date < exp_end]
+    if branch_id is not None:
+        exp_window.append(Expense.branch_id == branch_id)
     expense_total = _q2(db.execute(
-        select(func.coalesce(func.sum(Expense.amount), 0))
-        .where(Expense.expense_date >= exp_start, Expense.expense_date < exp_end)
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(*exp_window)
     ).scalar_one())
     return {
         "income_by_method": income_by_method,
@@ -473,20 +490,32 @@ def _cash_flow(
     }
 
 
-def _daily_report(db: Session, d: date) -> DailyReport:
+def _scope_branch(actor: CurrentUser) -> UUID | None:
+    """Branch a non-superuser is locked to (None = whole clinic, for the director)."""
+    return None if actor.is_superuser else actor.branch_id
+
+
+def _daily_report(db: Session, d: date, branch_id: UUID | None = None) -> DailyReport:
     start, end = _day_bounds(d)
-    return DailyReport(date=d, **_cash_flow(db, start, end, d, d + timedelta(days=1)))
+    return DailyReport(date=d, **_cash_flow(db, start, end, d, d + timedelta(days=1), branch_id))
 
 
-@router.get("/reports/daily", response_model=DailyReport,
-            dependencies=[Depends(require_permission("expenses.read"))])
-def daily_report(db: Annotated[Session, Depends(get_db)], d: date) -> DailyReport:
-    return _daily_report(db, d)
+@router.get("/reports/daily", response_model=DailyReport)
+def daily_report(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("expenses.read"))],
+    d: date,
+) -> DailyReport:
+    return _daily_report(db, d, _scope_branch(actor))
 
 
-@router.get("/reports/daily.csv", dependencies=[Depends(require_permission("expenses.read"))])
-def export_daily_report_csv(db: Annotated[Session, Depends(get_db)], d: date) -> Response:
-    report = _daily_report(db, d)
+@router.get("/reports/daily.csv")
+def export_daily_report_csv(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("expenses.read"))],
+    d: date,
+) -> Response:
+    report = _daily_report(db, d, _scope_branch(actor))
     return _csv_response(
         f"daily-{d.isoformat()}.csv",
         ("date", "income_cash", "income_card", "income_qr", "income_transfer",
@@ -500,21 +529,27 @@ def export_daily_report_csv(db: Annotated[Session, Depends(get_db)], d: date) ->
     )
 
 
-@router.get("/reports/monthly", response_model=MonthlyReport,
-            dependencies=[Depends(require_permission("expenses.read"))])
-def monthly_report(db: Annotated[Session, Depends(get_db)], month: MonthParam) -> MonthlyReport:
+@router.get("/reports/monthly", response_model=MonthlyReport)
+def monthly_report(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("expenses.read"))],
+    month: MonthParam,
+) -> MonthlyReport:
+    branch_id = _scope_branch(actor)
     start, end = _month_bounds(month)  # UTC instants for Payment timestamps
     # Expenses carry a local business DATE; derive the DATE window from the
     # calendar month directly (NOT start.date()/end.date(), which shift a day on
     # non-UTC hosts) so the expense side reconciles with the income side.
     exp_start, exp_end = local_month_date_range(month)
-    flow = _cash_flow(db, start, end, exp_start, exp_end)
+    flow = _cash_flow(db, start, end, exp_start, exp_end, branch_id)
+    payroll_window = [
+        Expense.kind == "payroll",
+        Expense.expense_date >= exp_start,
+        Expense.expense_date < exp_end,
+    ]
+    if branch_id is not None:
+        payroll_window.append(Expense.branch_id == branch_id)
     payroll_total = _q2(db.execute(
-        select(func.coalesce(func.sum(Expense.amount), 0))
-        .where(
-            Expense.kind == "payroll",
-            Expense.expense_date >= exp_start,
-            Expense.expense_date < exp_end,
-        )
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(*payroll_window)
     ).scalar_one())
     return MonthlyReport(month=month, payroll_total=payroll_total, **flow)

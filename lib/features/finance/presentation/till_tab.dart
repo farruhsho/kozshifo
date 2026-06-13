@@ -22,6 +22,9 @@ class _TillTabState extends ConsumerState<TillTab> {
   int _offset = 0;
 
   Future<void> _refresh() async {
+    // Back to page 1: settling visits shrinks the owing set, so a later page
+    // can fall past the new end and strand the cashier on an empty view.
+    if (_offset != 0) setState(() => _offset = 0);
     ref.invalidate(openVisitsProvider);
   }
 
@@ -32,7 +35,10 @@ class _TillTabState extends ConsumerState<TillTab> {
     );
     if (result == null || !mounted) return;
     // Refresh so the row drops off (paid in full) or shows the smaller balance
-    // (split payment — the cashier can re-open it for the remainder).
+    // (split payment — the cashier can re-open it for the remainder). Reset to
+    // page 1: paying the last debtors on a later page would otherwise leave the
+    // cashier on an empty page with the pager hidden (total <= offset).
+    if (_offset != 0) setState(() => _offset = 0);
     ref.invalidate(openVisitsProvider);
     final remaining = double.tryParse(result.visitBalance) ?? 0;
     if (remaining > 0) {

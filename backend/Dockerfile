@@ -9,6 +9,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
+# Business timezone. The local-date logic (cash reports, attendance day &
+# lateness in app/core/dates.py + features/attendance.py) resolves "local" via
+# the process zone. slim defaults to UTC, and even TZ alone can't name a zone
+# without the tzdata database — so install BOTH, else a UTC+5 clinic's day
+# boundaries silently collapse to UTC. Override TZ per deployment if needed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+ENV TZ=Asia/Tashkent
+
 WORKDIR /app
 
 # Dependencies first — this layer is rebuilt only when requirements.txt changes.

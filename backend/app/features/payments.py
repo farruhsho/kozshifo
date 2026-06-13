@@ -29,9 +29,10 @@ router = APIRouter(prefix="/payments", tags=["Finance"])
 _ACTIVE_TICKET = ("waiting", "called", "serving")
 
 
-@router.get("", response_model=Page[PaymentOut], dependencies=[Depends(require_permission("payments.read"))])
+@router.get("", response_model=Page[PaymentOut])
 def list_payments(
     db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("payments.read"))],
     visit_id: UUID | None = None,
     branch_id: UUID | None = None,
     offset: int = Query(0, ge=0),
@@ -42,6 +43,11 @@ def list_payments(
         stmt = stmt.where(Payment.visit_id == visit_id)
     if branch_id:
         stmt = stmt.where(Payment.branch_id == branch_id)
+    # Server-side branch isolation: a non-superuser only ever sees their own
+    # branch's receipts, regardless of the client-supplied branch_id (mirrors
+    # GET /visits). The director (superuser) can still filter to any branch.
+    if not actor.is_superuser and actor.branch_id is not None:
+        stmt = stmt.where(Payment.branch_id == actor.branch_id)
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = db.execute(stmt.order_by(Payment.created_at.desc()).offset(offset).limit(limit)).scalars().all()
     return Page(items=[PaymentOut.model_validate(p) for p in rows], total=total, offset=offset, limit=limit)

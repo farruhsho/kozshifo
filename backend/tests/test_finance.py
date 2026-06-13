@@ -61,6 +61,59 @@ def _paid_visit(client, auth, *, doctor_id: str | None = None, method: str = "ca
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Branch isolation (payments + cash reports)
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_payments_and_reports_are_branch_isolated(client, auth):
+    import datetime
+
+    # A paid visit on MAIN (the seeded kassa's branch).
+    main_id = client.get(f"{API}/branches", headers=auth).json()[0]["id"]
+    _, payment = _paid_visit(client, auth)
+    assert payment["branch_id"] == main_id
+
+    # A second branch with its own cashier.
+    branch_b = client.post(f"{API}/branches", headers=auth,
+                           json={"name": "Филиал B", "code": "BR-ISO-B"})
+    assert branch_b.status_code == 201, branch_b.text
+    branch_b = branch_b.json()
+    made = client.post(f"{API}/users", headers=auth, json={
+        "email": "kassa.iso.b@kozshifo.uz", "full_name": "Кассир B",
+        "password": "KassaB!2026", "branch_id": branch_b["id"],
+        "role_names": ["Cashier"],
+    })
+    assert made.status_code == 201, made.text
+    cashier_b = _login(client, "kassa.iso.b@kozshifo.uz", "KassaB!2026")
+
+    # The branch-B cashier must NOT see MAIN receipts — not in the default list…
+    seen = client.get(f"{API}/payments", headers=cashier_b).json()["items"]
+    assert all(p["branch_id"] == branch_b["id"] for p in seen)
+    assert payment["id"] not in [p["id"] for p in seen]
+    # …and not by passing the other branch's id explicitly (client-trusted scope).
+    escaped = client.get(f"{API}/payments", headers=cashier_b,
+                         params={"branch_id": main_id}).json()["items"]
+    assert escaped == []
+
+    # The seeded MAIN cashier DOES see the MAIN receipt (isolation isn't a blanket deny).
+    kassa = _login(client, "kassa@kozshifo.uz", "Kassa!2026")
+    mine = client.get(f"{API}/payments", headers=kassa).json()["items"]
+    assert payment["id"] in [p["id"] for p in mine]
+
+    # The director (superuser) can still filter to any branch.
+    dir_view = client.get(f"{API}/payments", headers=auth,
+                          params={"branch_id": main_id}).json()["items"]
+    assert payment["id"] in [p["id"] for p in dir_view]
+
+    # Cash reports are scoped too: branch B has no income today, MAIN does.
+    today = datetime.date.today().isoformat()
+    rep_b = client.get(f"{_REPORTS}/daily", headers=cashier_b, params={"d": today}).json()
+    assert rep_b["income_total"] == "0.00"
+    rep_main = client.get(f"{_REPORTS}/daily", headers=kassa, params={"d": today}).json()
+    assert Decimal(rep_main["income_total"]) >= Decimal(payment["amount"])
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Expenses
 # ════════════════════════════════════════════════════════════════════════════
 

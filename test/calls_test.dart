@@ -1,5 +1,6 @@
 // Calls journal (IP-телефония): Page<CallRecord> parsing — snake_case,
 // null patient — plus a CallsScreen smoke test with a fake repository.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -134,6 +135,56 @@ void main() {
     });
   });
 
+  // ─── Controller: pagination + stale-page race guard ─────────────────────────
+  group('CallsListController.loadMore', () {
+    ProviderContainer make(CallsRepository repo) {
+      final c = ProviderContainer(
+        overrides: [callsRepositoryProvider.overrideWithValue(repo)],
+      );
+      // Keep the autoDispose controller alive for the test.
+      c.listen(callsListControllerProvider, (_, _) {});
+      addTearDown(c.dispose);
+      return c;
+    }
+
+    test('appends the next page on the happy path', () async {
+      final c = make(_PagingRepo());
+      final first = await c.read(callsListControllerProvider.future);
+      expect(first.items.map((r) => r.id), ['a1', 'a2']);
+      expect(first.hasMore, isTrue);
+
+      await c.read(callsListControllerProvider.notifier).loadMore();
+      final after = c.read(callsListControllerProvider).valueOrNull!;
+      expect(after.items.map((r) => r.id), ['a1', 'a2', 'a3', 'a4']);
+      expect(after.hasMore, isFalse);
+    });
+
+    test('drops a stale page when the filter changed mid-flight', () async {
+      final repo = _PagingRepo();
+      final c = make(repo);
+      final first = await c.read(callsListControllerProvider.future);
+      expect(first.items.map((r) => r.id), ['a1', 'a2']);
+
+      // Gate the load-more (offset>0) fetch so it is still in flight…
+      repo.loadMoreGate = Completer<void>();
+      final pending = c.read(callsListControllerProvider.notifier).loadMore();
+
+      // …then change the search term: build() re-runs with the NEW filter.
+      c.read(callsSearchProvider.notifier).state = 'x';
+      final fresh = await c.read(callsListControllerProvider.future);
+      expect(fresh.items.map((r) => r.id), ['x1']);
+
+      // Release the stale old-filter page — it must NOT clobber the new list.
+      repo.loadMoreGate!.complete();
+      await pending;
+
+      final finalState = c.read(callsListControllerProvider).valueOrNull!;
+      expect(finalState.items.map((r) => r.id), ['x1'],
+          reason: 'stale old-filter page must be dropped, not appended');
+      expect(finalState.total, 1);
+    });
+  });
+
   // ─── Repository: date bounds serialized as UTC ──────────────────────────────
   group('CallsRepository date filter', () {
     test('date_from/date_to are sent as UTC (Z-offset) instants', () async {
@@ -217,6 +268,38 @@ class _FakeCallsRepository implements CallsRepository {
       );
     }
     return Page.fromJson(_pageJson, CallRecord.fromJson);
+  }
+}
+
+/// Two-page repo for the empty filter, single page for `q == 'x'`.
+/// [loadMoreGate], when set, blocks the offset>0 fetch until completed — lets a
+/// test hold a load-more in flight while it changes the filter.
+class _PagingRepo implements CallsRepository {
+  Completer<void>? loadMoreGate;
+
+  static CallRecord _rec(String id) => CallRecord.fromJson({
+        'id': id,
+        'direction': 'in',
+        'phone': '+998900000000',
+        'started_at': '2026-06-12T08:00:00',
+        'duration_seconds': 0,
+      });
+
+  @override
+  Future<Page<CallRecord>> list({
+    String? q,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+    int offset = 0,
+    int limit = 50,
+  }) async {
+    if (offset > 0 && loadMoreGate != null) await loadMoreGate!.future;
+    if ((q ?? '').isEmpty) {
+      return offset == 0
+          ? Page(items: [_rec('a1'), _rec('a2')], total: 4, offset: 0, limit: limit)
+          : Page(items: [_rec('a3'), _rec('a4')], total: 4, offset: offset, limit: limit);
+    }
+    return Page(items: [_rec('x1')], total: 1, offset: 0, limit: limit);
   }
 }
 

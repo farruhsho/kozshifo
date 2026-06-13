@@ -103,8 +103,19 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
     final range = ref.read(callsDateRangeProvider);
     final page =
         await _fetch(q: q, range: range, offset: current.items.length);
+    // The search field / date chip stay live during the load, and changing
+    // either re-runs build() (it watches both providers), replacing state with
+    // the correct offset-0 list for the NEW filter. If that happened while this
+    // page was in flight, dropping our stale page is the whole fix — otherwise
+    // it would clobber the fresh list with old-filter rows + an inflated total.
+    if (q != ref.read(callsSearchProvider) ||
+        range != ref.read(callsDateRangeProvider)) {
+      return;
+    }
+    final latest = state.valueOrNull;
+    if (latest == null) return;
     state = AsyncData(CallsListState(
-      items: [...current.items, ...page.items],
+      items: [...latest.items, ...page.items],
       total: page.total,
     ));
   }

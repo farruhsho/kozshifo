@@ -77,9 +77,22 @@ exam → pulls refraction from the RMK-700 device result → prints official
 card.pdf`, on top of **JWT auth · dynamic RBAC (no hardcoded roles) · audit log
 on every mutation · multi-branch**.
 
-**Verified green:** backend `pytest` = 140 passed · Flutter `flutter test` = 79 passed
+- **Roles & depth pass: ✅ done** — each role now has a complete, self-sufficient
+  workspace (касса/склад no longer funnel through ресепшен): the **Cashier till**
+  lives in Финансы (Платежи = open-visit payment queue with split/QR, Возвраты =
+  history + guarded refund, Смена = daily cash close + CSV); **Warehouse** gained
+  write-off, low-stock «Дефицит» and expiring «Истекает» views; role-aware landing
+  + any-of nav permissions (a cashier lands on their till). Plus the adversarial
+  review fixes: payroll only pays out a closed month (+ void/correction path),
+  discounts can't exceed the bill and a 100% discount enters the journey, all API
+  timestamps read back aware-UTC (`UTCDateTime`) so the app shows local time,
+  doctor salary % is editable in /admin. Perf: access token cached in memory
+  (no SharedPreferences read per API call).
+
+**Verified green:** backend `pytest` = 144 passed · Flutter `flutter test` = 107 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (7 revisions).
+`alembic upgrade head` + `alembic check` = clean (7 revisions; `UTCDateTime` is
+schema-identical so no new migration).
 
 ## 2. Repo map (where things live)
 

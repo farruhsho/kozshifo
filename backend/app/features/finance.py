@@ -44,6 +44,7 @@ from app.core.dates import (
     current_business_month,
     local_day_bounds_utc,
     local_month_bounds_utc,
+    local_month_date_range,
 )
 from app.core.deps import CurrentUser, require_permission
 from app.models.branch import Branch
@@ -502,14 +503,18 @@ def export_daily_report_csv(db: Annotated[Session, Depends(get_db)], d: date) ->
 @router.get("/reports/monthly", response_model=MonthlyReport,
             dependencies=[Depends(require_permission("expenses.read"))])
 def monthly_report(db: Annotated[Session, Depends(get_db)], month: MonthParam) -> MonthlyReport:
-    start, end = _month_bounds(month)
-    flow = _cash_flow(db, start, end, start.date(), end.date())
+    start, end = _month_bounds(month)  # UTC instants for Payment timestamps
+    # Expenses carry a local business DATE; derive the DATE window from the
+    # calendar month directly (NOT start.date()/end.date(), which shift a day on
+    # non-UTC hosts) so the expense side reconciles with the income side.
+    exp_start, exp_end = local_month_date_range(month)
+    flow = _cash_flow(db, start, end, exp_start, exp_end)
     payroll_total = _q2(db.execute(
         select(func.coalesce(func.sum(Expense.amount), 0))
         .where(
             Expense.kind == "payroll",
-            Expense.expense_date >= start.date(),
-            Expense.expense_date < end.date(),
+            Expense.expense_date >= exp_start,
+            Expense.expense_date < exp_end,
         )
     ).scalar_one())
     return MonthlyReport(month=month, payroll_total=payroll_total, **flow)

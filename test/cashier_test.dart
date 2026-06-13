@@ -262,19 +262,16 @@ void main() {
 
   // ─── Widget: Платежи (till) ─────────────────────────────────────────────────
 
-  testWidgets('TillTab: lists only owing visits and renders amounts',
+  testWidgets('TillTab: renders the owing visits the server returns',
       (tester) async {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         authControllerProvider.overrideWith(() => _FakeAuth(_cashier)),
-        // One owing visit, one fully paid (balance 0) that must be hidden.
+        // The till requests owing=true, so the page IS the debtor set — the
+        // server filters out fully-paid visits, the client just renders them.
         openVisitsProvider.overrideWith((ref, offset) async => VisitPage(
-              items: [
-                ReceptionVisit.fromJson(_visitJson(balance: '300000.00')),
-                ReceptionVisit.fromJson(_visitJson(
-                    id: 'v-2', visitNo: 'V-0002', balance: '0.00')),
-              ],
-              total: 2,
+              items: [ReceptionVisit.fromJson(_visitJson(balance: '300000.00'))],
+              total: 1,
               offset: 0,
               limit: 50,
             )),
@@ -285,25 +282,18 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // The owing visit shows the resolved patient name and its balance.
     expect(find.text('Иванова Дилноза'), findsOneWidget);
     expect(find.textContaining('V-0001'), findsOneWidget);
     expect(find.text(formatMoney('300000.00')), findsOneWidget);
-    // The fully-paid visit is filtered out — no second row.
-    expect(find.textContaining('V-0002'), findsNothing);
   });
 
   testWidgets('TillTab: empty state when nobody owes', (tester) async {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         authControllerProvider.overrideWith(() => _FakeAuth(_cashier)),
+        // Server returns an empty owing set.
         openVisitsProvider.overrideWith((ref, offset) async => VisitPage(
-              items: [
-                ReceptionVisit.fromJson(_visitJson(balance: '0.00')),
-              ],
-              total: 1,
-              offset: 0,
-              limit: 50,
+              items: const [], total: 0, offset: 0, limit: 50,
             )),
         patientNameProvider.overrideWith((ref, id) async => 'Имя'),
       ],

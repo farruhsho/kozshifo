@@ -53,8 +53,10 @@ const kAppDestinations = <AppDestination>[
     Icons.payments,
     'Финансы',
     '/finance',
-    // Cashier (payments/expenses), accountant (payroll) or owner all need it.
-    permissions: ['payments.create', 'expenses.read', 'payroll.read'],
+    // Union of the tabs FinanceScreen gates: till (payments.create), refunds
+    // (payments.read), expenses (expenses.read), payroll (payroll.read) — so a
+    // read-only finance role both sees the item and is routed here.
+    permissions: ['payments.create', 'payments.read', 'expenses.read', 'payroll.read'],
   ),
   AppDestination(
     Icons.confirmation_number_outlined,

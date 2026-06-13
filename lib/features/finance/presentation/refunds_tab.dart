@@ -27,11 +27,15 @@ class RefundsTab extends ConsumerStatefulWidget {
 
 class _RefundsTabState extends ConsumerState<RefundsTab> {
   int _offset = 0;
+  // Receipts with a refund POST in flight — their button is disabled so a quick
+  // double-tap can't fire a second request (which would 409 with a confusing toast).
+  final _refunding = <String>{};
 
   TillPaymentQuery _query(String? branchId) =>
       (branchId: branchId, offset: _offset);
 
   Future<void> _refund(TillPayment p, String? branchId) async {
+    if (_refunding.contains(p.id)) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -53,6 +57,7 @@ class _RefundsTabState extends ConsumerState<RefundsTab> {
       ),
     );
     if (confirmed != true || !mounted) return;
+    setState(() => _refunding.add(p.id));
     try {
       await ref.read(cashierRepositoryProvider).refund(p.id);
       ref.invalidate(tillPaymentsProvider);
@@ -61,6 +66,8 @@ class _RefundsTabState extends ConsumerState<RefundsTab> {
       if (mounted) showFinanceSnack(context, 'Возврат по чеку ${p.receiptNo} оформлен');
     } catch (e) {
       if (mounted) showFinanceSnack(context, e.toString(), error: true);
+    } finally {
+      if (mounted) setState(() => _refunding.remove(p.id));
     }
   }
 
@@ -98,6 +105,7 @@ class _RefundsTabState extends ConsumerState<RefundsTab> {
                   itemBuilder: (context, i) => _PaymentRow(
                     payment: data.items[i],
                     canRefund: canRefund,
+                    busy: _refunding.contains(data.items[i].id),
                     onRefund: () => _refund(data.items[i], branchId),
                   ),
                 ),
@@ -150,11 +158,13 @@ class _PaymentRow extends ConsumerWidget {
   const _PaymentRow({
     required this.payment,
     required this.canRefund,
+    required this.busy,
     required this.onRefund,
   });
 
   final TillPayment payment;
   final bool canRefund;
+  final bool busy;
   final VoidCallback onRefund;
 
   @override
@@ -198,9 +208,10 @@ class _PaymentRow extends ConsumerWidget {
             )
           else if (canRefund)
             // Plain TextButton (not .icon, which is a private subtype) so the
-            // label sits under the exact TextButton type.
+            // label sits under the exact TextButton type. Disabled while a
+            // refund POST for this row is in flight.
             TextButton(
-              onPressed: onRefund,
+              onPressed: busy ? null : onRefund,
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

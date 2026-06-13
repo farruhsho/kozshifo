@@ -7,7 +7,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -44,12 +44,14 @@ def _make_item(db: Session, service_id: UUID, quantity: int) -> VisitItem:
     )
 
 
-@router.get("", response_model=Page[VisitOut], dependencies=[Depends(require_permission("visits.read"))])
+@router.get("", response_model=Page[VisitOut])
 def list_visits(
     db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("visits.read"))],
     patient_id: UUID | None = None,
     branch_id: UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
+    owing: bool = Query(False, description="Only visits that still owe money (payable > paid)"),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ) -> Page[VisitOut]:
@@ -60,6 +62,22 @@ def list_visits(
         stmt = stmt.where(Visit.branch_id == branch_id)
     if status_filter:
         stmt = stmt.where(Visit.status == status_filter)
+    # Branch isolation: a single-branch user (e.g. a cashier) only ever sees
+    # their own branch's visits; the director (superuser) sees all branches.
+    if not actor.is_superuser and actor.branch_id is not None:
+        stmt = stmt.where(Visit.branch_id == actor.branch_id)
+    if owing:
+        # payable = total - discount (mirror Visit.payable); list only debtors so
+        # the till's pagination describes exactly the owing set, not all open.
+        discount = case(
+            (Visit.discount_percent.is_not(None),
+             func.round(Visit.total_amount * Visit.discount_percent / 100, 2)),
+            (Visit.discount_amount.is_not(None),
+             case((Visit.discount_amount > Visit.total_amount, Visit.total_amount),
+                  else_=Visit.discount_amount)),
+            else_=0,
+        )
+        stmt = stmt.where(Visit.total_amount - discount > Visit.paid_amount)
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = db.execute(stmt.order_by(Visit.opened_at.desc()).offset(offset).limit(limit)).scalars().all()
     return Page(items=[VisitOut.model_validate(v) for v in rows], total=total, offset=offset, limit=limit)

@@ -272,21 +272,24 @@ class _ProductPicker extends ConsumerWidget {
           height: 160,
           child: results.when(
             data: (items) {
-              final active = items.where((p) => p.isActive).toList();
-              if (active.isEmpty) {
+              // Deactivated products are NOT filtered out: the backend allows
+              // writing off their residual stock (e.g. a discontinued SKU still
+              // on the shelf) — hiding them would dead-end disposal here.
+              if (items.isEmpty) {
                 return const Center(child: Text('Ничего не найдено.'));
               }
               return ListView.builder(
-                itemCount: active.length,
+                itemCount: items.length,
                 itemBuilder: (_, i) {
-                  final p = active[i];
+                  final p = items[i];
                   final isSel = p.id == selected?.id;
                   return ListTile(
                     dense: true,
                     selected: isSel,
                     leading: const Icon(Icons.inventory_2_outlined),
                     title: Text(p.name, overflow: TextOverflow.ellipsis),
-                    subtitle: Text('${p.sku} · ${p.typeLabel}'),
+                    subtitle: Text('${p.sku} · ${p.typeLabel}'
+                        '${p.isActive ? '' : ' · неактивен'}'),
                     onTap: () => onPick(p),
                   );
                 },

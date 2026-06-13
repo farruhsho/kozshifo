@@ -39,3 +39,17 @@ def local_month_bounds_utc(month: str) -> tuple[datetime, datetime]:
     nxt = date(year + 1, 1, 1) if mon == 12 else date(year, mon + 1, 1)
     end = datetime.combine(nxt, time.min).astimezone(timezone.utc)
     return start, end
+
+
+def local_month_date_range(month: str) -> tuple[date, date]:
+    """[first, next_first) calendar DATE window for ``YYYY-MM``.
+
+    For filtering plain DATE columns (e.g. Expense.expense_date). Use this, NOT
+    ``local_month_bounds_utc(...)[x].date()`` — taking ``.date()`` of the UTC
+    *instant* shifts the boundary by a day on non-UTC hosts (the instant for
+    local midnight is the previous calendar day in UTC).
+    """
+    year, mon = int(month[:4]), int(month[5:7])
+    first = date(year, mon, 1)
+    nxt = date(year + 1, 1, 1) if mon == 12 else date(year, mon + 1, 1)
+    return first, nxt

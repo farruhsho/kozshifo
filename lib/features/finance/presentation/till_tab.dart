@@ -21,9 +21,6 @@ class TillTab extends ConsumerStatefulWidget {
 class _TillTabState extends ConsumerState<TillTab> {
   int _offset = 0;
 
-  /// Only visits with a positive outstanding balance belong on the till.
-  static bool _owes(ReceptionVisit v) => (double.tryParse(v.balance) ?? 0) > 0;
-
   Future<void> _refresh() async {
     ref.invalidate(openVisitsProvider);
   }
@@ -64,35 +61,34 @@ class _TillTabState extends ConsumerState<TillTab> {
       value: page,
       onRetry: () => ref.invalidate(openVisitsProvider(_offset)),
       builder: (data) {
-        final owing = data.items.where(_owes).toList();
-        if (owing.isEmpty) {
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView(
-              children: const [
-                SizedBox(height: 120),
-                Center(child: Text('Нет визитов с задолженностью.')),
-              ],
-            ),
-          );
-        }
+        // The server already filtered to owing visits (owing=true), so the page
+        // IS the debtor set — pagination counts are honest and the pager always
+        // shows when there's more than one page (never a hidden dead-end).
+        final rows = data.items;
         return RefreshIndicator(
           onRefresh: _refresh,
           child: Column(
             children: [
               Expanded(
-                child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  itemCount: owing.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, i) => _TillRow(
-                    visit: owing[i],
-                    onPay: () => _openPayment(owing[i]),
-                  ),
-                ),
+                child: rows.isEmpty
+                    ? ListView(
+                        children: const [
+                          SizedBox(height: 120),
+                          Center(
+                              child: Text('Нет визитов с задолженностью.')),
+                        ],
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        itemCount: rows.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (context, i) => _TillRow(
+                          visit: rows[i],
+                          onPay: () => _openPayment(rows[i]),
+                        ),
+                      ),
               ),
-              if (data.total > data.limit)
-                _pager(context, data),
+              if (data.total > data.limit) _pager(context, data),
             ],
           ),
         );

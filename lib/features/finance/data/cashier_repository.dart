@@ -25,8 +25,9 @@ class CashierRepository {
 
   final Dio _dio;
 
-  /// Open visits, newest first. Caller filters to balance > 0 (the backend has
-  /// no "outstanding only" flag — `status=open` is the closest server filter).
+  /// Open visits that still owe money, newest first. `owing=true` filters
+  /// server-side (payable > paid) so pagination describes exactly the debtor
+  /// set; visits are scoped to the cashier's branch by the backend.
   Future<VisitPage> openVisits({
     int offset = 0,
     int limit = kTillPageSize,
@@ -34,6 +35,7 @@ class CashierRepository {
     try {
       final resp = await _dio.get('/visits', queryParameters: {
         'status': 'open',
+        'owing': true,
         'offset': offset,
         'limit': limit,
       });

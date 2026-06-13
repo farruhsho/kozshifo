@@ -329,6 +329,71 @@ def test_monthly_report_shape(client, auth):
                       params={"month": "2026-1"}).status_code == 422
 
 
+def test_monthly_report_expense_window_is_calendar_month(client, auth):
+    """Boundary expenses bucket by LOCAL calendar month — not by the .date() of a
+    UTC instant, which shifts a day on non-UTC hosts (the regression this guards).
+    Uses an isolated far-past month (2024-02, leap) no other test touches."""
+    def expense(category: str, d: str) -> None:
+        r = client.post(_EXPENSES, headers=auth,
+                        json={"category": category, "amount": "1000.00", "expense_date": d})
+        assert r.status_code == 201, r.text
+
+    expense("BoundIn", "2024-02-29")    # last day of Feb -> February
+    expense("BoundPrev", "2024-01-31")  # last day of Jan -> NOT February
+    expense("BoundNext", "2024-03-01")  # first day of Mar -> NOT February
+
+    feb = client.get(f"{_REPORTS}/monthly", headers=auth, params={"month": "2024-02"}).json()
+    jan = client.get(f"{_REPORTS}/monthly", headers=auth, params={"month": "2024-01"}).json()
+    mar = client.get(f"{_REPORTS}/monthly", headers=auth, params={"month": "2024-03"}).json()
+    assert Decimal(feb["expense_total"]) == Decimal("1000.00")   # only Feb-29
+    assert Decimal(jan["expense_total"]) == Decimal("1000.00")   # only Jan-31
+    assert Decimal(mar["expense_total"]) == Decimal("1000.00")   # only Mar-01
+
+
+def test_visits_branch_scoped_for_non_superuser(client, auth):
+    """A branch-scoped cashier sees only their branch's visits; the director
+    (superuser) sees all branches."""
+    main = client.get(f"{API}/branches", headers=auth).json()[0]["id"]
+    other = client.post(f"{API}/branches", headers=auth,
+                        json={"name": "Филиал-2", "code": "BR2", "address": "x"}).json()["id"]
+    services = client.get(f"{API}/services", headers=auth).json()["items"]
+    svc = services[0]["id"]
+    def visit_in(branch_id: str) -> str:
+        p = client.post(f"{API}/patients", headers=auth,
+                        json={"first_name": "Б", "last_name": "Скоуп", "branch_id": branch_id}).json()
+        return client.post(f"{API}/visits", headers=auth,
+                           json={"patient_id": p["id"], "branch_id": branch_id,
+                                 "items": [{"service_id": svc, "quantity": 1}]}).json()["id"]
+    v_main, v_other = visit_in(main), visit_in(other)
+
+    kassa = _login(client, "kassa@kozshifo.uz", "Kassa!2026")  # seeded at MAIN
+    seen = {v["id"] for v in client.get(f"{API}/visits", headers=kassa,
+                                        params={"limit": 200}).json()["items"]}
+    assert v_other not in seen   # other branch hidden from the cashier
+    # Director sees both branches.
+    all_seen = {v["id"] for v in client.get(f"{API}/visits", headers=auth,
+                                            params={"limit": 200}).json()["items"]}
+    assert {v_main, v_other} <= all_seen
+
+
+def test_visits_owing_filter(client, auth):
+    """owing=true returns only visits whose payable still exceeds paid."""
+    _, paid = _paid_visit(client, auth)         # fully paid -> not owing
+    branch_id = client.get(f"{API}/branches", headers=auth).json()[0]["id"]
+    patient = client.post(f"{API}/patients", headers=auth,
+                          json={"first_name": "Д", "last_name": "Долг", "branch_id": branch_id}).json()
+    svc = client.get(f"{API}/services", headers=auth).json()["items"][0]["id"]
+    owing = client.post(f"{API}/visits", headers=auth,
+                        json={"patient_id": patient["id"], "branch_id": branch_id,
+                              "items": [{"service_id": svc, "quantity": 1}]}).json()
+
+    rows = client.get(f"{API}/visits", headers=auth,
+                      params={"status": "open", "owing": True, "limit": 200}).json()["items"]
+    ids = {v["id"] for v in rows}
+    assert owing["id"] in ids
+    assert paid["id"] not in ids
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # CSV exports
 # ════════════════════════════════════════════════════════════════════════════

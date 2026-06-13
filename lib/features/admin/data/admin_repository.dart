@@ -187,16 +187,33 @@ class AdminRepository {
     }
   }
 
+  /// PATCH /users/{id} with exclude-unset semantics on the backend.
+  ///
+  /// [salaryPercent] sets the doctor's percent-pay (decimal string, "0".."100").
+  /// To CLEAR percent pay (take a doctor off percent-based salary) pass
+  /// [clearSalaryPercent] = true — the backend treats explicit `null` as «clear»,
+  /// and Dart's null-aware map spread (`?`) can't emit an explicit null, so the
+  /// clear path needs its own flag rather than `salaryPercent: null`.
   Future<StaffUser> updateUser(
     String id, {
     bool? isActive,
     List<String>? roleNames,
+    String? salaryPercent,
+    bool clearSalaryPercent = false,
   }) async {
     try {
-      final resp = await _dio.patch('/users/$id', data: {
+      final body = <String, dynamic>{
         'is_active': ?isActive,
         'role_names': ?roleNames,
-      });
+      };
+      // Explicit null clears the percent (backend uses exclude_unset, so a
+      // present null means "set to null" while omission leaves it unchanged).
+      if (clearSalaryPercent) {
+        body['salary_percent'] = null;
+      } else if (salaryPercent != null) {
+        body['salary_percent'] = salaryPercent;
+      }
+      final resp = await _dio.patch('/users/$id', data: body);
       return StaffUser.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);

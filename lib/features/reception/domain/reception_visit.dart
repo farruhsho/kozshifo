@@ -9,6 +9,7 @@ abstract class ReceptionVisit with _$ReceptionVisit {
   const factory ReceptionVisit({
     required String id,
     required String visitNo,
+    String? patientId,
     required String status,
     @Default('registered') String flowStatus,
     required String totalAmount,

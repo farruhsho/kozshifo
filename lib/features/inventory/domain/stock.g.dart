@@ -13,6 +13,7 @@ _StockBatch _$StockBatchFromJson(Map<String, dynamic> json) => _StockBatch(
   quantity: json['quantity'] as String,
   unitCost: json['unit_cost'] as String,
   receivedAt: json['received_at'] as String,
+  expired: json['expired'] as bool? ?? false,
 );
 
 Map<String, dynamic> _$StockBatchToJson(_StockBatch instance) =>
@@ -23,6 +24,7 @@ Map<String, dynamic> _$StockBatchToJson(_StockBatch instance) =>
       'quantity': instance.quantity,
       'unit_cost': instance.unitCost,
       'received_at': instance.receivedAt,
+      'expired': instance.expired,
     };
 
 _StockRow _$StockRowFromJson(Map<String, dynamic> json) => _StockRow(

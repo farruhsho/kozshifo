@@ -98,7 +98,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     ],
     "Cashier": [
         "patients.read", "visits.read",
-        "payments.read", "payments.create",
+        "payments.read", "payments.create", "payments.refund",
         "queue.read", "queue.manage", "services.read",
         "expenses.read", "expenses.manage", "payroll.read",
     ],

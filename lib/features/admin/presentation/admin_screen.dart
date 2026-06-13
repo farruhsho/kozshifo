@@ -699,8 +699,9 @@ class _StaffTab extends ConsumerWidget {
               final u = items[i];
               final greyed = u.isActive ? null : TextStyle(color: disabled);
               final branch = branchNames[u.branchId];
+              final hasPercent = u.salaryPercent != null;
               return ListTile(
-                isThreeLine: u.roles.isNotEmpty || u.isSuperuser,
+                isThreeLine: u.roles.isNotEmpty || u.isSuperuser || hasPercent,
                 leading: CircleAvatar(
                   child: Icon(u.isSuperuser
                       ? Icons.shield_outlined
@@ -711,7 +712,7 @@ class _StaffTab extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text([u.email, ?branch].join(' · '), style: greyed),
-                    if (u.roles.isNotEmpty || u.isSuperuser)
+                    if (u.roles.isNotEmpty || u.isSuperuser || hasPercent)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Wrap(
@@ -729,6 +730,12 @@ class _StaffTab extends ConsumerWidget {
                                 label: Text(r),
                                 visualDensity: VisualDensity.compact,
                               ),
+                            if (hasPercent)
+                              Chip(
+                                avatar: const Icon(Icons.percent, size: 16),
+                                label: Text('${u.salaryPercent}%'),
+                                visualDensity: VisualDensity.compact,
+                              ),
                           ],
                         ),
                       ),
@@ -742,6 +749,11 @@ class _StaffTab extends ConsumerWidget {
                       ? (v) => _toggleActive(context, ref, u, v)
                       : null,
                 ),
+                // Тап по строке — редактирование (процент врача). Владельца не
+                // трогаем; без права users.update строка не кликабельна.
+                onTap: (canUpdate && !u.isSuperuser)
+                    ? () => _openEdit(context, ref, u)
+                    : null,
               );
             },
           );
@@ -772,6 +784,18 @@ class _StaffTab extends ConsumerWidget {
     if (ok == true && context.mounted) {
       ref.invalidate(adminUsersProvider);
       _showSnack(context, 'Сотрудник создан');
+    }
+  }
+
+  Future<void> _openEdit(
+      BuildContext context, WidgetRef ref, StaffUser user) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _UserEditDialog(user: user),
+    );
+    if (ok == true && context.mounted) {
+      ref.invalidate(adminUsersProvider);
+      _showSnack(context, 'Сотрудник обновлён');
     }
   }
 }
@@ -943,6 +967,111 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2))
               : const Text('Создать'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Редактирование сотрудника: процентная оплата врача («Процент врача», 0–100).
+/// Пустое поле = снять с процентной оплаты (бэкенду уходит salary_percent: null).
+class _UserEditDialog extends ConsumerStatefulWidget {
+  const _UserEditDialog({required this.user});
+
+  final StaffUser user;
+
+  @override
+  ConsumerState<_UserEditDialog> createState() => _UserEditDialogState();
+}
+
+class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
+  late final _percent =
+      TextEditingController(text: widget.user.salaryPercent ?? '');
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _percent.dispose();
+    super.dispose();
+  }
+
+  // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
+  String get _normalizedPercent => _percent.text.trim().replaceAll(',', '.');
+
+  /// Пусто = допустимо (снять с процента). Иначе — число 0..100.
+  String? _validatePercent() {
+    final raw = _normalizedPercent;
+    if (raw.isEmpty) return null;
+    final v = double.tryParse(raw);
+    if (v == null) return 'Введите число';
+    if (v < 0 || v > 100) return 'Диапазон 0–100';
+    return null;
+  }
+
+  bool get _canSave => !_saving && _validatePercent() == null;
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    final raw = _normalizedPercent;
+    try {
+      await ref.read(adminRepositoryProvider).updateUser(
+            widget.user.id,
+            salaryPercent: raw.isEmpty ? null : raw,
+            // Пустое поле — явный сброс процентной оплаты (отправляем null).
+            clearSalaryPercent: raw.isEmpty,
+          );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        _showSnack(context, e.toString(), error: true);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final error = _percent.text.trim().isEmpty ? null : _validatePercent();
+    return AlertDialog(
+      title: Text(widget.user.fullName),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.user.email,
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _percent,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: 'Процент врача',
+                hintText: '0–100',
+                suffixText: '%',
+                helperText: 'Пусто — снять с процентной оплаты',
+                errorText: error,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _canSave ? _save : null,
+          child: _saving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Сохранить'),
         ),
       ],
     );

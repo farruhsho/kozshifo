@@ -8,6 +8,19 @@ import '../data/finance_repository.dart';
 import '../domain/expense.dart';
 import 'finance_common.dart';
 
+/// Common expense categories — the «Прочее» bucket opens a free-text field.
+const kExpenseCategories = <String>[
+  'Аренда',
+  'Зарплата',
+  'Коммунальные',
+  'Расходники',
+  'Реклама',
+  'Прочее',
+];
+
+/// Sentinel for the filter dropdown's "no category" option.
+const _kAllCategories = '';
+
 /// «Расходы»: список с фильтрами (период + категория), добавление и удаление
 /// (требует `expenses.manage`), CSV-экспорт. Зарплатные строки защищены замком.
 class ExpensesTab extends ConsumerStatefulWidget {
@@ -18,22 +31,21 @@ class ExpensesTab extends ConsumerStatefulWidget {
 }
 
 class _ExpensesTabState extends ConsumerState<ExpensesTab> {
-  final _category = TextEditingController();
+  // Applied category filter (snapshot). Empty == all. Both the list query and
+  // the CSV export read THIS, so the export always matches the visible list.
+  String _appliedCategory = _kAllCategories;
   DateTime? _from;
   DateTime? _to;
   int _offset = 0;
   bool _exporting = false;
 
-  @override
-  void dispose() {
-    _category.dispose();
-    super.dispose();
-  }
+  String? get _categoryFilter =>
+      _appliedCategory.isEmpty ? null : _appliedCategory;
 
   ExpenseQuery get _query => (
         dateFrom: _from == null ? null : ymd(_from!),
         dateTo: _to == null ? null : ymd(_to!),
-        category: _category.text.trim().isEmpty ? null : _category.text.trim(),
+        category: _categoryFilter,
         offset: _offset,
       );
 
@@ -59,6 +71,8 @@ class _ExpensesTabState extends ConsumerState<ExpensesTab> {
   Future<void> _exportCsv() async {
     setState(() => _exporting = true);
     try {
+      // Snapshot the APPLIED filter — never the live, unsubmitted field — so
+      // the CSV matches exactly what the list currently shows.
       final q = _query;
       final bytes = await ref.read(financeRepositoryProvider).expensesCsv(
             dateFrom: q.dateFrom,
@@ -158,23 +172,26 @@ class _ExpensesTabState extends ConsumerState<ExpensesTab> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: TextField(
-                    controller: _category,
-                    decoration: InputDecoration(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _appliedCategory,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
                       isDense: true,
                       labelText: 'Категория',
-                      prefixIcon: const Icon(Icons.filter_alt_outlined),
-                      suffixIcon: _category.text.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.clear, size: 18),
-                              onPressed: () {
-                                _category.clear();
-                                setState(() => _offset = 0);
-                              },
-                            ),
+                      prefixIcon: Icon(Icons.filter_alt_outlined),
                     ),
-                    onSubmitted: (_) => setState(() => _offset = 0),
+                    items: [
+                      const DropdownMenuItem(
+                          value: _kAllCategories, child: Text('Все категории')),
+                      for (final c in kExpenseCategories)
+                        DropdownMenuItem(value: c, child: Text(c)),
+                    ],
+                    // Applying the filter snapshots the category and resets the
+                    // page — the export then reads the same snapshot.
+                    onChanged: (v) => setState(() {
+                      _appliedCategory = v ?? _kAllCategories;
+                      _offset = 0;
+                    }),
                   ),
                 ),
                 const SizedBox(width: 4),
@@ -327,7 +344,8 @@ class _ExpenseCreateDialog extends ConsumerStatefulWidget {
 }
 
 class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
-  final _category = TextEditingController();
+  String? _categorySelect;
+  final _customCategory = TextEditingController();
   final _amount = TextEditingController();
   final _note = TextEditingController();
   DateTime _date = DateTime.now();
@@ -335,7 +353,7 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
 
   @override
   void dispose() {
-    _category.dispose();
+    _customCategory.dispose();
     _amount.dispose();
     _note.dispose();
     super.dispose();
@@ -344,8 +362,13 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
   // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
   String get _normalizedAmount => _amount.text.trim().replaceAll(',', '.');
 
+  /// «Прочее» → the free-text value; any other choice → the label itself.
+  String get _resolvedCategory => _categorySelect == 'Прочее'
+      ? _customCategory.text.trim()
+      : (_categorySelect ?? '');
+
   bool get _canSave {
-    if (_saving || _category.text.trim().isEmpty) return false;
+    if (_saving || _resolvedCategory.isEmpty) return false;
     final amount = double.tryParse(_normalizedAmount);
     return amount != null && amount > 0;
   }
@@ -364,7 +387,7 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
     setState(() => _saving = true);
     try {
       await ref.read(financeRepositoryProvider).createExpense(
-            category: _category.text.trim(),
+            category: _resolvedCategory,
             amount: _normalizedAmount,
             expenseDate: ymd(_date),
             note: _note.text.trim().isEmpty ? null : _note.text.trim(),
@@ -387,12 +410,24 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: _category,
-              decoration: const InputDecoration(
-                  labelText: 'Категория', hintText: 'Аренда, коммуналка…'),
-              onChanged: (_) => setState(() {}),
+            DropdownButtonFormField<String>(
+              initialValue: _categorySelect,
+              decoration: const InputDecoration(labelText: 'Категория'),
+              items: [
+                for (final c in kExpenseCategories)
+                  DropdownMenuItem(value: c, child: Text(c)),
+              ],
+              onChanged: (v) => setState(() => _categorySelect = v),
             ),
+            if (_categorySelect == 'Прочее') ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _customCategory,
+                decoration: const InputDecoration(
+                    labelText: 'Категория (свой вариант)'),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
             const SizedBox(height: 12),
             TextField(
               controller: _amount,

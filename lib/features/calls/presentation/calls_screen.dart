@@ -319,10 +319,18 @@ class _CallTile extends StatelessWidget {
 
 String _two(int v) => v.toString().padLeft(2, '0');
 
-/// «HH:mm dd.MM» из ISO-строки; нераспознанное значение показываем как есть.
+/// «HH:mm dd.MM» из ISO-строки в ЛОКАЛЬНОМ времени; нераспознанное значение
+/// показываем как есть. Бэкенд отдаёт `started_at` в UTC (зачастую без
+/// смещения — naive). Naive-строку трактуем как UTC, затем переводим в local —
+/// иначе журнал показывал бы UTC-часы (сдвиг на местное смещение).
 String _timeLabel(String iso) {
-  final dt = DateTime.tryParse(iso);
-  if (dt == null) return iso;
+  final parsed = DateTime.tryParse(iso);
+  if (parsed == null) return iso;
+  final dt = (parsed.isUtc
+          ? parsed
+          : DateTime.utc(parsed.year, parsed.month, parsed.day, parsed.hour,
+              parsed.minute, parsed.second))
+      .toLocal();
   return '${_two(dt.hour)}:${_two(dt.minute)} ${_two(dt.day)}.${_two(dt.month)}';
 }
 

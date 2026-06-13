@@ -1,0 +1,307 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../core/network/api_exception.dart';
+import '../data/inventory_repository.dart';
+import '../domain/movement.dart';
+import '../domain/product.dart';
+
+/// Opens the write-off (списание) dialog and returns the recorded movements on
+/// success, or null if cancelled. [product] pre-selects and locks the picker
+/// (used from a stock row); when null the user searches for one.
+///
+/// The caller is responsible for refreshing stock and showing the success
+/// SnackBar — the dialog only reports the result.
+Future<List<StockMovement>?> showWriteOffDialog(
+  BuildContext context, {
+  required String branchId,
+  Product? product,
+}) {
+  return showDialog<List<StockMovement>>(
+    context: context,
+    builder: (_) => WriteOffDialog(branchId: branchId, product: product),
+  );
+}
+
+/// Списание со склада (FEFO). Поиск товара (если не задан), количество, причина,
+/// «включая просроченные». InsufficientStock (409) показываем точным текстом
+/// сервера прямо в диалоге, не закрывая его.
+class WriteOffDialog extends ConsumerStatefulWidget {
+  const WriteOffDialog({super.key, required this.branchId, this.product});
+
+  final String branchId;
+  final Product? product;
+
+  @override
+  ConsumerState<WriteOffDialog> createState() => _WriteOffDialogState();
+}
+
+class _WriteOffDialogState extends ConsumerState<WriteOffDialog> {
+  final _quantity = TextEditingController();
+  final _reason = TextEditingController();
+  final _search = TextEditingController();
+
+  Product? _selected;
+  String _query = '';
+  Timer? _debounce;
+  bool _includeExpired = false;
+  bool _saving = false;
+  String? _error; // server/validation message shown inline
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = widget.product;
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _quantity.dispose();
+    _reason.dispose();
+    _search.dispose();
+    super.dispose();
+  }
+
+  void _onSearch(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) setState(() => _query = value.trim());
+    });
+  }
+
+  /// Quantity is valid only if it parses to a strictly positive number.
+  /// (Backend enforces gt=0; we mirror that so the button stays disabled.)
+  double? get _qty {
+    final raw = _quantity.text.trim().replaceAll(',', '.');
+    final v = double.tryParse(raw);
+    return (v != null && v > 0) ? v : null;
+  }
+
+  bool get _canSave =>
+      !_saving &&
+      _selected != null &&
+      _qty != null &&
+      _reason.text.trim().isNotEmpty;
+
+  Future<void> _save() async {
+    final product = _selected;
+    final qty = _qty;
+    if (product == null || qty == null) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final movements =
+          await ref.read(inventoryRepositoryProvider).writeOff(
+                productId: product.id,
+                branchId: widget.branchId,
+                quantity: _quantity.text.trim().replaceAll(',', '.'),
+                reason: _reason.text.trim(),
+                includeExpired: _includeExpired,
+              );
+      if (mounted) Navigator.of(context).pop(movements);
+    } on ApiException catch (e) {
+      // 409 InsufficientStock и прочие отказы — точный текст сервера в диалоге.
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = e.message;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = e.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return AlertDialog(
+      title: const Text('Списание со склада'),
+      content: SizedBox(
+        width: 440,
+        // Scrollable so the inline error box (and a tall product picker) never
+        // overflow the dialog's bounded height on short screens.
+        child: SingleChildScrollView(
+          child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_selected != null && widget.product != null)
+              // Товар задан вызывающим экраном — фиксируем, без поиска.
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.inventory_2_outlined),
+                title: Text(_selected!.name),
+                subtitle: Text('${_selected!.sku} · ед. ${_selected!.unit}'),
+              )
+            else
+              _ProductPicker(
+                search: _search,
+                query: _query,
+                selected: _selected,
+                onSearch: _onSearch,
+                onPick: (p) => setState(() {
+                  _selected = p;
+                  _error = null;
+                }),
+              ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _quantity,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: 'Количество',
+                suffixText: _selected?.unit,
+                errorText: _quantity.text.trim().isNotEmpty && _qty == null
+                    ? 'Введите число больше нуля'
+                    : null,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _reason,
+              decoration: const InputDecoration(
+                labelText: 'Причина',
+                hintText: 'порча, бой, утилизация…',
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 4),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              dense: true,
+              value: _includeExpired,
+              onChanged: (v) =>
+                  setState(() => _includeExpired = v ?? false),
+              title: const Text('Включая просроченные партии'),
+              subtitle: const Text(
+                  'Для утилизации просроченных лотов (иначе они не списываются)'),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: scheme.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_error!,
+                    style: TextStyle(color: scheme.onErrorContainer)),
+              ),
+            ],
+          ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _canSave ? _save : null,
+          child: _saving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Списать'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Searchable product picker for the write-off dialog. Debounced query feeds the
+/// server-side `q` filter; the chosen product is shown above the field.
+class _ProductPicker extends ConsumerWidget {
+  const _ProductPicker({
+    required this.search,
+    required this.query,
+    required this.selected,
+    required this.onSearch,
+    required this.onPick,
+  });
+
+  final TextEditingController search;
+  final String query;
+  final Product? selected;
+  final ValueChanged<String> onSearch;
+  final ValueChanged<Product> onPick;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final results = ref.watch(productSearchProvider(query));
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (selected != null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.check_circle_outline, color: scheme.primary),
+            title: Text(selected!.name),
+            subtitle: Text('${selected!.sku} · ед. ${selected!.unit}'),
+            trailing: const Icon(Icons.edit_outlined, size: 18),
+          ),
+        TextField(
+          controller: search,
+          decoration: const InputDecoration(
+            isDense: true,
+            prefixIcon: Icon(Icons.search),
+            labelText: 'Товар (поиск по названию, SKU, штрихкоду)',
+          ),
+          onChanged: onSearch,
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          height: 160,
+          child: results.when(
+            data: (items) {
+              final active = items.where((p) => p.isActive).toList();
+              if (active.isEmpty) {
+                return const Center(child: Text('Ничего не найдено.'));
+              }
+              return ListView.builder(
+                itemCount: active.length,
+                itemBuilder: (_, i) {
+                  final p = active[i];
+                  final isSel = p.id == selected?.id;
+                  return ListTile(
+                    dense: true,
+                    selected: isSel,
+                    leading: const Icon(Icons.inventory_2_outlined),
+                    title: Text(p.name, overflow: TextOverflow.ellipsis),
+                    subtitle: Text('${p.sku} · ${p.typeLabel}'),
+                    onTap: () => onPick(p),
+                  );
+                },
+              );
+            },
+            loading: () =>
+                const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Center(
+              child: Text('$e',
+                  style: TextStyle(color: scheme.error),
+                  textAlign: TextAlign.center),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

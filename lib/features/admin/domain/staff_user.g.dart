@@ -14,6 +14,7 @@ _StaffUser _$StaffUserFromJson(Map<String, dynamic> json) => _StaffUser(
   isActive: json['is_active'] as bool? ?? true,
   isSuperuser: json['is_superuser'] as bool? ?? false,
   branchId: json['branch_id'] as String?,
+  salaryPercent: json['salary_percent'] as String?,
   roles: json['roles'] == null
       ? const <String>[]
       : roleNamesFromJson(json['roles']),
@@ -28,5 +29,6 @@ Map<String, dynamic> _$StaffUserToJson(_StaffUser instance) =>
       'is_active': instance.isActive,
       'is_superuser': instance.isSuperuser,
       'branch_id': instance.branchId,
+      'salary_percent': instance.salaryPercent,
       'roles': instance.roles,
     };

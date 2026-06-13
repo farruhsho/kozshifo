@@ -38,6 +38,19 @@ String ddMMyyyy(String isoDate) {
   return '${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
 }
 
+/// ISO datetime (UTC, with offset) → LOCAL "dd.MM HH:mm" for receipt rows.
+/// The backend now sends an offset, so `.toLocal()` lands on clinic time.
+String ddMMHHmmLocal(String iso) {
+  final d = DateTime.tryParse(iso);
+  if (d == null) return iso;
+  final l = d.toLocal();
+  final dd = l.day.toString().padLeft(2, '0');
+  final mm = l.month.toString().padLeft(2, '0');
+  final hh = l.hour.toString().padLeft(2, '0');
+  final min = l.minute.toString().padLeft(2, '0');
+  return '$dd.$mm $hh:$min';
+}
+
 void showFinanceSnack(BuildContext context, String message,
     {bool error = false}) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(

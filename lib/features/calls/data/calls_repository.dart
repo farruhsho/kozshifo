@@ -25,10 +25,14 @@ class CallsRepository {
     int limit = 50,
   }) async {
     try {
+      // Бэкенд трактует naive datetime как UTC. Границы [dateFrom]/[dateTo]
+      // строятся из ЛОКАЛЬНЫХ DateTime (полночь / конец дня по местному
+      // времени) — поэтому переводим в UTC явно, иначе «Сегодня» уезжал бы
+      // на местное смещение. Зеркалит attendance_repository (.toUtc()).
       final resp = await _dio.get('/calls', queryParameters: {
         if (q != null && q.isNotEmpty) 'q': q,
-        if (dateFrom != null) 'date_from': dateFrom.toIso8601String(),
-        if (dateTo != null) 'date_to': dateTo.toIso8601String(),
+        if (dateFrom != null) 'date_from': dateFrom.toUtc().toIso8601String(),
+        if (dateTo != null) 'date_to': dateTo.toUtc().toIso8601String(),
         'offset': offset,
         'limit': limit,
       });

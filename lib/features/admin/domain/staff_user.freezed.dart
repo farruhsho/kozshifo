@@ -15,7 +15,9 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$StaffUser {
 
- String get id; String get email; String get fullName; String? get phone; bool get isActive; bool get isSuperuser; String? get branchId;@JsonKey(fromJson: roleNamesFromJson) List<String> get roles;
+ String get id; String get email; String get fullName; String? get phone; bool get isActive; bool get isSuperuser; String? get branchId;// Процентная оплата врача (доля от выручки его визитов). Decimal приходит
+// строкой (например "12.50"); null = не на процентной оплате.
+ String? get salaryPercent;@JsonKey(fromJson: roleNamesFromJson) List<String> get roles;
 /// Create a copy of StaffUser
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +30,16 @@ $StaffUserCopyWith<StaffUser> get copyWith => _$StaffUserCopyWithImpl<StaffUser>
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is StaffUser&&(identical(other.id, id) || other.id == id)&&(identical(other.email, email) || other.email == email)&&(identical(other.fullName, fullName) || other.fullName == fullName)&&(identical(other.phone, phone) || other.phone == phone)&&(identical(other.isActive, isActive) || other.isActive == isActive)&&(identical(other.isSuperuser, isSuperuser) || other.isSuperuser == isSuperuser)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&const DeepCollectionEquality().equals(other.roles, roles));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is StaffUser&&(identical(other.id, id) || other.id == id)&&(identical(other.email, email) || other.email == email)&&(identical(other.fullName, fullName) || other.fullName == fullName)&&(identical(other.phone, phone) || other.phone == phone)&&(identical(other.isActive, isActive) || other.isActive == isActive)&&(identical(other.isSuperuser, isSuperuser) || other.isSuperuser == isSuperuser)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.salaryPercent, salaryPercent) || other.salaryPercent == salaryPercent)&&const DeepCollectionEquality().equals(other.roles, roles));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,email,fullName,phone,isActive,isSuperuser,branchId,const DeepCollectionEquality().hash(roles));
+int get hashCode => Object.hash(runtimeType,id,email,fullName,phone,isActive,isSuperuser,branchId,salaryPercent,const DeepCollectionEquality().hash(roles));
 
 @override
 String toString() {
-  return 'StaffUser(id: $id, email: $email, fullName: $fullName, phone: $phone, isActive: $isActive, isSuperuser: $isSuperuser, branchId: $branchId, roles: $roles)';
+  return 'StaffUser(id: $id, email: $email, fullName: $fullName, phone: $phone, isActive: $isActive, isSuperuser: $isSuperuser, branchId: $branchId, salaryPercent: $salaryPercent, roles: $roles)';
 }
 
 
@@ -48,7 +50,7 @@ abstract mixin class $StaffUserCopyWith<$Res>  {
   factory $StaffUserCopyWith(StaffUser value, $Res Function(StaffUser) _then) = _$StaffUserCopyWithImpl;
 @useResult
 $Res call({
- String id, String email, String fullName, String? phone, bool isActive, bool isSuperuser, String? branchId,@JsonKey(fromJson: roleNamesFromJson) List<String> roles
+ String id, String email, String fullName, String? phone, bool isActive, bool isSuperuser, String? branchId, String? salaryPercent,@JsonKey(fromJson: roleNamesFromJson) List<String> roles
 });
 
 
@@ -65,7 +67,7 @@ class _$StaffUserCopyWithImpl<$Res>
 
 /// Create a copy of StaffUser
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? email = null,Object? fullName = null,Object? phone = freezed,Object? isActive = null,Object? isSuperuser = null,Object? branchId = freezed,Object? roles = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? email = null,Object? fullName = null,Object? phone = freezed,Object? isActive = null,Object? isSuperuser = null,Object? branchId = freezed,Object? salaryPercent = freezed,Object? roles = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,email: null == email ? _self.email : email // ignore: cast_nullable_to_non_nullable
@@ -74,6 +76,7 @@ as String,phone: freezed == phone ? _self.phone : phone // ignore: cast_nullable
 as String?,isActive: null == isActive ? _self.isActive : isActive // ignore: cast_nullable_to_non_nullable
 as bool,isSuperuser: null == isSuperuser ? _self.isSuperuser : isSuperuser // ignore: cast_nullable_to_non_nullable
 as bool,branchId: freezed == branchId ? _self.branchId : branchId // ignore: cast_nullable_to_non_nullable
+as String?,salaryPercent: freezed == salaryPercent ? _self.salaryPercent : salaryPercent // ignore: cast_nullable_to_non_nullable
 as String?,roles: null == roles ? _self.roles : roles // ignore: cast_nullable_to_non_nullable
 as List<String>,
   ));
@@ -160,10 +163,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String email,  String fullName,  String? phone,  bool isActive,  bool isSuperuser,  String? branchId, @JsonKey(fromJson: roleNamesFromJson)  List<String> roles)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String email,  String fullName,  String? phone,  bool isActive,  bool isSuperuser,  String? branchId,  String? salaryPercent, @JsonKey(fromJson: roleNamesFromJson)  List<String> roles)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _StaffUser() when $default != null:
-return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_that.isSuperuser,_that.branchId,_that.roles);case _:
+return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_that.isSuperuser,_that.branchId,_that.salaryPercent,_that.roles);case _:
   return orElse();
 
 }
@@ -181,10 +184,10 @@ return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String email,  String fullName,  String? phone,  bool isActive,  bool isSuperuser,  String? branchId, @JsonKey(fromJson: roleNamesFromJson)  List<String> roles)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String email,  String fullName,  String? phone,  bool isActive,  bool isSuperuser,  String? branchId,  String? salaryPercent, @JsonKey(fromJson: roleNamesFromJson)  List<String> roles)  $default,) {final _that = this;
 switch (_that) {
 case _StaffUser():
-return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_that.isSuperuser,_that.branchId,_that.roles);case _:
+return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_that.isSuperuser,_that.branchId,_that.salaryPercent,_that.roles);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -201,10 +204,10 @@ return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String email,  String fullName,  String? phone,  bool isActive,  bool isSuperuser,  String? branchId, @JsonKey(fromJson: roleNamesFromJson)  List<String> roles)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String email,  String fullName,  String? phone,  bool isActive,  bool isSuperuser,  String? branchId,  String? salaryPercent, @JsonKey(fromJson: roleNamesFromJson)  List<String> roles)?  $default,) {final _that = this;
 switch (_that) {
 case _StaffUser() when $default != null:
-return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_that.isSuperuser,_that.branchId,_that.roles);case _:
+return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_that.isSuperuser,_that.branchId,_that.salaryPercent,_that.roles);case _:
   return null;
 
 }
@@ -216,7 +219,7 @@ return $default(_that.id,_that.email,_that.fullName,_that.phone,_that.isActive,_
 @JsonSerializable()
 
 class _StaffUser implements StaffUser {
-  const _StaffUser({required this.id, required this.email, required this.fullName, this.phone, this.isActive = true, this.isSuperuser = false, this.branchId, @JsonKey(fromJson: roleNamesFromJson) final  List<String> roles = const <String>[]}): _roles = roles;
+  const _StaffUser({required this.id, required this.email, required this.fullName, this.phone, this.isActive = true, this.isSuperuser = false, this.branchId, this.salaryPercent, @JsonKey(fromJson: roleNamesFromJson) final  List<String> roles = const <String>[]}): _roles = roles;
   factory _StaffUser.fromJson(Map<String, dynamic> json) => _$StaffUserFromJson(json);
 
 @override final  String id;
@@ -226,6 +229,9 @@ class _StaffUser implements StaffUser {
 @override@JsonKey() final  bool isActive;
 @override@JsonKey() final  bool isSuperuser;
 @override final  String? branchId;
+// Процентная оплата врача (доля от выручки его визитов). Decimal приходит
+// строкой (например "12.50"); null = не на процентной оплате.
+@override final  String? salaryPercent;
  final  List<String> _roles;
 @override@JsonKey(fromJson: roleNamesFromJson) List<String> get roles {
   if (_roles is EqualUnmodifiableListView) return _roles;
@@ -247,16 +253,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _StaffUser&&(identical(other.id, id) || other.id == id)&&(identical(other.email, email) || other.email == email)&&(identical(other.fullName, fullName) || other.fullName == fullName)&&(identical(other.phone, phone) || other.phone == phone)&&(identical(other.isActive, isActive) || other.isActive == isActive)&&(identical(other.isSuperuser, isSuperuser) || other.isSuperuser == isSuperuser)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&const DeepCollectionEquality().equals(other._roles, _roles));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _StaffUser&&(identical(other.id, id) || other.id == id)&&(identical(other.email, email) || other.email == email)&&(identical(other.fullName, fullName) || other.fullName == fullName)&&(identical(other.phone, phone) || other.phone == phone)&&(identical(other.isActive, isActive) || other.isActive == isActive)&&(identical(other.isSuperuser, isSuperuser) || other.isSuperuser == isSuperuser)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.salaryPercent, salaryPercent) || other.salaryPercent == salaryPercent)&&const DeepCollectionEquality().equals(other._roles, _roles));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,email,fullName,phone,isActive,isSuperuser,branchId,const DeepCollectionEquality().hash(_roles));
+int get hashCode => Object.hash(runtimeType,id,email,fullName,phone,isActive,isSuperuser,branchId,salaryPercent,const DeepCollectionEquality().hash(_roles));
 
 @override
 String toString() {
-  return 'StaffUser(id: $id, email: $email, fullName: $fullName, phone: $phone, isActive: $isActive, isSuperuser: $isSuperuser, branchId: $branchId, roles: $roles)';
+  return 'StaffUser(id: $id, email: $email, fullName: $fullName, phone: $phone, isActive: $isActive, isSuperuser: $isSuperuser, branchId: $branchId, salaryPercent: $salaryPercent, roles: $roles)';
 }
 
 
@@ -267,7 +273,7 @@ abstract mixin class _$StaffUserCopyWith<$Res> implements $StaffUserCopyWith<$Re
   factory _$StaffUserCopyWith(_StaffUser value, $Res Function(_StaffUser) _then) = __$StaffUserCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String email, String fullName, String? phone, bool isActive, bool isSuperuser, String? branchId,@JsonKey(fromJson: roleNamesFromJson) List<String> roles
+ String id, String email, String fullName, String? phone, bool isActive, bool isSuperuser, String? branchId, String? salaryPercent,@JsonKey(fromJson: roleNamesFromJson) List<String> roles
 });
 
 
@@ -284,7 +290,7 @@ class __$StaffUserCopyWithImpl<$Res>
 
 /// Create a copy of StaffUser
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? email = null,Object? fullName = null,Object? phone = freezed,Object? isActive = null,Object? isSuperuser = null,Object? branchId = freezed,Object? roles = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? email = null,Object? fullName = null,Object? phone = freezed,Object? isActive = null,Object? isSuperuser = null,Object? branchId = freezed,Object? salaryPercent = freezed,Object? roles = null,}) {
   return _then(_StaffUser(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,email: null == email ? _self.email : email // ignore: cast_nullable_to_non_nullable
@@ -293,6 +299,7 @@ as String,phone: freezed == phone ? _self.phone : phone // ignore: cast_nullable
 as String?,isActive: null == isActive ? _self.isActive : isActive // ignore: cast_nullable_to_non_nullable
 as bool,isSuperuser: null == isSuperuser ? _self.isSuperuser : isSuperuser // ignore: cast_nullable_to_non_nullable
 as bool,branchId: freezed == branchId ? _self.branchId : branchId // ignore: cast_nullable_to_non_nullable
+as String?,salaryPercent: freezed == salaryPercent ? _self.salaryPercent : salaryPercent // ignore: cast_nullable_to_non_nullable
 as String?,roles: null == roles ? _self._roles : roles // ignore: cast_nullable_to_non_nullable
 as List<String>,
   ));

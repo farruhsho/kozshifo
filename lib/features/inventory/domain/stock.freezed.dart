@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$StockBatch {
 
- String get id; String? get batchNo; String? get expiryDate; String get quantity; String get unitCost; String get receivedAt;
+ String get id; String? get batchNo; String? get expiryDate; String get quantity; String get unitCost; String get receivedAt; bool get expired;
 /// Create a copy of StockBatch
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +28,16 @@ $StockBatchCopyWith<StockBatch> get copyWith => _$StockBatchCopyWithImpl<StockBa
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is StockBatch&&(identical(other.id, id) || other.id == id)&&(identical(other.batchNo, batchNo) || other.batchNo == batchNo)&&(identical(other.expiryDate, expiryDate) || other.expiryDate == expiryDate)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.unitCost, unitCost) || other.unitCost == unitCost)&&(identical(other.receivedAt, receivedAt) || other.receivedAt == receivedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is StockBatch&&(identical(other.id, id) || other.id == id)&&(identical(other.batchNo, batchNo) || other.batchNo == batchNo)&&(identical(other.expiryDate, expiryDate) || other.expiryDate == expiryDate)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.unitCost, unitCost) || other.unitCost == unitCost)&&(identical(other.receivedAt, receivedAt) || other.receivedAt == receivedAt)&&(identical(other.expired, expired) || other.expired == expired));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,batchNo,expiryDate,quantity,unitCost,receivedAt);
+int get hashCode => Object.hash(runtimeType,id,batchNo,expiryDate,quantity,unitCost,receivedAt,expired);
 
 @override
 String toString() {
-  return 'StockBatch(id: $id, batchNo: $batchNo, expiryDate: $expiryDate, quantity: $quantity, unitCost: $unitCost, receivedAt: $receivedAt)';
+  return 'StockBatch(id: $id, batchNo: $batchNo, expiryDate: $expiryDate, quantity: $quantity, unitCost: $unitCost, receivedAt: $receivedAt, expired: $expired)';
 }
 
 
@@ -48,7 +48,7 @@ abstract mixin class $StockBatchCopyWith<$Res>  {
   factory $StockBatchCopyWith(StockBatch value, $Res Function(StockBatch) _then) = _$StockBatchCopyWithImpl;
 @useResult
 $Res call({
- String id, String? batchNo, String? expiryDate, String quantity, String unitCost, String receivedAt
+ String id, String? batchNo, String? expiryDate, String quantity, String unitCost, String receivedAt, bool expired
 });
 
 
@@ -65,7 +65,7 @@ class _$StockBatchCopyWithImpl<$Res>
 
 /// Create a copy of StockBatch
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? batchNo = freezed,Object? expiryDate = freezed,Object? quantity = null,Object? unitCost = null,Object? receivedAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? batchNo = freezed,Object? expiryDate = freezed,Object? quantity = null,Object? unitCost = null,Object? receivedAt = null,Object? expired = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,batchNo: freezed == batchNo ? _self.batchNo : batchNo // ignore: cast_nullable_to_non_nullable
@@ -73,7 +73,8 @@ as String?,expiryDate: freezed == expiryDate ? _self.expiryDate : expiryDate // 
 as String?,quantity: null == quantity ? _self.quantity : quantity // ignore: cast_nullable_to_non_nullable
 as String,unitCost: null == unitCost ? _self.unitCost : unitCost // ignore: cast_nullable_to_non_nullable
 as String,receivedAt: null == receivedAt ? _self.receivedAt : receivedAt // ignore: cast_nullable_to_non_nullable
-as String,
+as String,expired: null == expired ? _self.expired : expired // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 
@@ -158,10 +159,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String? batchNo,  String? expiryDate,  String quantity,  String unitCost,  String receivedAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String? batchNo,  String? expiryDate,  String quantity,  String unitCost,  String receivedAt,  bool expired)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _StockBatch() when $default != null:
-return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.unitCost,_that.receivedAt);case _:
+return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.unitCost,_that.receivedAt,_that.expired);case _:
   return orElse();
 
 }
@@ -179,10 +180,10 @@ return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.uni
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String? batchNo,  String? expiryDate,  String quantity,  String unitCost,  String receivedAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String? batchNo,  String? expiryDate,  String quantity,  String unitCost,  String receivedAt,  bool expired)  $default,) {final _that = this;
 switch (_that) {
 case _StockBatch():
-return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.unitCost,_that.receivedAt);case _:
+return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.unitCost,_that.receivedAt,_that.expired);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -199,10 +200,10 @@ return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.uni
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String? batchNo,  String? expiryDate,  String quantity,  String unitCost,  String receivedAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String? batchNo,  String? expiryDate,  String quantity,  String unitCost,  String receivedAt,  bool expired)?  $default,) {final _that = this;
 switch (_that) {
 case _StockBatch() when $default != null:
-return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.unitCost,_that.receivedAt);case _:
+return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.unitCost,_that.receivedAt,_that.expired);case _:
   return null;
 
 }
@@ -213,8 +214,8 @@ return $default(_that.id,_that.batchNo,_that.expiryDate,_that.quantity,_that.uni
 /// @nodoc
 @JsonSerializable()
 
-class _StockBatch implements StockBatch {
-  const _StockBatch({required this.id, this.batchNo, this.expiryDate, required this.quantity, required this.unitCost, required this.receivedAt});
+class _StockBatch extends StockBatch {
+  const _StockBatch({required this.id, this.batchNo, this.expiryDate, required this.quantity, required this.unitCost, required this.receivedAt, this.expired = false}): super._();
   factory _StockBatch.fromJson(Map<String, dynamic> json) => _$StockBatchFromJson(json);
 
 @override final  String id;
@@ -223,6 +224,7 @@ class _StockBatch implements StockBatch {
 @override final  String quantity;
 @override final  String unitCost;
 @override final  String receivedAt;
+@override@JsonKey() final  bool expired;
 
 /// Create a copy of StockBatch
 /// with the given fields replaced by the non-null parameter values.
@@ -237,16 +239,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _StockBatch&&(identical(other.id, id) || other.id == id)&&(identical(other.batchNo, batchNo) || other.batchNo == batchNo)&&(identical(other.expiryDate, expiryDate) || other.expiryDate == expiryDate)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.unitCost, unitCost) || other.unitCost == unitCost)&&(identical(other.receivedAt, receivedAt) || other.receivedAt == receivedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _StockBatch&&(identical(other.id, id) || other.id == id)&&(identical(other.batchNo, batchNo) || other.batchNo == batchNo)&&(identical(other.expiryDate, expiryDate) || other.expiryDate == expiryDate)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.unitCost, unitCost) || other.unitCost == unitCost)&&(identical(other.receivedAt, receivedAt) || other.receivedAt == receivedAt)&&(identical(other.expired, expired) || other.expired == expired));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,batchNo,expiryDate,quantity,unitCost,receivedAt);
+int get hashCode => Object.hash(runtimeType,id,batchNo,expiryDate,quantity,unitCost,receivedAt,expired);
 
 @override
 String toString() {
-  return 'StockBatch(id: $id, batchNo: $batchNo, expiryDate: $expiryDate, quantity: $quantity, unitCost: $unitCost, receivedAt: $receivedAt)';
+  return 'StockBatch(id: $id, batchNo: $batchNo, expiryDate: $expiryDate, quantity: $quantity, unitCost: $unitCost, receivedAt: $receivedAt, expired: $expired)';
 }
 
 
@@ -257,7 +259,7 @@ abstract mixin class _$StockBatchCopyWith<$Res> implements $StockBatchCopyWith<$
   factory _$StockBatchCopyWith(_StockBatch value, $Res Function(_StockBatch) _then) = __$StockBatchCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String? batchNo, String? expiryDate, String quantity, String unitCost, String receivedAt
+ String id, String? batchNo, String? expiryDate, String quantity, String unitCost, String receivedAt, bool expired
 });
 
 
@@ -274,7 +276,7 @@ class __$StockBatchCopyWithImpl<$Res>
 
 /// Create a copy of StockBatch
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? batchNo = freezed,Object? expiryDate = freezed,Object? quantity = null,Object? unitCost = null,Object? receivedAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? batchNo = freezed,Object? expiryDate = freezed,Object? quantity = null,Object? unitCost = null,Object? receivedAt = null,Object? expired = null,}) {
   return _then(_StockBatch(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,batchNo: freezed == batchNo ? _self.batchNo : batchNo // ignore: cast_nullable_to_non_nullable
@@ -282,7 +284,8 @@ as String?,expiryDate: freezed == expiryDate ? _self.expiryDate : expiryDate // 
 as String?,quantity: null == quantity ? _self.quantity : quantity // ignore: cast_nullable_to_non_nullable
 as String,unitCost: null == unitCost ? _self.unitCost : unitCost // ignore: cast_nullable_to_non_nullable
 as String,receivedAt: null == receivedAt ? _self.receivedAt : receivedAt // ignore: cast_nullable_to_non_nullable
-as String,
+as String,expired: null == expired ? _self.expired : expired // ignore: cast_nullable_to_non_nullable
+as bool,
   ));
 }
 

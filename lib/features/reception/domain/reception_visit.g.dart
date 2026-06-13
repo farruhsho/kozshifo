@@ -10,6 +10,7 @@ _ReceptionVisit _$ReceptionVisitFromJson(Map<String, dynamic> json) =>
     _ReceptionVisit(
       id: json['id'] as String,
       visitNo: json['visit_no'] as String,
+      patientId: json['patient_id'] as String?,
       status: json['status'] as String,
       flowStatus: json['flow_status'] as String? ?? 'registered',
       totalAmount: json['total_amount'] as String,
@@ -33,6 +34,7 @@ Map<String, dynamic> _$ReceptionVisitToJson(_ReceptionVisit instance) =>
     <String, dynamic>{
       'id': instance.id,
       'visit_no': instance.visitNo,
+      'patient_id': instance.patientId,
       'status': instance.status,
       'flow_status': instance.flowStatus,
       'total_amount': instance.totalAmount,

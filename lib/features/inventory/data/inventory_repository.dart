@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/network/page.dart';
+import '../domain/movement.dart';
 import '../domain/product.dart';
 import '../domain/stock.dart';
 
@@ -81,6 +82,36 @@ class InventoryRepository {
       throw ApiException.from(e);
     }
   }
+
+  /// Manual stock write-off (FEFO). Decimals pass as strings; the server
+  /// consumes batches first-expired-first. With [includeExpired] the FEFO
+  /// engine may also consume expired lots (disposal path).
+  ///
+  /// Throws [ApiException] with statusCode 409 on InsufficientStock — the
+  /// caller surfaces `e.message` (the exact server detail) to the user.
+  /// Returns the per-batch movements the server recorded (quantity negative).
+  Future<List<StockMovement>> writeOff({
+    required String productId,
+    required String branchId,
+    required String quantity,
+    required String reason,
+    bool includeExpired = false,
+  }) async {
+    try {
+      final resp = await _dio.post('/inventory/write-off', data: {
+        'product_id': productId,
+        'branch_id': branchId,
+        'quantity': quantity,
+        'reason': reason,
+        'include_expired': includeExpired,
+      });
+      return (resp.data as List<dynamic>)
+          .map((e) => StockMovement.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
 }
 
 final stockProvider = FutureProvider.autoDispose.family<List<StockRow>, String>(
@@ -89,3 +120,13 @@ final stockProvider = FutureProvider.autoDispose.family<List<StockRow>, String>(
 
 final productsProvider = FutureProvider.autoDispose<List<Product>>(
     (ref) => ref.watch(inventoryRepositoryProvider).products());
+
+/// Catalog filtered by a free-text query (name/SKU/barcode), for the searchable
+/// write-off picker. Empty/blank query returns the first page of all products.
+final productSearchProvider =
+    FutureProvider.autoDispose.family<List<Product>, String>((ref, query) {
+  final q = query.trim();
+  return ref
+      .watch(inventoryRepositoryProvider)
+      .products(q: q.isEmpty ? null : q);
+});

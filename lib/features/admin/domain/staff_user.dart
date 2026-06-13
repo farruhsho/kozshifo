@@ -17,6 +17,9 @@ abstract class StaffUser with _$StaffUser {
     @Default(true) bool isActive,
     @Default(false) bool isSuperuser,
     String? branchId,
+    // Процентная оплата врача (доля от выручки его визитов). Decimal приходит
+    // строкой (например "12.50"); null = не на процентной оплате.
+    String? salaryPercent,
     @JsonKey(fromJson: roleNamesFromJson)
     @Default(<String>[])
     List<String> roles,

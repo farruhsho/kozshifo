@@ -58,9 +58,7 @@ final routerProvider = Provider<GoRouter>((ref) {
 /// account with no nav permissions still lands somewhere harmless.
 String homeFor(AuthUser? user) {
   for (final d in kAppDestinations) {
-    if (d.permission == null || (user?.can(d.permission!) ?? false)) {
-      return d.route;
-    }
+    if (d.allowedFor(user)) return d.route;
   }
   return '/patients';
 }
@@ -90,9 +88,7 @@ class _RouterNotifier extends ChangeNotifier {
         // (deep link, stale bookmark) sends them home instead of a 403 page.
         for (final d in kAppDestinations) {
           if (loc == d.route || loc.startsWith('${d.route}/')) {
-            final allowed =
-                d.permission == null || (user?.can(d.permission!) ?? false);
-            return allowed ? null : homeFor(user);
+            return d.allowedFor(user) ? null : homeFor(user);
           }
         }
         return null;

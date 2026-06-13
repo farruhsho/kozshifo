@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/auth/application/auth_controller.dart';
+import '../../features/auth/domain/auth_user.dart';
 import '../../features/search/presentation/search_overlay.dart';
 import '../theme/theme_controller.dart';
 
@@ -13,90 +14,96 @@ class AppDestination {
     this.selectedIcon,
     this.label,
     this.route, {
-    this.permission,
+    this.permissions = const <String>[],
   });
   final IconData icon;
   final IconData selectedIcon;
   final String label;
   final String route;
 
-  /// Permission code required to see this destination (null = visible to all).
-  final String? permission;
+  /// Any-of permission codes that reveal this destination (empty = public).
+  final List<String> permissions;
+
+  /// Visible when the user holds ANY of the listed permissions (or it's public).
+  bool allowedFor(AuthUser? user) =>
+      permissions.isEmpty || permissions.any((p) => user?.can(p) ?? false);
 }
 
 /// Single source of truth for shell navigation AND the router's role-aware
 /// landing/guard: the first destination the user is allowed to see is their
-/// home screen after login.
+/// home screen after login. Order = landing priority per role (Финансы sits
+/// right after Ресепшен so a Cashier lands on their till).
 const kAppDestinations = <AppDestination>[
   AppDestination(
     Icons.dashboard_outlined,
     Icons.dashboard,
     'Дашборд',
     '/dashboard',
-    permission: 'dashboard.view',
+    permissions: ['dashboard.view'],
   ),
   AppDestination(
     Icons.point_of_sale_outlined,
     Icons.point_of_sale,
     'Ресепшен',
     '/reception',
-    permission: 'visits.create',
-  ),
-  AppDestination(
-    Icons.confirmation_number_outlined,
-    Icons.confirmation_number,
-    'Очередь',
-    '/queue',
-    permission: 'queue.read',
-  ),
-  AppDestination(
-    Icons.people_outline,
-    Icons.people,
-    'Пациенты',
-    '/patients',
-    permission: 'patients.read',
+    permissions: ['visits.create'],
   ),
   AppDestination(
     Icons.payments_outlined,
     Icons.payments,
     'Финансы',
     '/finance',
-    permission: 'expenses.read',
+    // Cashier (payments/expenses), accountant (payroll) or owner all need it.
+    permissions: ['payments.create', 'expenses.read', 'payroll.read'],
+  ),
+  AppDestination(
+    Icons.confirmation_number_outlined,
+    Icons.confirmation_number,
+    'Очередь',
+    '/queue',
+    permissions: ['queue.read'],
+  ),
+  AppDestination(
+    Icons.people_outline,
+    Icons.people,
+    'Пациенты',
+    '/patients',
+    permissions: ['patients.read'],
   ),
   AppDestination(
     Icons.badge_outlined,
     Icons.badge,
     'Учёт времени',
     '/attendance',
-    permission: 'attendance.read',
+    permissions: ['attendance.read'],
   ),
   AppDestination(
     Icons.call_outlined,
     Icons.call,
     'Звонки',
     '/calls',
-    permission: 'calls.read',
+    permissions: ['calls.read'],
   ),
   AppDestination(
     Icons.biotech_outlined,
     Icons.biotech,
     'Оборудование',
     '/devices',
-    permission: 'devices.read',
+    permissions: ['devices.read'],
   ),
   AppDestination(
     Icons.inventory_2_outlined,
     Icons.inventory_2,
     'Склад',
     '/inventory',
-    permission: 'inventory.read',
+    permissions: ['inventory.read'],
   ),
   AppDestination(
     Icons.settings_outlined,
     Icons.settings,
     'Администрирование',
     '/admin',
-    permission: 'users.read',
+    permissions: ['users.read'],
   ),
 ];
 
@@ -118,7 +125,7 @@ class AppShell extends ConsumerWidget {
 
     final destinations = [
       for (final d in kAppDestinations)
-        if (d.permission == null || (user?.can(d.permission!) ?? false)) d,
+        if (d.allowedFor(user)) d,
     ];
 
     int? selected;

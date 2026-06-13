@@ -1,5 +1,9 @@
 // Calls journal (IP-телефония): Page<CallRecord> parsing — snake_case,
 // null patient — plus a CallsScreen smoke test with a fake repository.
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart' hide Page;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -112,14 +116,78 @@ void main() {
 
       expect(find.text('Звонков нет'), findsOneWidget);
     });
+
+    testWidgets('started_at (UTC) renders as LOCAL HH:mm dd.MM', (tester) async {
+      // Бэкенд отдаёт naive-UTC; экран должен показать местное время.
+      const startedUtc = '2026-06-12T10:15:00';
+      final local = DateTime.utc(2026, 6, 12, 10, 15).toLocal();
+      String two(int v) => v.toString().padLeft(2, '0');
+      // Полная метка местного времени: «HH:mm dd.MM» — однозначно отличается
+      // от длительности (m:ss) и не зависит от часового пояса тест-машины.
+      final expected =
+          '${two(local.hour)}:${two(local.minute)} ${two(local.day)}.${two(local.month)}';
+
+      await tester.pumpWidget(app(_FakeCallsRepository(startedAt: startedUtc)));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining(expected), findsOneWidget);
+    });
+  });
+
+  // ─── Repository: date bounds serialized as UTC ──────────────────────────────
+  group('CallsRepository date filter', () {
+    test('date_from/date_to are sent as UTC (Z-offset) instants', () async {
+      late RequestOptions captured;
+      final dio = Dio(BaseOptions(baseUrl: 'http://test.local/api/v1'))
+        ..httpClientAdapter = _CapturingAdapter((options) {
+          captured = options;
+          return ResponseBody.fromString(
+            jsonEncode(const {'items': [], 'total': 0, 'offset': 0, 'limit': 50}),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+      final repo = CallsRepository(dio);
+
+      // Локальная полночь и конец дня — как строит экран/контроллер.
+      final from = DateTime(2026, 6, 12);
+      final to = DateTime(2026, 6, 12, 23, 59, 59);
+      await repo.list(dateFrom: from, dateTo: to);
+
+      final q = captured.uri.queryParameters;
+      // .toUtc().toIso8601String() даёт суффикс «Z» (UTC), а не локальное смещение.
+      expect(q['date_from'], endsWith('Z'));
+      expect(q['date_to'], endsWith('Z'));
+      expect(q['date_from'], from.toUtc().toIso8601String());
+      expect(q['date_to'], to.toUtc().toIso8601String());
+    });
   });
 }
 
+/// Захватывает RequestOptions и возвращает заранее заданный ответ (без сети).
+class _CapturingAdapter implements HttpClientAdapter {
+  _CapturingAdapter(this._handler);
+
+  final ResponseBody Function(RequestOptions options) _handler;
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options,
+          Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async =>
+      _handler(options);
+
+  @override
+  void close({bool force = false}) {}
+}
+
 /// Фейковый репозиторий: отдаёт фиксированную страницу без сети.
+/// [startedAt] подменяет `started_at` первой записи (для теста локального времени).
 class _FakeCallsRepository implements CallsRepository {
-  _FakeCallsRepository({this.empty = false});
+  _FakeCallsRepository({this.empty = false, this.startedAt});
 
   final bool empty;
+  final String? startedAt;
 
   @override
   Future<Page<CallRecord>> list({
@@ -131,6 +199,22 @@ class _FakeCallsRepository implements CallsRepository {
   }) async {
     if (empty) {
       return Page(items: const [], total: 0, offset: 0, limit: limit);
+    }
+    if (startedAt != null) {
+      return Page(
+        items: [
+          CallRecord.fromJson({
+            'id': 'c-1',
+            'direction': 'in',
+            'phone': '+998901234567',
+            'started_at': startedAt,
+            'duration_seconds': 60,
+          }),
+        ],
+        total: 1,
+        offset: 0,
+        limit: limit,
+      );
     }
     return Page.fromJson(_pageJson, CallRecord.fromJson);
   }

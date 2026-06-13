@@ -1,6 +1,11 @@
 // Admin (Owner Control Center) models: snake_case parsing; the backend sends
 // user roles as [{id, name}, …] RoleRef objects — we keep only the names.
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kozshifo/features/admin/data/admin_repository.dart';
 import 'package:kozshifo/features/admin/domain/admin_branch.dart';
 import 'package:kozshifo/features/admin/domain/admin_role.dart';
 import 'package:kozshifo/features/admin/domain/staff_user.dart';
@@ -14,6 +19,7 @@ void main() {
     'is_active': true,
     'is_superuser': false,
     'branch_id': 'br-1',
+    'salary_percent': '12.50',
     'roles': [
       {'id': 'r-1', 'name': 'doctor'},
       {'id': 'r-2', 'name': 'diagnost'},
@@ -28,7 +34,17 @@ void main() {
     expect(u.branchId, 'br-1');
     expect(u.isActive, isTrue);
     expect(u.isSuperuser, isFalse);
+    expect(u.salaryPercent, '12.50'); // Decimal приходит строкой
     expect(u.roles, ['doctor', 'diagnost']);
+  });
+
+  test('StaffUser.salaryPercent is null when absent', () {
+    final u = StaffUser.fromJson(const {
+      'id': 'u-9',
+      'email': 'noperc@kozshifo.uz',
+      'full_name': 'Без процента',
+    });
+    expect(u.salaryPercent, isNull);
   });
 
   test('StaffUser round-trips through its own toJson (roles as strings)', () {
@@ -94,4 +110,69 @@ void main() {
     expect(r.permissionCount, 2);
     expect(r.description, 'Врач-офтальмолог');
   });
+
+  // ─── AdminRepository.updateUser: salary_percent set / clear ─────────────────
+  group('AdminRepository.updateUser salary_percent', () {
+    (AdminRepository, RequestOptions Function()) makeRepo() {
+      RequestOptions? captured;
+      final dio = Dio(BaseOptions(baseUrl: 'http://test.local/api/v1'))
+        ..httpClientAdapter = _CapturingAdapter((options) {
+          captured = options;
+          // Echo a minimal UserOut so StaffUser.fromJson succeeds.
+          return ResponseBody.fromString(
+            jsonEncode(const {
+              'id': 'u-1',
+              'email': 'doctor@kozshifo.uz',
+              'full_name': 'Иванова Дилноза',
+            }),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+      return (AdminRepository(dio), () => captured!);
+    }
+
+    test('sends salary_percent when provided', () async {
+      final (repo, last) = makeRepo();
+      await repo.updateUser('u-1', salaryPercent: '30');
+      final body = last().data as Map<String, dynamic>;
+      expect(body.containsKey('salary_percent'), isTrue);
+      expect(body['salary_percent'], '30');
+    });
+
+    test('clear sends explicit null', () async {
+      final (repo, last) = makeRepo();
+      await repo.updateUser('u-1', clearSalaryPercent: true);
+      final body = last().data as Map<String, dynamic>;
+      // Ключ присутствует и равен null — бэкенд (exclude_unset) так сбрасывает.
+      expect(body.containsKey('salary_percent'), isTrue);
+      expect(body['salary_percent'], isNull);
+    });
+
+    test('omits salary_percent when neither set nor cleared', () async {
+      final (repo, last) = makeRepo();
+      await repo.updateUser('u-1', isActive: false);
+      final body = last().data as Map<String, dynamic>;
+      // Не передаём ключ — поле остаётся без изменений на сервере.
+      expect(body.containsKey('salary_percent'), isFalse);
+      expect(body['is_active'], isFalse);
+    });
+  });
+}
+
+/// Захватывает RequestOptions и возвращает заранее заданный ответ (без сети).
+class _CapturingAdapter implements HttpClientAdapter {
+  _CapturingAdapter(this._handler);
+
+  final ResponseBody Function(RequestOptions options) _handler;
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options,
+          Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async =>
+      _handler(options);
+
+  @override
+  void close({bool force = false}) {}
 }

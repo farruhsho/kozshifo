@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
+import '../domain/exam_template.dart';
 import '../domain/eye_exam.dart';
 import '../domain/frequent_diagnosis.dart';
 import '../domain/timeline_event.dart';
@@ -109,6 +110,48 @@ class DoctorRepository {
     }
   }
 
+  /// Сохранённые шаблоны заключений текущего врача (назначения для повторного
+  /// использования), новые сверху.
+  Future<List<ExamTemplate>> examTemplates() async {
+    try {
+      final resp = await _dio.get('/exam-templates');
+      return (resp.data as List<dynamic>)
+          .map((e) => ExamTemplate.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Сохранить текущее заключение как именованный шаблон (повтор имени — замена).
+  Future<ExamTemplate> saveExamTemplate({
+    required String name,
+    String? diagnosis,
+    String? icd10,
+    String? recommendations,
+  }) async {
+    try {
+      final resp = await _dio.post('/exam-templates', data: {
+        'name': name,
+        if (diagnosis != null && diagnosis.trim().isNotEmpty) 'diagnosis': diagnosis,
+        if (icd10 != null && icd10.trim().isNotEmpty) 'icd10': icd10,
+        if (recommendations != null && recommendations.trim().isNotEmpty)
+          'recommendations': recommendations,
+      });
+      return ExamTemplate.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  Future<void> deleteExamTemplate(String id) async {
+    try {
+      await _dio.delete('/exam-templates/$id');
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Copies a refractometer DeviceResult into the visit's exam (OD/OS sph/cyl/axis).
   Future<EyeExam> applyRefraction(String visitId, String resultId) async {
     try {
@@ -146,3 +189,9 @@ final frequentDiagnosesProvider =
     FutureProvider.autoDispose<List<FrequentDiagnosis>>(
       (ref) => ref.watch(doctorRepositoryProvider).frequentDiagnoses(),
     );
+
+/// Сохранённые шаблоны заключений текущего врача; инвалидируется при сохранении/
+/// удалении шаблона.
+final examTemplatesProvider = FutureProvider.autoDispose<List<ExamTemplate>>(
+  (ref) => ref.watch(doctorRepositoryProvider).examTemplates(),
+);

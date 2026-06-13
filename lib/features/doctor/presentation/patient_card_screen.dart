@@ -18,6 +18,7 @@ import '../../patients/data/patients_repository.dart';
 import '../../queue/data/queue_repository.dart';
 import '../data/doctor_repository.dart';
 import '../data/exam_draft_store.dart';
+import '../domain/exam_template.dart';
 import '../domain/eye_exam.dart';
 import '../domain/timeline_event.dart';
 import '../domain/visit_summary.dart';
@@ -752,6 +753,7 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _section('Ташхис / Тавсия (заключение)', [
+          if (enabled) _examTemplatesBlock(),
           if (enabled) _frequentDiagnosisChips(),
           _text('diagnosis', 'Ташхис (диагноз)', enabled, maxLines: 2),
           _text('icd10', 'МКБ-10 (код)', enabled),
@@ -822,6 +824,126 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     _dirty = false;
     setState(() => _draftRestored = false);
     await ref.read(examDraftStoreProvider).clearDraft(visitId);
+  }
+
+  /// Подставить сохранённый шаблон в поля заключения (диагноз/МКБ/рекомендации).
+  void _applyTemplate(ExamTemplate t) {
+    if (t.diagnosis != null) _c['diagnosis']!.text = t.diagnosis!;
+    if (t.icd10 != null) _c['icd10']!.text = t.icd10!;
+    if (t.recommendations != null) {
+      _c['recommendations']!.text = t.recommendations!;
+    }
+    _snack('Шаблон «${t.name}» подставлен');
+  }
+
+  /// Сохранить текущее заключение как именованный шаблон (для повторного выбора).
+  Future<void> _saveAsTemplate() async {
+    final diagnosis = _c['diagnosis']!.text.trim();
+    final icd10 = _c['icd10']!.text.trim();
+    final recommendations = _c['recommendations']!.text.trim();
+    if (diagnosis.isEmpty && icd10.isEmpty && recommendations.isEmpty) {
+      _snack('Сначала заполните диагноз или рекомендации', error: true);
+      return;
+    }
+    final nameController = TextEditingController(
+      text: diagnosis.isNotEmpty ? diagnosis : recommendations,
+    );
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Сохранить как шаблон'),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Название шаблона',
+            hintText: 'напр. «Катаракта — стандарт»',
+          ),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(nameController.text.trim()),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    try {
+      await ref.read(doctorRepositoryProvider).saveExamTemplate(
+            name: name,
+            diagnosis: diagnosis,
+            icd10: icd10,
+            recommendations: recommendations,
+          );
+      ref.invalidate(examTemplatesProvider);
+      if (mounted) _snack('Шаблон «$name» сохранён');
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    }
+  }
+
+  /// Блок «Шаблоны назначений»: чипы сохранённых заключений (тап — подставить,
+  /// крестик — удалить) + кнопка «Сохранить как шаблон».
+  Widget _examTemplatesBlock() {
+    final templates = ref.watch(examTemplatesProvider).valueOrNull ?? const [];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.bookmarks_outlined,
+                  size: 16, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text('Шаблоны назначений',
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium),
+              ),
+              IconButton(
+                tooltip: 'Сохранить текущее заключение как шаблон',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.save_as_outlined, size: 20),
+                onPressed: _saveAsTemplate,
+              ),
+            ],
+          ),
+          if (templates.isEmpty)
+            Text('Пока нет шаблонов — сохраните текущее заключение.',
+                style: Theme.of(context).textTheme.bodySmall)
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final t in templates)
+                  InputChip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(t.name),
+                    onPressed: () => _applyTemplate(t),
+                    onDeleted: () async {
+                      try {
+                        await ref
+                            .read(doctorRepositoryProvider)
+                            .deleteExamTemplate(t.id);
+                        ref.invalidate(examTemplatesProvider);
+                      } catch (e) {
+                        if (mounted) _snack('$e', error: true);
+                      }
+                    },
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
   }
 
   /// Чипы частых диагнозов текущего врача — тап подставляет текст в «Ташхис».

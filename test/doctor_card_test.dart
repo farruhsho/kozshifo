@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/doctor/data/doctor_repository.dart';
+import 'package:kozshifo/features/doctor/domain/exam_template.dart';
 import 'package:kozshifo/features/doctor/domain/eye_exam.dart';
 import 'package:kozshifo/features/doctor/domain/frequent_diagnosis.dart';
 import 'package:kozshifo/features/doctor/domain/timeline_event.dart';
@@ -86,6 +87,9 @@ class _FakeDoctorRepository extends DoctorRepository {
 
   @override
   Future<List<FrequentDiagnosis>> frequentDiagnoses() async => const [];
+
+  @override
+  Future<List<ExamTemplate>> examTemplates() async => const [];
 
   @override
   Future<Uint8List> cardPdf(String visitId) async => Uint8List(0);

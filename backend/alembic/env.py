@@ -17,9 +17,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-import app.models  # noqa: F401  — imports every model so all 18 tables register on Base.metadata
+import app.models  # noqa: F401  — imports every model so all tables register on Base.metadata
 from app.core.config import settings
 from app.core.database import Base
+from app.core.types import UTCDateTime
 
 # Alembic Config object — provides access to values in alembic.ini.
 config = context.config
@@ -32,6 +33,19 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def render_item(type_: str, obj: object, autogen_context: object) -> object:
+    """Render the UTCDateTime TypeDecorator as its DB-identical sa.DateTime.
+
+    Without this, autogenerate emits ``app.core.types.UTCDateTime(...)`` into the
+    migration file but never imports it → ``NameError: name 'app'`` on upgrade
+    (which only hides in dev because create_all builds the tables). UTCDateTime
+    is schema-identical to DateTime(timezone=True), so rendering the impl is safe.
+    """
+    if type_ == "type" and isinstance(obj, UTCDateTime):
+        return "sa.DateTime(timezone=True)"
+    return False  # fall back to alembic's default rendering
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode (emit SQL to stdout, no DB connection)."""
     url = settings.database_url
@@ -41,6 +55,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        render_item=render_item,
         render_as_batch=url.startswith("sqlite"),
     )
 
@@ -65,6 +80,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            render_item=render_item,
             render_as_batch=connection.dialect.name == "sqlite",
         )
 

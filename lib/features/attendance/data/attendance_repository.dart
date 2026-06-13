@@ -8,6 +8,7 @@ import '../../../core/network/dio_client.dart';
 import '../../../core/network/page.dart';
 import '../domain/attendance_event.dart';
 import '../domain/attendance_report.dart';
+import '../domain/attendance_status.dart';
 
 /// Период табеля (включительно), даты как `YYYY-MM-DD` — record даёт
 /// структурное `==`, поэтому годится как ключ family-провайдера.
@@ -35,6 +36,16 @@ class AttendanceRepository {
         'date_to': dateTo,
       });
       return AttendanceReport.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Живой статус сотрудников «прямо сейчас» + здоровье Face ID-интеграции.
+  Future<AttendanceStatus> status() async {
+    try {
+      final resp = await _dio.get('/attendance/status');
+      return AttendanceStatus.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -107,3 +118,7 @@ final attendanceReportProvider = FutureProvider.autoDispose
     .family<AttendanceReport, AttendancePeriod>((ref, period) => ref
         .watch(attendanceRepositoryProvider)
         .report(dateFrom: period.from, dateTo: period.to));
+
+/// Живой статус сотрудников (для контроль-центра директора и карточки дашборда).
+final attendanceStatusProvider = FutureProvider.autoDispose<AttendanceStatus>(
+    (ref) => ref.watch(attendanceRepositoryProvider).status());

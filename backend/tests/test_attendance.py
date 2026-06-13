@@ -44,6 +44,48 @@ def faceid_key(monkeypatch) -> str:
     return PUNCH_KEY
 
 
+# ------------------------------------------------------- live status (director)
+
+def test_status_roster_present_and_integration_flag(client, auth, monkeypatch):
+    from app.core.config import settings
+
+    user = _make_user(client, auth, "att.now@kozshifo.uz", "Статус Тест")
+    # A punch-in earlier today → this user is "present" in the live roster.
+    punch_in = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    ev = client.post(f"{API}/attendance/events", headers=auth,
+                     json={"user_id": user["id"], "direction": "in",
+                           "occurred_at": punch_in})
+    assert ev.status_code == 201, ev.text
+
+    monkeypatch.setattr(settings, "attendance_api_key", "set")  # Face ID wired
+    resp = client.get(f"{API}/attendance/status", headers=auth)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["integration_enabled"] is True
+    assert body["present_count"] >= 1
+    me = next(s for s in body["staff"] if s["user_id"] == user["id"])
+    assert me["status"] == "present"
+    assert me["last_direction"] == "in"
+    # Counts reconcile with the roster.
+    assert body["present_count"] == sum(1 for s in body["staff"] if s["status"] == "present")
+
+    # Integration flag follows the key.
+    monkeypatch.setattr(settings, "attendance_api_key", None)
+    off = client.get(f"{API}/attendance/status", headers=auth).json()
+    assert off["integration_enabled"] is False
+
+
+def test_status_requires_attendance_read(client):
+    # Reception has no attendance.read → 403 (it's a director control screen).
+    resp = client.post(f"{API}/auth/login",
+                       data={"username": "reception@kozshifo.uz", "password": "Reception!2026"})
+    assert resp.status_code == 200, resp.text
+    token = resp.json()["access_token"]
+    denied = client.get(f"{API}/attendance/status",
+                        headers={"Authorization": f"Bearer {token}"})
+    assert denied.status_code == 403
+
+
 # ------------------------------------------------------------------ punch auth
 
 def test_punch_503_when_integration_disabled(client, monkeypatch):

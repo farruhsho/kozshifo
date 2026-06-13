@@ -75,7 +75,7 @@ const kAppDestinations = <AppDestination>[
   AppDestination(
     Icons.badge_outlined,
     Icons.badge,
-    'Учёт времени',
+    'Сотрудники',
     '/attendance',
     permissions: ['attendance.read'],
   ),

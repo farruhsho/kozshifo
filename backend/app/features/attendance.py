@@ -36,8 +36,10 @@ from app.schemas.attendance import (
     AttendanceEventCreate,
     AttendanceEventOut,
     AttendanceReport,
+    AttendanceStatus,
     AttendanceUserReport,
     PunchIn,
+    StaffNow,
 )
 from app.schemas.common import Page
 
@@ -89,6 +91,11 @@ def _event_out(event: AttendanceEvent) -> AttendanceEventOut:
     dto = AttendanceEventOut.model_validate(event)
     dto.user_full_name = event.user.full_name if event.user else None
     return dto
+
+
+def _primary_role(user: User) -> str | None:
+    """First role name for display in the live roster (None if unassigned)."""
+    return user.roles[0].name if user.roles else None
 
 
 # ------------------------------------------------------------------- endpoints
@@ -354,4 +361,91 @@ def attendance_report_csv(
         content=content,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ------------------------------------------------------------- live status (now)
+
+@router.get(
+    "/status",
+    response_model=AttendanceStatus,
+    dependencies=[Depends(require_permission("attendance.read"))],
+)
+def attendance_status(db: Annotated[Session, Depends(get_db)]) -> AttendanceStatus:
+    """Live roster for the director: who is in / has left / absent right now,
+    lateness and hours so far today, plus whether the Face ID terminal is wired.
+    """
+    today = business_today()
+    start, end = _utc_range(today, today)
+    events = db.execute(
+        select(AttendanceEvent)
+        .where(AttendanceEvent.occurred_at >= start, AttendanceEvent.occurred_at < end)
+        .order_by(AttendanceEvent.occurred_at, AttendanceEvent.created_at)
+    ).scalars().all()
+
+    # Active staff always appear; an inactive user who punched today is shown too.
+    users: dict[UUID, User] = {
+        u.id: u for u in db.execute(select(User).where(User.is_active.is_(True))).scalars()
+    }
+    by_user: dict[UUID, list[AttendanceEvent]] = {}
+    for e in events:
+        users.setdefault(e.user_id, e.user)
+        by_user.setdefault(e.user_id, []).append(e)
+
+    workday_start = _work_day_start()
+    is_sunday = today.weekday() == _SUNDAY
+    staff: list[StaffNow] = []
+    present = left = absent = late_n = 0
+    for uid, user in users.items():
+        evs = by_user.get(uid, [])
+        if not evs:
+            staff.append(StaffNow(
+                user_id=uid, full_name=user.full_name, role=_primary_role(user),
+                status="absent", last_direction=None, last_event_at=None,
+                first_in=None, late=False, worked_minutes=0,
+            ))
+            if user.is_active and not is_sunday:
+                absent += 1
+            continue
+
+        first_in = next((e for e in evs if e.direction == "in"), None)
+        last = evs[-1]
+        worked = 0
+        open_in: datetime | None = None
+        for e in evs:
+            if e.direction == "in":
+                if open_in is None:
+                    open_in = _as_utc(e.occurred_at)
+            elif open_in is not None:
+                worked += int((_as_utc(e.occurred_at) - open_in).total_seconds() // 60)
+                open_in = None
+        late = first_in is not None and _local(first_in.occurred_at).time() > workday_start
+        status = "present" if last.direction == "in" else "left"
+        if status == "present":
+            present += 1
+        else:
+            left += 1
+        if late:
+            late_n += 1
+        staff.append(StaffNow(
+            user_id=uid, full_name=user.full_name, role=_primary_role(user),
+            status=status, last_direction=last.direction,
+            last_event_at=_as_utc(last.occurred_at),
+            first_in=_as_utc(first_in.occurred_at) if first_in else None,
+            late=late, worked_minutes=worked,
+        ))
+
+    # Present first, then left, then absent; alphabetical within each group.
+    order = {"present": 0, "left": 1, "absent": 2}
+    staff.sort(key=lambda s: (order[s.status], s.full_name.lower()))
+    return AttendanceStatus(
+        as_of=datetime.now(timezone.utc),
+        work_day_start=settings.work_day_start,
+        integration_enabled=bool(settings.attendance_api_key),
+        total_staff=sum(1 for u in users.values() if u.is_active),
+        present_count=present,
+        left_count=left,
+        absent_count=absent,
+        late_count=late_n,
+        staff=staff,
     )

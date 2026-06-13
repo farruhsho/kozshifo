@@ -76,3 +76,34 @@ class AttendanceReport(BaseModel):
     date_to: date
     work_day_start: str  # "HH:MM" — the lateness threshold used
     users: list[AttendanceUserReport]
+
+
+class StaffNow(BaseModel):
+    """One employee's live state today (director control center)."""
+
+    user_id: UUID
+    full_name: str
+    role: str | None  # primary role name, for display
+    # present | left | absent — derived from today's punches
+    status: str
+    last_direction: str | None  # in | out
+    last_event_at: datetime | None
+    first_in: datetime | None
+    late: bool
+    worked_minutes: int  # closed in->out pairs so far today
+
+
+class AttendanceStatus(BaseModel):
+    """Live roster + Face ID integration health for the director's screen."""
+
+    as_of: datetime
+    work_day_start: str
+    # Face ID terminal webhook is wired (ATTENDANCE_API_KEY set). When false the
+    # only punches are manual — the director knows the hardware isn't reporting.
+    integration_enabled: bool
+    total_staff: int
+    present_count: int
+    left_count: int
+    absent_count: int
+    late_count: int
+    staff: list[StaffNow]

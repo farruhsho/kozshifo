@@ -10,6 +10,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,7 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.flow import advance_flow
+from app.core.print_forms import build_receipt_pdf
 from app.core.sequences import next_receipt_no, next_ticket_number
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -141,6 +143,34 @@ def take_payment(
         queue_ticket_number=ticket_number,
         priority=visit.priority,
         priority_reason=visit.priority_reason,
+    )
+
+
+@router.get(
+    "/{payment_id}/receipt.pdf",
+    dependencies=[Depends(require_permission("payments.read"))],
+    response_class=Response,
+)
+def receipt_pdf(payment_id: UUID, db: Annotated[Session, Depends(get_db)]) -> Response:
+    """Printable receipt (чек) — services, total, discount, method, queue ticket,
+    «ЭКСТРЕННЫЙ ПРИЕМ» flag and a QR of the visit."""
+    payment = db.get(Payment, payment_id)
+    if payment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment not found")
+    visit = db.get(Visit, payment.visit_id)
+    if visit is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
+    # The active queue ticket for the visit (the one shown on the чек).
+    ticket = db.execute(
+        select(QueueTicket.ticket_number)
+        .where(QueueTicket.visit_id == visit.id, QueueTicket.status.in_(_ACTIVE_TICKET))
+        .order_by(QueueTicket.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    pdf = build_receipt_pdf(payment, visit, queue_ticket_number=ticket)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="receipt-{payment.receipt_no}.pdf"'},
     )
 
 

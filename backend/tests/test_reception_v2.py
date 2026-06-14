@@ -134,6 +134,31 @@ def test_emergency_inherits_to_ticket_and_tv(client, auth):
     assert flagged and flagged[0]["emergency"] is True
 
 
+# ── receipt PDF ───────────────────────────────────────────────────────────────
+
+def test_receipt_pdf_renders(client, auth):
+    branch_id = _branch_id(client, auth)
+    svc = _service(client, auth)
+    p = _patient(client, auth, first_name="Чек", last_name="Чеков")
+    visit = client.post(f"{API}/visits", headers=auth, json={
+        "patient_id": p["id"], "branch_id": branch_id,
+        "items": [{"service_id": svc["id"], "quantity": 1}],
+    }).json()
+    # emergency so the receipt path exercises the «ЭКСТРЕННЫЙ ПРИЕМ» branch
+    client.post(f"{API}/visits/{visit['id']}/priority", headers=auth,
+                json={"emergency": True, "reason": "тест"})
+    result = client.post(f"{API}/payments", headers=auth, json={
+        "visit_id": visit["id"], "amount": visit["payable"], "method": "card",
+    }).json()
+    pid = result["payment"]["id"]
+
+    pdf = client.get(f"{API}/payments/{pid}/receipt.pdf", headers=auth)
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content[:5] == b"%PDF-"
+    assert len(pdf.content) > 1000  # real document, not a stub
+
+
 # ── search by patient_no / birth date ─────────────────────────────────────────
 
 def test_search_by_patient_no_and_birth_date(client, auth):

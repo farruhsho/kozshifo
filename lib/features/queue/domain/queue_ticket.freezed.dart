@@ -15,7 +15,9 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$QueueTicket {
 
- String get id; String get ticketNumber; String get track; String get patientId; String get branchId; String? get visitId; String? get serviceId; String? get room; String get status; int get priority; String? get calledAt; String? get calledById; String get createdAt;
+ String get id; String get ticketNumber; String get track; String get patientId; String get branchId; String? get visitId; String? get serviceId; String? get room; String get status; int get priority; String? get calledAt; String? get calledById;// Адресная маршрутизация: id специалиста, к кому направлен талон
+// (null = общий пул). Имя резолвится через queueSpecialistsProvider.
+ String? get assignedUserId; String get createdAt;
 /// Create a copy of QueueTicket
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +30,16 @@ $QueueTicketCopyWith<QueueTicket> get copyWith => _$QueueTicketCopyWithImpl<Queu
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is QueueTicket&&(identical(other.id, id) || other.id == id)&&(identical(other.ticketNumber, ticketNumber) || other.ticketNumber == ticketNumber)&&(identical(other.track, track) || other.track == track)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.serviceId, serviceId) || other.serviceId == serviceId)&&(identical(other.room, room) || other.room == room)&&(identical(other.status, status) || other.status == status)&&(identical(other.priority, priority) || other.priority == priority)&&(identical(other.calledAt, calledAt) || other.calledAt == calledAt)&&(identical(other.calledById, calledById) || other.calledById == calledById)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is QueueTicket&&(identical(other.id, id) || other.id == id)&&(identical(other.ticketNumber, ticketNumber) || other.ticketNumber == ticketNumber)&&(identical(other.track, track) || other.track == track)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.serviceId, serviceId) || other.serviceId == serviceId)&&(identical(other.room, room) || other.room == room)&&(identical(other.status, status) || other.status == status)&&(identical(other.priority, priority) || other.priority == priority)&&(identical(other.calledAt, calledAt) || other.calledAt == calledAt)&&(identical(other.calledById, calledById) || other.calledById == calledById)&&(identical(other.assignedUserId, assignedUserId) || other.assignedUserId == assignedUserId)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,ticketNumber,track,patientId,branchId,visitId,serviceId,room,status,priority,calledAt,calledById,createdAt);
+int get hashCode => Object.hash(runtimeType,id,ticketNumber,track,patientId,branchId,visitId,serviceId,room,status,priority,calledAt,calledById,assignedUserId,createdAt);
 
 @override
 String toString() {
-  return 'QueueTicket(id: $id, ticketNumber: $ticketNumber, track: $track, patientId: $patientId, branchId: $branchId, visitId: $visitId, serviceId: $serviceId, room: $room, status: $status, priority: $priority, calledAt: $calledAt, calledById: $calledById, createdAt: $createdAt)';
+  return 'QueueTicket(id: $id, ticketNumber: $ticketNumber, track: $track, patientId: $patientId, branchId: $branchId, visitId: $visitId, serviceId: $serviceId, room: $room, status: $status, priority: $priority, calledAt: $calledAt, calledById: $calledById, assignedUserId: $assignedUserId, createdAt: $createdAt)';
 }
 
 
@@ -48,7 +50,7 @@ abstract mixin class $QueueTicketCopyWith<$Res>  {
   factory $QueueTicketCopyWith(QueueTicket value, $Res Function(QueueTicket) _then) = _$QueueTicketCopyWithImpl;
 @useResult
 $Res call({
- String id, String ticketNumber, String track, String patientId, String branchId, String? visitId, String? serviceId, String? room, String status, int priority, String? calledAt, String? calledById, String createdAt
+ String id, String ticketNumber, String track, String patientId, String branchId, String? visitId, String? serviceId, String? room, String status, int priority, String? calledAt, String? calledById, String? assignedUserId, String createdAt
 });
 
 
@@ -65,7 +67,7 @@ class _$QueueTicketCopyWithImpl<$Res>
 
 /// Create a copy of QueueTicket
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? ticketNumber = null,Object? track = null,Object? patientId = null,Object? branchId = null,Object? visitId = freezed,Object? serviceId = freezed,Object? room = freezed,Object? status = null,Object? priority = null,Object? calledAt = freezed,Object? calledById = freezed,Object? createdAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? ticketNumber = null,Object? track = null,Object? patientId = null,Object? branchId = null,Object? visitId = freezed,Object? serviceId = freezed,Object? room = freezed,Object? status = null,Object? priority = null,Object? calledAt = freezed,Object? calledById = freezed,Object? assignedUserId = freezed,Object? createdAt = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,ticketNumber: null == ticketNumber ? _self.ticketNumber : ticketNumber // ignore: cast_nullable_to_non_nullable
@@ -79,6 +81,7 @@ as String?,status: null == status ? _self.status : status // ignore: cast_nullab
 as String,priority: null == priority ? _self.priority : priority // ignore: cast_nullable_to_non_nullable
 as int,calledAt: freezed == calledAt ? _self.calledAt : calledAt // ignore: cast_nullable_to_non_nullable
 as String?,calledById: freezed == calledById ? _self.calledById : calledById // ignore: cast_nullable_to_non_nullable
+as String?,assignedUserId: freezed == assignedUserId ? _self.assignedUserId : assignedUserId // ignore: cast_nullable_to_non_nullable
 as String?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
 as String,
   ));
@@ -165,10 +168,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String ticketNumber,  String track,  String patientId,  String branchId,  String? visitId,  String? serviceId,  String? room,  String status,  int priority,  String? calledAt,  String? calledById,  String createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String ticketNumber,  String track,  String patientId,  String branchId,  String? visitId,  String? serviceId,  String? room,  String status,  int priority,  String? calledAt,  String? calledById,  String? assignedUserId,  String createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _QueueTicket() when $default != null:
-return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.branchId,_that.visitId,_that.serviceId,_that.room,_that.status,_that.priority,_that.calledAt,_that.calledById,_that.createdAt);case _:
+return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.branchId,_that.visitId,_that.serviceId,_that.room,_that.status,_that.priority,_that.calledAt,_that.calledById,_that.assignedUserId,_that.createdAt);case _:
   return orElse();
 
 }
@@ -186,10 +189,10 @@ return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.br
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String ticketNumber,  String track,  String patientId,  String branchId,  String? visitId,  String? serviceId,  String? room,  String status,  int priority,  String? calledAt,  String? calledById,  String createdAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String ticketNumber,  String track,  String patientId,  String branchId,  String? visitId,  String? serviceId,  String? room,  String status,  int priority,  String? calledAt,  String? calledById,  String? assignedUserId,  String createdAt)  $default,) {final _that = this;
 switch (_that) {
 case _QueueTicket():
-return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.branchId,_that.visitId,_that.serviceId,_that.room,_that.status,_that.priority,_that.calledAt,_that.calledById,_that.createdAt);case _:
+return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.branchId,_that.visitId,_that.serviceId,_that.room,_that.status,_that.priority,_that.calledAt,_that.calledById,_that.assignedUserId,_that.createdAt);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -206,10 +209,10 @@ return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.br
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String ticketNumber,  String track,  String patientId,  String branchId,  String? visitId,  String? serviceId,  String? room,  String status,  int priority,  String? calledAt,  String? calledById,  String createdAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String ticketNumber,  String track,  String patientId,  String branchId,  String? visitId,  String? serviceId,  String? room,  String status,  int priority,  String? calledAt,  String? calledById,  String? assignedUserId,  String createdAt)?  $default,) {final _that = this;
 switch (_that) {
 case _QueueTicket() when $default != null:
-return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.branchId,_that.visitId,_that.serviceId,_that.room,_that.status,_that.priority,_that.calledAt,_that.calledById,_that.createdAt);case _:
+return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.branchId,_that.visitId,_that.serviceId,_that.room,_that.status,_that.priority,_that.calledAt,_that.calledById,_that.assignedUserId,_that.createdAt);case _:
   return null;
 
 }
@@ -221,7 +224,7 @@ return $default(_that.id,_that.ticketNumber,_that.track,_that.patientId,_that.br
 @JsonSerializable()
 
 class _QueueTicket extends QueueTicket {
-  const _QueueTicket({required this.id, required this.ticketNumber, this.track = 'doctor', required this.patientId, required this.branchId, this.visitId, this.serviceId, this.room, required this.status, this.priority = 0, this.calledAt, this.calledById, required this.createdAt}): super._();
+  const _QueueTicket({required this.id, required this.ticketNumber, this.track = 'doctor', required this.patientId, required this.branchId, this.visitId, this.serviceId, this.room, required this.status, this.priority = 0, this.calledAt, this.calledById, this.assignedUserId, required this.createdAt}): super._();
   factory _QueueTicket.fromJson(Map<String, dynamic> json) => _$QueueTicketFromJson(json);
 
 @override final  String id;
@@ -236,6 +239,9 @@ class _QueueTicket extends QueueTicket {
 @override@JsonKey() final  int priority;
 @override final  String? calledAt;
 @override final  String? calledById;
+// Адресная маршрутизация: id специалиста, к кому направлен талон
+// (null = общий пул). Имя резолвится через queueSpecialistsProvider.
+@override final  String? assignedUserId;
 @override final  String createdAt;
 
 /// Create a copy of QueueTicket
@@ -251,16 +257,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _QueueTicket&&(identical(other.id, id) || other.id == id)&&(identical(other.ticketNumber, ticketNumber) || other.ticketNumber == ticketNumber)&&(identical(other.track, track) || other.track == track)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.serviceId, serviceId) || other.serviceId == serviceId)&&(identical(other.room, room) || other.room == room)&&(identical(other.status, status) || other.status == status)&&(identical(other.priority, priority) || other.priority == priority)&&(identical(other.calledAt, calledAt) || other.calledAt == calledAt)&&(identical(other.calledById, calledById) || other.calledById == calledById)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _QueueTicket&&(identical(other.id, id) || other.id == id)&&(identical(other.ticketNumber, ticketNumber) || other.ticketNumber == ticketNumber)&&(identical(other.track, track) || other.track == track)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.serviceId, serviceId) || other.serviceId == serviceId)&&(identical(other.room, room) || other.room == room)&&(identical(other.status, status) || other.status == status)&&(identical(other.priority, priority) || other.priority == priority)&&(identical(other.calledAt, calledAt) || other.calledAt == calledAt)&&(identical(other.calledById, calledById) || other.calledById == calledById)&&(identical(other.assignedUserId, assignedUserId) || other.assignedUserId == assignedUserId)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,ticketNumber,track,patientId,branchId,visitId,serviceId,room,status,priority,calledAt,calledById,createdAt);
+int get hashCode => Object.hash(runtimeType,id,ticketNumber,track,patientId,branchId,visitId,serviceId,room,status,priority,calledAt,calledById,assignedUserId,createdAt);
 
 @override
 String toString() {
-  return 'QueueTicket(id: $id, ticketNumber: $ticketNumber, track: $track, patientId: $patientId, branchId: $branchId, visitId: $visitId, serviceId: $serviceId, room: $room, status: $status, priority: $priority, calledAt: $calledAt, calledById: $calledById, createdAt: $createdAt)';
+  return 'QueueTicket(id: $id, ticketNumber: $ticketNumber, track: $track, patientId: $patientId, branchId: $branchId, visitId: $visitId, serviceId: $serviceId, room: $room, status: $status, priority: $priority, calledAt: $calledAt, calledById: $calledById, assignedUserId: $assignedUserId, createdAt: $createdAt)';
 }
 
 
@@ -271,7 +277,7 @@ abstract mixin class _$QueueTicketCopyWith<$Res> implements $QueueTicketCopyWith
   factory _$QueueTicketCopyWith(_QueueTicket value, $Res Function(_QueueTicket) _then) = __$QueueTicketCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String ticketNumber, String track, String patientId, String branchId, String? visitId, String? serviceId, String? room, String status, int priority, String? calledAt, String? calledById, String createdAt
+ String id, String ticketNumber, String track, String patientId, String branchId, String? visitId, String? serviceId, String? room, String status, int priority, String? calledAt, String? calledById, String? assignedUserId, String createdAt
 });
 
 
@@ -288,7 +294,7 @@ class __$QueueTicketCopyWithImpl<$Res>
 
 /// Create a copy of QueueTicket
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? ticketNumber = null,Object? track = null,Object? patientId = null,Object? branchId = null,Object? visitId = freezed,Object? serviceId = freezed,Object? room = freezed,Object? status = null,Object? priority = null,Object? calledAt = freezed,Object? calledById = freezed,Object? createdAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? ticketNumber = null,Object? track = null,Object? patientId = null,Object? branchId = null,Object? visitId = freezed,Object? serviceId = freezed,Object? room = freezed,Object? status = null,Object? priority = null,Object? calledAt = freezed,Object? calledById = freezed,Object? assignedUserId = freezed,Object? createdAt = null,}) {
   return _then(_QueueTicket(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,ticketNumber: null == ticketNumber ? _self.ticketNumber : ticketNumber // ignore: cast_nullable_to_non_nullable
@@ -302,6 +308,7 @@ as String?,status: null == status ? _self.status : status // ignore: cast_nullab
 as String,priority: null == priority ? _self.priority : priority // ignore: cast_nullable_to_non_nullable
 as int,calledAt: freezed == calledAt ? _self.calledAt : calledAt // ignore: cast_nullable_to_non_nullable
 as String?,calledById: freezed == calledById ? _self.calledById : calledById // ignore: cast_nullable_to_non_nullable
+as String?,assignedUserId: freezed == assignedUserId ? _self.assignedUserId : assignedUserId // ignore: cast_nullable_to_non_nullable
 as String?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
 as String,
   ));

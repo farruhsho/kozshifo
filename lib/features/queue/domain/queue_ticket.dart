@@ -22,6 +22,9 @@ abstract class QueueTicket with _$QueueTicket {
     @Default(0) int priority,
     String? calledAt,
     String? calledById,
+    // Адресная маршрутизация: id специалиста, к кому направлен талон
+    // (null = общий пул). Имя резолвится через queueSpecialistsProvider.
+    String? assignedUserId,
     required String createdAt,
   }) = _QueueTicket;
 

@@ -19,6 +19,7 @@ _QueueTicket _$QueueTicketFromJson(Map<String, dynamic> json) => _QueueTicket(
   priority: (json['priority'] as num?)?.toInt() ?? 0,
   calledAt: json['called_at'] as String?,
   calledById: json['called_by_id'] as String?,
+  assignedUserId: json['assigned_user_id'] as String?,
   createdAt: json['created_at'] as String,
 );
 
@@ -36,5 +37,6 @@ Map<String, dynamic> _$QueueTicketToJson(_QueueTicket instance) =>
       'priority': instance.priority,
       'called_at': instance.calledAt,
       'called_by_id': instance.calledById,
+      'assigned_user_id': instance.assignedUserId,
       'created_at': instance.createdAt,
     };

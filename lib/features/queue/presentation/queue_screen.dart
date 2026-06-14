@@ -28,6 +28,9 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
   final _hotkeys = FocusNode(debugLabel: 'queue-hotkeys');
   Timer? _autoRefresh;
   bool _busy = false;
+  // «Только мои направленные»: вызывать следующего из направленных лично мне
+  // (+ общий пул). Выкл = прежнее поведение (любой ожидающий талон дорожки).
+  bool _onlyMine = false;
 
   String? get _branchId => ref.read(authControllerProvider).user?.branchId;
 
@@ -55,11 +58,71 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
   }
 
   /// Вызвать следующего в дорожке — общая точка для кнопок и клавиш F2/F3.
-  void _callNext(String branchId, String track) => _act(
-    () => ref
-        .read(queueRepositoryProvider)
-        .callNext(branchId: branchId, room: _room.text.trim(), track: track),
-  );
+  /// При включённом «только мои» передаём for_user_id текущего пользователя.
+  void _callNext(String branchId, String track) {
+    final me = ref.read(authControllerProvider).user;
+    _act(
+      () => ref.read(queueRepositoryProvider).callNext(
+        branchId: branchId,
+        room: _room.text.trim(),
+        track: track,
+        forUserId: _onlyMine ? me?.id : null,
+      ),
+    );
+  }
+
+  /// Диалог адресной маршрутизации ожидающего талона: выбрать специалиста или
+  /// снять маршрут (вернуть в общий пул). Список специалистов отдаётся под
+  /// правом queue.manage — отдельный users.read не нужен.
+  Future<void> _showRouteDialog(String branchId, QueueTicket t) async {
+    final List<Specialist> specialists;
+    try {
+      specialists =
+          await ref.read(queueRepositoryProvider).specialists(branchId);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    final choice = await showDialog<_RouteChoice>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Направить талон ${t.ticketNumber}'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.pop(context, const _RouteChoice.clear()),
+            child: const Text('— Снять маршрут (общий пул)'),
+          ),
+          const Divider(),
+          for (final s in specialists)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, _RouteChoice.user(s.id)),
+              child: Text(
+                s.roles.isEmpty
+                    ? s.fullName
+                    : '${s.fullName}  ·  ${s.roles.join(', ')}',
+              ),
+            ),
+        ],
+      ),
+    );
+    if (choice == null) return; // отмена
+    await _act(
+      () => ref
+          .read(queueRepositoryProvider)
+          .assign(t.id, assignedUserId: choice.userId),
+      successMessage:
+          choice.userId == null ? 'Маршрут снят' : 'Талон направлен',
+    );
+  }
 
   Future<void> _act(
     Future<QueueTicket> Function() action, {
@@ -152,6 +215,14 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     }
 
     final tickets = ref.watch(queueListProvider(branchId));
+    // Имена специалистов для резолва assigned_user_id на плитках (id → ФИО).
+    // valueOrNull: пока список грузится, плитки просто не показывают имя.
+    final specialistNames = {
+      for (final s
+          in ref.watch(queueSpecialistsProvider(branchId)).valueOrNull ??
+              const <Specialist>[])
+        s.id: s.fullName,
+    };
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
@@ -198,10 +269,26 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Text(
-                        'F2/F3 — вызвать следующего',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.outline,
+                      Tooltip(
+                        message:
+                            'Вызывать следующего только из направленных мне '
+                            '(+ общий пул)',
+                        child: FilterChip(
+                          selected: _onlyMine,
+                          label: const Text('Только мои'),
+                          onSelected: _busy
+                              ? null
+                              : (v) => setState(() => _onlyMine = v),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'F2/F3 — вызвать следующего',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
                         ),
                       ),
                     ],
@@ -223,6 +310,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                           track: 'diagnostic',
                           items: items,
                           canManage: canManage,
+                          specialistNames: specialistNames,
                         ),
                       ),
                       Expanded(
@@ -233,6 +321,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                           track: 'doctor',
                           items: items,
                           canManage: canManage,
+                          specialistNames: specialistNames,
                         ),
                       ),
                     ];
@@ -264,6 +353,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     required String track,
     required List<QueueTicket> items,
     required bool canManage,
+    required Map<String, String> specialistNames,
   }) {
     final mine = items.where((t) => t.track == track).toList();
     final active = mine.where((t) => t.isActive).toList();
@@ -300,6 +390,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             active,
             canManage,
             _activeActions,
+            specialistNames,
           ),
         ),
         Expanded(
@@ -308,7 +399,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             'Ожидают (${waiting.length})',
             waiting,
             canManage,
-            _waitingActions,
+            (t) => _waitingActions(t, branchId),
+            specialistNames,
           ),
         ),
       ],
@@ -338,7 +430,11 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     ),
   ];
 
-  List<Widget> _waitingActions(QueueTicket t) => [
+  List<Widget> _waitingActions(QueueTicket t, String branchId) => [
+    TextButton(
+      onPressed: _busy ? null : () => _showRouteDialog(branchId, t),
+      child: const Text('Направить'),
+    ),
     TextButton(
       onPressed: _busy
           ? null
@@ -353,6 +449,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     List<QueueTicket> items,
     bool canManage,
     List<Widget> Function(QueueTicket) actions,
+    Map<String, String> specialistNames,
   ) {
     return Card(
       margin: const EdgeInsets.all(4),
@@ -385,6 +482,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                             [
                               t.statusLabel,
                               if (t.room != null) t.room!,
+                              if (t.assignedUserId != null)
+                                '→ ${specialistNames[t.assignedUserId] ?? 'специалист'}',
                             ].join(' · '),
                           ),
                           subtitle: Text(
@@ -405,4 +504,12 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
       ),
     );
   }
+}
+
+/// Результат диалога маршрутизации. `null` из showDialog = отмена;
+/// `_RouteChoice` с `userId == null` = снять маршрут (общий пул).
+class _RouteChoice {
+  const _RouteChoice.clear() : userId = null;
+  const _RouteChoice.user(this.userId);
+  final String? userId;
 }

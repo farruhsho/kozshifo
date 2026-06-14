@@ -88,11 +88,34 @@ on every mutation · multi-branch**.
   timestamps read back aware-UTC (`UTCDateTime`) so the app shows local time,
   doctor salary % is editable in /admin. Perf: access token cached in memory
   (no SharedPreferences read per API call).
+- **Adressed queue routing: ✅ done** — the two-track queue can now route a
+  WAITING ticket to a specific specialist (`queue_tickets.assigned_user_id`,
+  nullable FK → users, NULL = open pool). `POST /queue/{id}/assign` (guarded by
+  `queue.manage`) sets/clears it; `call-next` gained an opt-in `for_user_id`
+  filter (claims tickets routed to me OR unassigned — omitted = unchanged legacy
+  behaviour, so nothing breaks); `GET /queue/specialists` lists branch staff for
+  the picker under `queue.manage` (no `users.read` needed). Flutter queue screen:
+  «Направить» action + specialist picker, «Только мои» call-next toggle, assigned
+  name on tiles. TV board exposes the routed specialist (waiting list column +
+  voice mentions the name when present). Migration `68f53379eef0`.
+- **IP cameras (connect by IP, live view): ✅ done** — a new **isolated**
+  `cameras` table (mirrors `face_terminals`: host/port/username/password/use_https
+  + vendor/channel/snapshot_path; password is **write-only** — absent from
+  `CameraOut`, pinned by a never-leaks test). `/cameras` CRUD + `/cameras/{id}/test`
+  (ISAPI deviceInfo probe) guarded by `cameras.manage`; `GET /cameras/{id}/snapshot`
+  (guarded by `cameras.view`) proxies one JPEG frame via `HikvisionClient.get_snapshot`
+  (httpx DigestAuth, the existing terminal transport). Browsers can't play RTSP, so
+  the live view is **snapshot polling ~1 fps** rendered with `Image.memory` (Dio
+  bytes — `Image.network` can't attach the JWT on web). Down camera → 502, never
+  500. Flutter: `/cameras` screen (grid of live cards, «Снимок» capture, «Проверить»,
+  add-by-IP dialog) + «Камеры» nav. `cameras.view`+`manage` granted to Reception,
+  `cameras.view` to Doctor, all to Director. Migration `a650ccc3e510`. The RMK-700
+  serial / CAS-2000BER file adapters remain deferred (hardware path TBD).
 
-**Verified green:** backend `pytest` = 144 passed · Flutter `flutter test` = 107 passed
+**Verified green:** backend `pytest` = 187 passed · Flutter `flutter test` = 130 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (7 revisions; `UTCDateTime` is
-schema-identical so no new migration).
+`alembic upgrade head` + `alembic check` = clean (head `a650ccc3e510`; this round
+added the `queue_tickets.assigned_user_id` column and the isolated `cameras` table).
 
 ## 2. Repo map (where things live)
 
@@ -149,14 +172,18 @@ flutter test                                                    # 79 passed
 # TV board (waiting-room screen): open in any browser, no login required
 #   http://127.0.0.1:8000/tv/<branch_id>   (link dialog: Queue screen → TV icon)
 ```
-Logins (auto-seeded; demo staff are **dev-only**, never seeded in production):
-| Роль | Логин | Пароль |
-|---|---|---|
-| Директор (суперюзер) | `director@kozshifo.uz` | `Director!2026` |
-| Врач | `vrach@kozshifo.uz` | `Vrach!2026` |
-| Ресепшен | `reception@kozshifo.uz` | `Reception!2026` |
-| Кассир | `kassa@kozshifo.uz` | `Kassa!2026` |
-| Склад | `sklad@kozshifo.uz` | `Sklad!2026` |
+Logins (auto-seeded; demo staff are **dev-only**, never seeded in production).
+The dev login screen has one-tap **quick-login buttons** for the primary roles
+(Суперадмин · Директор · Ресепшен · Врач · Диагност):
+| Роль | Логин | Пароль | Заметка |
+|---|---|---|---|
+| Суперадмин (суперюзер) | `superadmin@kozshifo.uz` | `Superadmin!2026` | владелец: наблюдать + управлять всем |
+| Директор (суперюзер) | `director@kozshifo.uz` | `Director!2026` | bootstrap-владелец |
+| Ресепшен | `reception@kozshifo.uz` | `Reception!2026` | **ресепшен + касса (вкл. возвраты) + склад**; зарплаты НЕ видит |
+| Врач | `vrach@kozshifo.uz` | `Vrach!2026` | |
+| Диагност | `diagnost@kozshifo.uz` | `Diagnost!2026` | очередь D-трека + результаты приборов |
+| Кассир | `kassa@kozshifo.uz` | `Kassa!2026` | узкая роль (split-duty); не на быстрых кнопках |
+| Склад | `sklad@kozshifo.uz` | `Sklad!2026` | узкая роль (split-duty); не на быстрых кнопках |
 
 ## 4. Backend conventions — how to extend
 

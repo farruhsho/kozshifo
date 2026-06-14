@@ -10,6 +10,7 @@ import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_user.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/calls/presentation/calls_screen.dart';
+import '../features/camera/presentation/cameras_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
 import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
@@ -18,6 +19,7 @@ import '../features/inventory/presentation/inventory_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
+import '../features/scheduling/presentation/scheduling_screen.dart';
 import '../features/splash/splash_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -35,6 +37,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(path: '/dashboard', builder: (_, _) => const DashboardScreen()),
           GoRoute(path: '/reception', builder: (_, _) => const ReceptionScreen()),
+          GoRoute(path: '/scheduling', builder: (_, _) => const SchedulingScreen()),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
           GoRoute(path: '/patients', builder: (_, _) => const PatientsScreen()),
           GoRoute(
@@ -46,6 +49,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/attendance', builder: (_, _) => const AttendanceScreen()),
           GoRoute(path: '/calls', builder: (_, _) => const CallsScreen()),
           GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
+          GoRoute(path: '/cameras', builder: (_, _) => const CamerasScreen()),
           GoRoute(path: '/inventory', builder: (_, _) => const InventoryScreen()),
           GoRoute(
               path: '/access-control',

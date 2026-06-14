@@ -87,6 +87,12 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("appointments.read", "scheduling", "View the appointments calendar"),
     ("appointments.create", "scheduling", "Book appointments"),
     ("appointments.update", "scheduling", "Reschedule / change appointment status"),
+    # Optics salon (glasses / lenses orders)
+    ("optics.read", "optics", "View optics orders"),
+    ("optics.manage", "optics", "Create / update optics orders"),
+    # Lab / diagnostics referrals
+    ("lab.read", "lab", "View lab referrals & results"),
+    ("lab.manage", "lab", "Create referrals / enter results"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("audit.read", "audit", "View audit log"),
@@ -128,6 +134,9 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "cameras.view", "cameras.manage",
         # scheduling: front desk books & manages the calendar
         "appointments.read", "appointments.create", "appointments.update",
+        # optics salon: front desk takes glasses/lenses orders (prototype:
+        # reception nav includes Оптика)
+        "optics.read", "optics.manage",
     ],
     "Cashier": [
         "patients.read", "visits.read",
@@ -146,6 +155,9 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "cameras.view",
         # scheduling: a doctor sees their day and marks arrived/done
         "appointments.read", "appointments.update",
+        # lab: a doctor refers tests and reads results (prototype: doctor nav
+        # includes Лаборатория)
+        "lab.read", "lab.manage",
     ],
     # Diagnostics workspace: serves the D-track, records device measurements,
     # sees patients/visits. No clinical authoring (exams.write) or money.
@@ -159,5 +171,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     "Warehouse": [
         "inventory.read", "inventory.manage", "inventory.write_off",
         "branches.read", "notifications.read",
+        # optics salon belongs to the store side (prototype Settings groups
+        # «Склад / Оптика» under one role)
+        "optics.read", "optics.manage",
     ],
 }

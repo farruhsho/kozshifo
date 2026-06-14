@@ -13,6 +13,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.appointment import Appointment
+from app.models.lab import LabOrder
+from app.models.optics import OpticsOrder
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -49,6 +51,26 @@ def next_appointment_no(db: Session) -> str:
         n += 1
         candidate = f"AP-{day}-{n:05d}"
         if db.execute(select(Appointment.id).where(Appointment.appointment_no == candidate)).first() is None:
+            return candidate
+
+
+def next_optics_no(db: Session) -> str:
+    day = _today_str()
+    n = db.execute(select(func.count()).select_from(OpticsOrder)).scalar_one()
+    while True:
+        n += 1
+        candidate = f"OPT-{day}-{n:05d}"
+        if db.execute(select(OpticsOrder.id).where(OpticsOrder.order_no == candidate)).first() is None:
+            return candidate
+
+
+def next_lab_no(db: Session) -> str:
+    day = _today_str()
+    n = db.execute(select(func.count()).select_from(LabOrder)).scalar_one()
+    while True:
+        n += 1
+        candidate = f"LAB-{day}-{n:05d}"
+        if db.execute(select(LabOrder.id).where(LabOrder.order_no == candidate)).first() is None:
             return candidate
 
 

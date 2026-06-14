@@ -39,7 +39,7 @@ from app.models.operation import Operation
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
-from app.models.visit import Visit
+from app.models.visit import Visit, VisitItem
 from app.schemas.patient import LeadSource
 
 logger = logging.getLogger(__name__)
@@ -256,6 +256,55 @@ def lead_sources(
     ]
     sources.sort(key=lambda s: s.count, reverse=True)
     return LeadSourceReport(total=sum(s.count for s in sources), sources=sources)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Top services — this month's revenue per service (Analytics screen).
+# ════════════════════════════════════════════════════════════════════════════
+
+# Billed line items that represent real, taken revenue (ordered items aren't
+# money yet). Same statuses the till advances an item through after payment.
+_BILLED_ITEM_STATUSES = ("paid", "in_progress", "done")
+
+
+class TopServiceRow(BaseModel):
+    service: str
+    revenue: Decimal
+    count: int
+
+
+@router.get("/top-services", response_model=list[TopServiceRow],
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def top_services(
+    db: Annotated[Session, Depends(get_db)],
+    limit: int = Query(8, ge=1, le=50),
+) -> list[TopServiceRow]:
+    """Revenue per service over the current LOCAL month, busiest first.
+
+    Sums billed ``visit_items`` (paid line items only) grouped by the snapshot
+    service name — honest revenue, not catalog list prices. Month bounds are the
+    same local→UTC instants the cash reports use, so it agrees with the P&L.
+    """
+    start, end = local_month_bounds_utc(current_business_month())
+    rows = db.execute(
+        select(
+            VisitItem.service_name,
+            func.coalesce(func.sum(VisitItem.total), 0).label("revenue"),
+            func.count().label("count"),
+        )
+        .where(
+            VisitItem.status.in_(_BILLED_ITEM_STATUSES),
+            VisitItem.created_at >= start,
+            VisitItem.created_at < end,
+        )
+        .group_by(VisitItem.service_name)
+        .order_by(func.coalesce(func.sum(VisitItem.total), 0).desc())
+        .limit(limit)
+    ).all()
+    return [
+        TopServiceRow(service=name, revenue=Decimal(revenue), count=count)
+        for name, revenue, count in rows
+    ]
 
 
 # ════════════════════════════════════════════════════════════════════════════

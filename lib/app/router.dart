@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../core/widgets/app_shell.dart';
 import '../features/access_control/presentation/access_control_screen.dart';
 import '../features/admin/presentation/admin_screen.dart';
+import '../features/analytics/presentation/analytics_screen.dart';
 import '../features/attendance/presentation/attendance_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_user.dart';
@@ -16,11 +17,15 @@ import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
 import '../features/finance/presentation/finance_screen.dart';
 import '../features/inventory/presentation/inventory_screen.dart';
+import '../features/lab/presentation/lab_screen.dart';
+import '../features/notifications/presentation/notifications_screen.dart';
+import '../features/optics/presentation/optics_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
 import '../features/scheduling/presentation/scheduling_screen.dart';
 import '../features/splash/splash_screen.dart';
+import '../features/worklist/presentation/worklist_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = _RouterNotifier(ref);
@@ -37,8 +42,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(path: '/dashboard', builder: (_, _) => const DashboardScreen()),
           GoRoute(path: '/reception', builder: (_, _) => const ReceptionScreen()),
+          GoRoute(path: '/worklist', builder: (_, _) => const WorklistScreen()),
           GoRoute(path: '/scheduling', builder: (_, _) => const SchedulingScreen()),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
+          GoRoute(path: '/analytics', builder: (_, _) => const AnalyticsScreen()),
+          GoRoute(path: '/optics', builder: (_, _) => const OpticsScreen()),
+          GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),
+          GoRoute(path: '/notifications', builder: (_, _) => const NotificationsScreen()),
           GoRoute(path: '/patients', builder: (_, _) => const PatientsScreen()),
           GoRoute(
             path: '/patients/:id/card',

@@ -16,11 +16,16 @@ import 'koz_widgets.dart';
 const Map<String, String> _navIconKey = {
   '/dashboard': 'dashboard',
   '/reception': 'reception',
+  '/worklist': 'worklist',
   '/scheduling': 'schedule',
   '/queue': 'queue',
   '/patients': 'patients',
+  '/analytics': 'analytics',
   '/finance': 'finance',
   '/inventory': 'inventory',
+  '/optics': 'optics',
+  '/lab': 'lab',
+  '/notifications': 'notifications',
   '/admin': 'settings',
   '/devices': 'devices',
   '/cameras': 'cameras',
@@ -69,6 +74,15 @@ const kAppDestinations = <AppDestination>[
     '/reception',
     permissions: ['visits.create'],
   ),
+  // Doctor's «Приём сегодня» list — gated on exams.write so a doctor lands here
+  // (their first allowed destination), not on Scheduling.
+  AppDestination(
+    Icons.assignment_outlined,
+    Icons.assignment,
+    'Приём',
+    '/worklist',
+    permissions: ['exams.write'],
+  ),
   AppDestination(
     Icons.calendar_month_outlined,
     Icons.calendar_month,
@@ -101,6 +115,13 @@ const kAppDestinations = <AppDestination>[
     permissions: ['patients.read'],
   ),
   AppDestination(
+    Icons.insights_outlined,
+    Icons.insights,
+    'Аналитика',
+    '/analytics',
+    permissions: ['dashboard.view'],
+  ),
+  AppDestination(
     Icons.badge_outlined,
     Icons.badge,
     'Сотрудники',
@@ -129,6 +150,20 @@ const kAppDestinations = <AppDestination>[
     permissions: ['inventory.read'],
   ),
   AppDestination(
+    Icons.remove_red_eye_outlined,
+    Icons.remove_red_eye,
+    'Оптика',
+    '/optics',
+    permissions: ['optics.read'],
+  ),
+  AppDestination(
+    Icons.science_outlined,
+    Icons.science,
+    'Лаборатория',
+    '/lab',
+    permissions: ['lab.read'],
+  ),
+  AppDestination(
     Icons.videocam_outlined,
     Icons.videocam,
     'Камеры',
@@ -141,6 +176,13 @@ const kAppDestinations = <AppDestination>[
     'Face ID',
     '/access-control',
     permissions: ['access_control.read'],
+  ),
+  AppDestination(
+    Icons.notifications_outlined,
+    Icons.notifications,
+    'Уведомления',
+    '/notifications',
+    permissions: ['notifications.read'],
   ),
   AppDestination(
     Icons.settings_outlined,

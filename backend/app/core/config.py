@@ -58,8 +58,14 @@ class Settings(BaseSettings):
     # Workday start "HH:MM" (clinic local time) — first punch-in after this is "late".
     work_day_start: str = "09:00"
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
+    # CORS — local dev ports + the free Firebase Hosting frontend (Spark plan,
+    # no Blaze) which calls this backend cross-origin. Override per deploy with
+    # the CORS_ORIGINS env var (comma-separated). When the clinic's own server
+    # serves the UI itself the requests are same-origin and CORS is moot.
+    cors_origins: list[str] = [
+        "http://localhost:3000", "http://localhost:8080", "http://localhost:5173",
+        "https://kozshifo-32e6f.web.app", "https://kozshifo-32e6f.firebaseapp.com",
+    ]
 
     # Seed
     seed_director_email: str = "director@kozshifo.uz"
@@ -71,6 +77,23 @@ class Settings(BaseSettings):
     def _split_csv(cls, v: object) -> object:
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
+        return v
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_db_url(cls, v: object) -> object:
+        """Pin managed-Postgres URLs to the installed driver (psycopg v3).
+
+        Hosts like Render/Heroku inject ``postgres://`` or ``postgresql://`` —
+        SQLAlchemy maps the bare scheme to psycopg2 (not installed), so connect
+        fails. We ship psycopg3, so rewrite to the explicit ``+psycopg`` dialect.
+        SQLite and already-qualified URLs pass through untouched.
+        """
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                return "postgresql+psycopg://" + v[len("postgres://"):]
+            if v.startswith("postgresql://"):
+                return "postgresql+psycopg://" + v[len("postgresql://"):]
         return v
 
     @model_validator(mode="after")

@@ -3,18 +3,6 @@
     "public": "build/web",
     "ignore": ["firebase.json", "**/.*"],
     "rewrites": [
-      {
-        "source": "/api/**",
-        "run": { "serviceId": "kozshifo-api", "region": "europe-west1" }
-      },
-      {
-        "source": "/tv/**",
-        "run": { "serviceId": "kozshifo-api", "region": "europe-west1" }
-      },
-      {
-        "source": "/health",
-        "run": { "serviceId": "kozshifo-api", "region": "europe-west1" }
-      },
       { "source": "**", "destination": "/index.html" }
     ],
     "headers": [

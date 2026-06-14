@@ -104,13 +104,10 @@ class _LabScreenState extends ConsumerState<LabScreen> {
                     ),
                     if (canManage) ...[
                       const SizedBox(width: 16),
-                      SizedBox(
-                        width: 280,
-                        child: GradientButton(
-                          label: 'Новое направление',
-                          icon: Icons.add,
-                          onPressed: _busy ? null : _openCreate,
-                        ),
+                      GradientButton(
+                        label: 'Новое направление',
+                        icon: Icons.add,
+                        onPressed: _busy ? null : _openCreate,
                       ),
                     ],
                   ],

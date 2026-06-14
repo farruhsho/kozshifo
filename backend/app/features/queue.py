@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
@@ -23,11 +23,14 @@ from app.core.sequences import next_ticket_number
 from app.models.branch import Branch
 from app.models.patient import Patient
 from app.models.queue import QueueTicket
+from app.models.user import User
 from app.models.visit import Visit
 from app.schemas.queue import (
+    AssignRequest,
     CallNextRequest,
     QueueTicketOut,
     QueueTrack,
+    SpecialistOut,
     TVBoard,
     TVBoardEntry,
     TVTrack,
@@ -75,6 +78,36 @@ def list_queue(
     return list(db.execute(stmt).scalars().all())
 
 
+@router.get(
+    "/specialists",
+    response_model=list[SpecialistOut],
+    dependencies=[Depends(require_permission("queue.manage"))],
+)
+def list_specialists(
+    db: Annotated[Session, Depends(get_db)],
+    branch_id: UUID,
+) -> list[SpecialistOut]:
+    """Active staff of the branch, for the queue routing picker.
+
+    Guarded by queue.manage (NOT users.read) so reception/diagnost can route a
+    patient to a named specialist without identity-module access. Returns only
+    non-sensitive staff fields (id, name, role names).
+    """
+    rows = (
+        db.execute(
+            select(User)
+            .where(User.is_active.is_(True), User.branch_id == branch_id)
+            .order_by(User.full_name)
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        SpecialistOut(id=u.id, full_name=u.full_name, roles=[r.name for r in u.roles])
+        for u in rows
+    ]
+
+
 @router.post("/call-next", response_model=QueueTicketOut)
 def call_next(
     payload: CallNextRequest,
@@ -84,16 +117,23 @@ def call_next(
     # Guarded UPDATE (status must still be "waiting") so two operators clicking
     # concurrently can never be handed the same ticket; loser retries the next one.
     for _ in range(3):
-        ticket = db.execute(
-            select(QueueTicket)
-            .where(
-                QueueTicket.branch_id == payload.branch_id,
-                QueueTicket.track == payload.track,
-                QueueTicket.status == "waiting",
-                QueueTicket.created_at >= _today_start(),
+        stmt = select(QueueTicket).where(
+            QueueTicket.branch_id == payload.branch_id,
+            QueueTicket.track == payload.track,
+            QueueTicket.status == "waiting",
+            QueueTicket.created_at >= _today_start(),
+        )
+        # Adressed routing (opt-in): a specialist claims tickets routed to them
+        # OR still in the open pool. Omitted -> unchanged: any waiting ticket.
+        if payload.for_user_id is not None:
+            stmt = stmt.where(
+                or_(
+                    QueueTicket.assigned_user_id == payload.for_user_id,
+                    QueueTicket.assigned_user_id.is_(None),
+                )
             )
-            .order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc())
-            .limit(1)
+        ticket = db.execute(
+            stmt.order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc()).limit(1)
         ).scalar_one_or_none()
         if ticket is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "No waiting tickets")
@@ -261,6 +301,46 @@ def requeue_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
     return _transition(db, ticket_id, actor, "waiting", None)
 
 
+@router.post("/{ticket_id}/assign", response_model=QueueTicketOut)
+def assign_ticket(
+    ticket_id: UUID,
+    payload: AssignRequest,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))],
+) -> QueueTicket:
+    """Route a WAITING ticket to a specific specialist (or clear it back to the
+    open pool with assigned_user_id=null). Reception/diagnost decides who sees
+    the patient next; call-next with for_user_id then honours it. Only waiting
+    tickets are routable — once called the patient is already in a room.
+
+    Assignment is a metadata pointer, not a state-machine transition: a
+    concurrent call-next that claims the ticket simply makes the routing moot.
+    """
+    ticket = db.get(QueueTicket, ticket_id)
+    if ticket is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
+    if ticket.status != "waiting":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Only a waiting ticket can be routed (ticket {ticket.ticket_number} is {ticket.status})",
+        )
+    target: User | None = None
+    if payload.assigned_user_id is not None:
+        target = db.get(User, payload.assigned_user_id)
+        if target is None or not target.is_active:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignee user not found or inactive")
+    ticket.assigned_user_id = payload.assigned_user_id
+    record_audit(
+        db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+        actor_id=actor.id, branch_id=ticket.branch_id,
+        summary=(f"Routed {ticket.ticket_number} to {target.full_name}" if target is not None
+                 else f"Cleared routing on {ticket.ticket_number}"),
+    )
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
 def _called_desc_nulls_last(ticket: QueueTicket) -> tuple[bool, float]:
     """Sort key: called_at DESC with NULLs last."""
     if ticket.called_at is None:
@@ -276,6 +356,7 @@ def _tv_entry(t: QueueTicket) -> TVBoardEntry:
         status=t.status,
         called_at=t.called_at,
         specialist=t.called_by.full_name if t.called_by is not None else None,
+        assigned=t.assigned_user.full_name if t.assigned_user is not None else None,
     )
 
 

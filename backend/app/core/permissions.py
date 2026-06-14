@@ -80,6 +80,13 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Access control / Face ID terminals
     ("access_control.read", "access_control", "View face terminals, enrollment & events"),
     ("access_control.manage", "access_control", "Connect terminals, enroll staff faces"),
+    # IP cameras (live view by IP)
+    ("cameras.view", "cameras", "View cameras & live snapshots"),
+    ("cameras.manage", "cameras", "Connect / edit / remove cameras"),
+    # Scheduling / appointments
+    ("appointments.read", "scheduling", "View the appointments calendar"),
+    ("appointments.create", "scheduling", "Book appointments"),
+    ("appointments.update", "scheduling", "Reschedule / change appointment status"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("audit.read", "audit", "View audit log"),
@@ -97,11 +104,17 @@ ALL_CODES: list[str] = [code for code, _, _ in PERMISSIONS]
 # Cashier / Warehouse below remain as optional narrower roles the director can
 # assign when a larger clinic splits these duties (RBAC is fully dynamic).
 ROLE_TEMPLATES: dict[str, list[str]] = {
+    # Owner god-account: every permission (the account is also is_superuser, so
+    # it bypasses checks entirely — the role just makes the access explicit).
+    "Superadmin": ALL_CODES,
     "Director": ALL_CODES,
     "Reception": [
         "patients.read", "patients.create", "patients.update",
         "visits.read", "visits.create", "visits.update",
-        "payments.read", "payments.create",
+        # FULL till: front desk takes payments AND refunds (Reception = ресепшен
+        # + касса by the owner's model). Payroll stays walled off — the front
+        # desk must not see staff salaries (see test_finance walled_from_reception).
+        "payments.read", "payments.create", "payments.refund",
         "queue.read", "queue.manage",
         # warehouse + purchasing + stocktake (front desk owns the store)
         "inventory.read", "inventory.manage", "inventory.write_off",
@@ -111,6 +124,10 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "exams.read",
         "operations.read", "treatments.read",
         "devices.read", "notifications.read",
+        # cameras: front desk connects & watches the live view
+        "cameras.view", "cameras.manage",
+        # scheduling: front desk books & manages the calendar
+        "appointments.read", "appointments.create", "appointments.update",
     ],
     "Cashier": [
         "patients.read", "visits.read",
@@ -126,6 +143,18 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
         "treatments.read", "treatments.prescribe", "treatments.perform",
+        "cameras.view",
+        # scheduling: a doctor sees their day and marks arrived/done
+        "appointments.read", "appointments.update",
+    ],
+    # Diagnostics workspace: serves the D-track, records device measurements,
+    # sees patients/visits. No clinical authoring (exams.write) or money.
+    "Diagnost": [
+        "patients.read", "visits.read",
+        "queue.read", "queue.manage",
+        "exams.read",
+        "devices.read", "device_results.read", "device_results.create",
+        "cameras.view",
     ],
     "Warehouse": [
         "inventory.read", "inventory.manage", "inventory.write_off",

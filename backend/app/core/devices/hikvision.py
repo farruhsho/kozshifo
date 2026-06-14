@@ -91,6 +91,18 @@ class HikvisionClient:
             timeout=timeout,
         )
 
+    @classmethod
+    def from_camera(cls, camera: Any, *, timeout: float = 5.0) -> "HikvisionClient":
+        """Build a client from a Camera ORM row (same connection shape as a terminal)."""
+        return cls(
+            camera.host,
+            camera.port,
+            camera.username,
+            camera.password,
+            use_https=camera.use_https,
+            timeout=timeout,
+        )
+
     # ----------------------------------------------------------------- transport
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
@@ -101,6 +113,14 @@ class HikvisionClient:
                 resp = client.request(method, f"{self._base}{path}", **kwargs)
         except httpx.HTTPError as exc:
             raise TerminalUnreachable(f"{type(exc).__name__}: {exc}") from exc
+        except (NotImplementedError, KeyError) as exc:
+            # httpx.DigestAuth raises these (not HTTPError) when a device offers an
+            # unsupported challenge — qop="auth-int" -> NotImplementedError, an
+            # unknown algorithm -> KeyError. Map them to the graceful "device down"
+            # path so an odd-firmware camera/terminal yields 502, never a 500.
+            raise TerminalUnreachable(
+                f"unsupported digest auth challenge from device ({type(exc).__name__})"
+            ) from exc
         if resp.status_code == 401:
             raise TerminalUnreachable("authentication failed (check username / password)")
         return resp
@@ -130,6 +150,24 @@ class HikvisionClient:
         if resp.status_code >= 400:
             raise TerminalError(f"deviceInfo: HTTP {resp.status_code}")
         return _parse_device_info(resp.text)
+
+    def get_snapshot(self, *, channel: int = 1, path: str | None = None) -> bytes:
+        """Pull one still JPEG frame — the unit of the snapshot-polling live view.
+
+        Hikvision ISAPI: GET /ISAPI/Streaming/channels/{channel}01/picture
+        (channel 1 main stream = 101). A non-Hikvision camera can pass an explicit
+        snapshot ``path``. Returns the raw image bytes; raises ``TerminalError`` on
+        an error status and ``TerminalUnreachable`` when the camera is down/auth
+        fails (the feature layer maps these to a 502, never a 500).
+        """
+        snapshot_path = path or f"/ISAPI/Streaming/channels/{channel}01/picture"
+        resp = self._request("GET", snapshot_path)
+        if resp.status_code >= 400:
+            raise TerminalError(f"snapshot: HTTP {resp.status_code}")
+        content = resp.content
+        if not content:
+            raise TerminalError("snapshot: empty response from camera")
+        return content
 
     def enroll_user(
         self,

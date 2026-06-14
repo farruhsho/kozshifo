@@ -268,13 +268,18 @@
     } catch (e) { /* нет голосов — есть гонг */ }
   }
 
-  function announce(ticket, room) {
+  function announce(ticket, room, who) {
     // Якорим срез нулей к началу числовой части: безанкерный /0+(\d)/ съедал
     // внутренние нули («D-105» озвучивался как «D 15» — чужой талон!).
     var spelled = ticket.replace('-', ' ').replace(/ 0+(?=\d)/, ' ');
     var roomNo = room ? String(room).replace(/\D+/g, '') : '';
-    var phrase = 'Талон ' + spelled + '.' + (roomNo ? ' Пройдите в кабинет номер ' + roomNo + '.' : '');
-    els.ticker.textContent = '🔔 ' + ticket + (room ? ', пройдите в ' + room : '');
+    // Имя специалиста добавляется в озвучку только когда оно есть (вызвавший
+    // или назначенный по маршруту) — старые талоны без специалиста звучат как раньше.
+    var phrase = 'Талон ' + spelled + '.' +
+      (who ? ' ' + who + '.' : '') +
+      (roomNo ? ' Пройдите в кабинет номер ' + roomNo + '.' : '');
+    els.ticker.textContent = '🔔 ' + ticket + (who ? ' · ' + who : '') +
+      (room ? ', пройдите в ' + room : '');
     chime();
     speak(phrase);
   }
@@ -325,15 +330,16 @@
       return;
     }
     var table = document.createElement('table');
-    table.innerHTML = '<thead><tr><th class="idx">№</th><th>Номер</th><th>Кабинет</th><th>Статус</th></tr></thead>';
+    table.innerHTML = '<thead><tr><th class="idx">№</th><th>Номер</th><th>Кабинет</th><th>Специалист</th></tr></thead>';
     var tbody = document.createElement('tbody');
     rows.slice(0, LIST_MAX).forEach(function (t, i) {
       var tr = document.createElement('tr');
+      // «Специалист» = к кому направлен талон (маршрутизация); пусто = общий пул.
       var cells = [
         ['idx', String(i + 1)],
         ['num', t.ticket_number],
         ['', t.room || '—'],
-        ['', 'ожидает'],
+        ['', t.assigned || '—'],
       ];
       cells.forEach(function (c) {
         var td = document.createElement('td');
@@ -365,7 +371,7 @@
         seenCalled[seenKey] = true;
         if (!firstPoll) {
           freshUntil[key] = Date.now() + 8000;
-          announce(t.ticket_number, t.room);
+          announce(t.ticket_number, t.room, t.specialist || t.assigned);
         }
       }
     });

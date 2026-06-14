@@ -1,8 +1,10 @@
 """Import all models so they register on Base.metadata (order-independent)."""
+from app.models.appointment import Appointment
 from app.models.attendance import AttendanceEvent
 from app.models.audit import AuditLog
 from app.models.branch import Branch
 from app.models.call import CallRecord
+from app.models.camera import Camera
 from app.models.catalog import Service, ServiceCategory
 from app.models.finance import Expense
 from app.models.device import Device, DeviceResult
@@ -20,10 +22,12 @@ from app.models.user import User
 from app.models.visit import Visit, VisitItem
 
 __all__ = [
+    "Appointment",
     "AttendanceEvent",
     "AuditLog",
     "Branch",
     "CallRecord",
+    "Camera",
     "Device",
     "DeviceResult",
     "Expense",

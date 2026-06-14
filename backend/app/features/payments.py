@@ -120,6 +120,10 @@ def take_payment(
                 branch_id=visit.branch_id,
                 visit_id=visit.id,
                 room=payload.room,
+                # Emergency intake jumps the queue: inherit the visit's priority
+                # + reason so this ticket sorts to the top and flags «ЭКСТРЕННЫЙ».
+                priority=visit.priority,
+                priority_reason=visit.priority_reason,
             )
             db.add(ticket)
             db.flush()
@@ -135,6 +139,8 @@ def take_payment(
         visit_status=visit.status,
         visit_balance=visit.balance,
         queue_ticket_number=ticket_number,
+        priority=visit.priority,
+        priority_reason=visit.priority_reason,
     )
 
 

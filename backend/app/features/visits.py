@@ -21,9 +21,19 @@ from app.models.patient import Patient
 from app.models.queue import QueueTicket
 from app.models.visit import Visit, VisitItem
 from app.schemas.common import Page
-from app.schemas.visit import VisitCreate, VisitDiscountApply, VisitItemAdd, VisitOut
+from app.schemas.visit import (
+    VisitCreate,
+    VisitDiscountApply,
+    VisitItemAdd,
+    VisitOut,
+    VisitPriorityApply,
+)
 
 router = APIRouter(prefix="/visits", tags=["Visits"])
+
+# Priority weight for an emergency intake — well above the default 0 so the
+# ticket sorts to the top (queue queries order by priority DESC, created ASC).
+_EMERGENCY_PRIORITY = 100
 
 
 def _recompute_total(visit: Visit) -> None:
@@ -229,6 +239,8 @@ def apply_discount(
                     branch_id=visit.branch_id,
                     visit_id=visit.id,
                     room=payload.room,
+                    priority=visit.priority,
+                    priority_reason=visit.priority_reason,
                 )
                 db.add(ticket)
                 db.flush()
@@ -245,6 +257,52 @@ def apply_discount(
     record_audit(db, action=action, entity_type="visit", entity_id=visit.id, actor_id=actor.id,
                  branch_id=visit.branch_id, summary=summary,
                  changes={"before": before, "after": _discount_snapshot(visit)})
+    db.commit()
+    db.refresh(visit)
+    return visit
+
+
+@router.post("/{visit_id}/priority", response_model=VisitOut)
+def set_priority(
+    visit_id: UUID,
+    payload: VisitPriorityApply,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("visits.update"))],
+) -> Visit:
+    """Mark/clear EMERGENCY intake on a visit (reception «ЭКСТРЕННО»).
+
+    Sets visit.priority (>0 jumps the queue) + a reason kept for analytics. Any
+    already-active ticket for the visit is bumped immediately so a patient who is
+    already waiting moves to the top. The receipt/TV flag «ЭКСТРЕННЫЙ» reads this.
+    """
+    visit = db.get(Visit, visit_id)
+    if visit is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Cannot change priority on a {visit.status} visit")
+    if payload.emergency and not (payload.reason or "").strip():
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Reason is required for an emergency visit")
+
+    visit.priority = _EMERGENCY_PRIORITY if payload.emergency else 0
+    visit.priority_reason = (payload.reason or "").strip() if payload.emergency else None
+
+    # Bump any active ticket immediately (patient already in the queue).
+    for ticket in db.execute(
+        select(QueueTicket).where(
+            QueueTicket.visit_id == visit.id,
+            QueueTicket.status.in_(("waiting", "called", "serving")),
+        )
+    ).scalars().all():
+        ticket.priority = visit.priority
+        ticket.priority_reason = visit.priority_reason
+
+    record_audit(db, action="priority", entity_type="visit", entity_id=visit.id, actor_id=actor.id,
+                 branch_id=visit.branch_id,
+                 summary=(f"{'Set' if payload.emergency else 'Cleared'} emergency on visit "
+                          f"{visit.visit_no}"
+                          + (f": {visit.priority_reason}" if payload.emergency else "")))
     db.commit()
     db.refresh(visit)
     return visit

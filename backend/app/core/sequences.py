@@ -34,6 +34,16 @@ def next_mrn(db: Session) -> str:
             return candidate
 
 
+def next_patient_no(db: Session) -> str:
+    """Public 8-digit patient number (00000001, 00000002 …), unique re-checked."""
+    n = db.execute(select(func.count()).select_from(Patient)).scalar_one()
+    while True:
+        n += 1
+        candidate = f"{n:08d}"
+        if db.execute(select(Patient.id).where(Patient.patient_no == candidate)).first() is None:
+            return candidate
+
+
 def next_visit_no(db: Session) -> str:
     day = _today_str()
     n = db.execute(select(func.count()).select_from(Visit)).scalar_one()

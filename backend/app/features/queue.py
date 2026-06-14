@@ -357,6 +357,7 @@ def _tv_entry(t: QueueTicket) -> TVBoardEntry:
         called_at=t.called_at,
         specialist=t.called_by.full_name if t.called_by is not None else None,
         assigned=t.assigned_user.full_name if t.assigned_user is not None else None,
+        emergency=t.priority > 0,
     )
 
 

@@ -34,6 +34,9 @@ class QueueTicket(UUIDPKMixin, TimestampMixin, Base):
     # waiting -> called -> serving -> done | skipped
     status: Mapped[str] = mapped_column(String(16), default="waiting", index=True, nullable=False)
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Why this ticket is priority/emergency (inherited from the visit at mint
+    # time) — drives the TV «⚠ ЭКСТРЕННЫЙ» flag, the receipt, and analytics.
+    priority_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
     called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     served_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

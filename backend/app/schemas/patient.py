@@ -30,6 +30,7 @@ class PatientCreate(BaseModel):
     pinfl: str | None = None
     lead_source: LeadSource | None = None
     workplace: str | None = None
+    study_place: str | None = None
     profession: str | None = None
     dispensary_here: str | None = None
     dispensary_other: str | None = None
@@ -52,6 +53,7 @@ class PatientUpdate(BaseModel):
     pinfl: str | None = None
     lead_source: LeadSource | None = None
     workplace: str | None = None
+    study_place: str | None = None
     profession: str | None = None
     dispensary_here: str | None = None
     dispensary_other: str | None = None
@@ -63,6 +65,7 @@ class PatientOut(BaseModel):
 
     id: UUID
     mrn: str
+    patient_no: str | None
     first_name: str
     last_name: str
     middle_name: str | None
@@ -77,8 +80,38 @@ class PatientOut(BaseModel):
     pinfl: str | None
     lead_source: str | None
     workplace: str | None
+    study_place: str | None
     profession: str | None
     dispensary_here: str | None
     dispensary_other: str | None
     notes: str | None
     branch_id: UUID | None
+
+
+class DuplicateCandidate(BaseModel):
+    """A possible existing match shown before creating a new patient."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    patient_no: str | None
+    mrn: str
+    full_name: str
+    birth_date: date | None
+    phone: str | None
+    reason: str  # why it matched: «телефон» / «ФИО+дата» / «ФИО»
+
+
+class PatientSummary(BaseModel):
+    """Reception history panel: at-a-glance facts about a patient."""
+
+    patient_id: UUID
+    visit_count: int
+    last_visit_at: date | None = None
+    last_diagnosis: str | None = None
+    last_operation: str | None = None
+    last_payment_amount: str | None = None
+    last_payment_at: date | None = None
+    total_debt: str  # decimal string across open visits
+    last_discount_reason: str | None = None
+    is_repeat: bool

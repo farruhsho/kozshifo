@@ -23,6 +23,7 @@ class QueueTicketOut(BaseModel):
     room: str | None
     status: str
     priority: int
+    priority_reason: str | None = None
     called_at: datetime | None
     called_by_id: UUID | None
     # Optional adressed routing: the specialist this ticket is routed to
@@ -70,6 +71,7 @@ class TVBoardEntry(BaseModel):
     called_at: datetime | None = None
     specialist: str | None = None  # full name of the user who called the ticket
     assigned: str | None = None  # full name of the specialist the ticket is routed to
+    emergency: bool = False  # priority>0 → TV shows «⚠ ЭКСТРЕННЫЙ»
 
 
 class TVTrack(BaseModel):

@@ -70,9 +70,25 @@ class OperationTypeConsumable(UUIDPKMixin, TimestampMixin, Base):
 
 
 class Operation(UUIDPKMixin, TimestampMixin, Base):
-    """One surgery instance on a visit. planned -> done | cancelled."""
+    """One surgery instance on a visit (TZ Modul 6).
+
+    Lifecycle:  referred -> scheduled -> in_progress -> performed -> completed
+                (and -> cancelled from any pre-performed state)
+
+    The doctor *refers* (referred, no billing); reception then *schedules* it —
+    date/time, the performing surgeon and the price — at which point the linked
+    service is billed onto the visit. perform writes off the consumables (FEFO),
+    complete records the outcome on the patient card.
+    """
 
     __tablename__ = "operations"
+
+    # Lifecycle status values (TZ Modul 6: Rejalashtirilgan -> ... -> Yakunlandi).
+    STATUSES = ("referred", "scheduled", "in_progress", "performed", "completed", "cancelled")
+    # Pre-performed states: still cancellable / re-schedulable, no stock consumed.
+    OPEN_STATUSES = ("referred", "scheduled", "in_progress")
+    # Performed/closed states: a surgery actually happened (counts in reports).
+    DONE_STATUSES = ("performed", "completed")
 
     visit_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("visits.id", ondelete="RESTRICT"), index=True, nullable=False
@@ -80,7 +96,12 @@ class Operation(UUIDPKMixin, TimestampMixin, Base):
     patient_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("patients.id", ondelete="RESTRICT"), index=True, nullable=False
     )
-    doctor_id: Mapped[uuid.UUID | None] = mapped_column(
+    # The doctor who referred the patient to surgery (TZ: «yo'naltirgan vrach»).
+    referring_doctor_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # The surgeon who performs it (TZ: «bajaruvchi vrach/jarroh») — set by reception.
+    surgeon_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     operation_type_id: Mapped[uuid.UUID] = mapped_column(
@@ -90,22 +111,43 @@ class Operation(UUIDPKMixin, TimestampMixin, Base):
     eye: Mapped[str] = mapped_column(String(4), default="ou", nullable=False)
     # normal | urgent — doctor-chosen scheduling priority
     priority: Mapped[str] = mapped_column(String(12), default="normal", nullable=False)
-    # planned -> done | cancelled
-    status: Mapped[str] = mapped_column(String(16), default="planned", index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="referred", index=True, nullable=False)
+    # Final billed price: catalog default unless reception overrides at schedule.
+    price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     performed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # notes: doctor's referral recommendation + reception's organisational notes.
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Billing trace: the VisitItem created when the operation was prescribed.
+    # result: clinical outcome written at completion (goes to the patient card).
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Billing trace: the VisitItem created when reception scheduled (billed) it.
     visit_item_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("visit_items.id", ondelete="SET NULL"), nullable=True
     )
 
     operation_type: Mapped[OperationType] = relationship(lazy="joined")
     patient: Mapped["Patient"] = relationship(lazy="joined")  # noqa: F821
+    referring_doctor: Mapped["User"] = relationship(  # noqa: F821
+        foreign_keys=[referring_doctor_id], lazy="joined"
+    )
+    surgeon: Mapped["User"] = relationship(foreign_keys=[surgeon_id], lazy="joined")  # noqa: F821
 
     @property
     def type_name(self) -> str:
         return self.operation_type.name
+
+    @property
+    def patient_name(self) -> str:
+        return self.patient.full_name
+
+    @property
+    def referring_doctor_name(self) -> str | None:
+        return self.referring_doctor.full_name if self.referring_doctor else None
+
+    @property
+    def surgeon_name(self) -> str | None:
+        return self.surgeon.full_name if self.surgeon else None
 
 
 class Treatment(UUIDPKMixin, TimestampMixin, Base):

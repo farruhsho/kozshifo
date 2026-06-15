@@ -66,12 +66,31 @@ class AvailabilityOut(BaseModel):
 
 # ── Operations (instances on a visit) ─────────────────────────────────────────
 class OperationCreate(BaseModel):
+    """Doctor's referral to surgery (TZ Modul 6): type + recommendation only.
+
+    No price/date/surgeon here — reception fills those in at schedule time.
+    """
+
     operation_type_id: UUID
     eye: Literal["od", "os", "ou"] = "ou"
     priority: Literal["normal", "urgent"] = "normal"
-    scheduled_at: datetime | None = None
+    notes: str | None = None  # doctor's recommendation
+
+
+class OperationSchedule(BaseModel):
+    """Reception fixes the organisational details and bills the visit."""
+
+    scheduled_at: datetime
+    surgeon_id: UUID | None = None
+    # Optional price override; absent -> the linked service's catalog price.
+    price: Decimal | None = Field(default=None, ge=0)
     notes: str | None = None
-    doctor_id: UUID | None = None
+
+
+class OperationComplete(BaseModel):
+    """Outcome recorded on the patient card when the operation is wrapped up."""
+
+    result: str | None = None
 
 
 class OperationOut(BaseModel):
@@ -80,16 +99,39 @@ class OperationOut(BaseModel):
     id: UUID
     visit_id: UUID
     patient_id: UUID
-    doctor_id: UUID | None
+    patient_name: str  # model property
+    referring_doctor_id: UUID | None
+    referring_doctor_name: str | None  # model property
+    surgeon_id: UUID | None
+    surgeon_name: str | None  # model property
     operation_type_id: UUID
     type_name: str  # model property -> operation_type.name
     eye: str
     priority: str
     status: str
+    price: Decimal | None
     scheduled_at: datetime | None
     performed_at: datetime | None
+    completed_at: datetime | None
     notes: str | None
+    result: str | None
     created_at: datetime
+
+
+# ── Operations report (TZ Modul 6: period totals, by surgeon) ─────────────────
+class SurgeonOperationStat(BaseModel):
+    surgeon_id: UUID | None
+    surgeon_name: str | None
+    count: int
+    total_amount: Decimal
+
+
+class OperationReport(BaseModel):
+    date_from: datetime
+    date_to: datetime
+    count: int
+    total_amount: Decimal
+    by_surgeon: list[SurgeonOperationStat]
 
 
 # ── Treatments ────────────────────────────────────────────────────────────────

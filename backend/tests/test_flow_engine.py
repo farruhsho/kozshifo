@@ -179,22 +179,28 @@ def test_flow_surgery_path_and_precedence(client, auth):
     assert drops.status_code == 201, drops.text
     assert _flow(client, auth, visit["id"]) == "surgery_assigned"
 
-    # Stock the IVI template (per-branch), perform -> surgery_completed.
+    # Stock the IVI template (per-branch), schedule + perform -> surgery_completed.
     _receipt(client, auth, branch_id, [("SYR-1", "5"), ("GLOVES-ST", "5")])
+    sched = client.post(f"{API}/operations/{op.json()['id']}/schedule", headers=auth,
+                        json={"scheduled_at": "2026-07-01T09:00:00Z"})
+    assert sched.status_code == 200, sched.text
     performed = client.post(f"{API}/operations/{op.json()['id']}/perform", headers=auth)
     assert performed.status_code == 200, performed.text
     assert _flow(client, auth, visit["id"]) == "surgery_completed"
 
 
 def test_flow_scheduled_surgery(client, auth):
-    """A prescription with a date lands directly on surgery_scheduled."""
+    """Reception scheduling a referral moves the flow to surgery_scheduled."""
     branch_id = _flow_branch(client, auth)
     visit = _register_visit(client, auth, branch_id, "Плановая")
     ivi = _operation_type(client, auth, "IVI")
     op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
-                     json={"operation_type_id": ivi["id"], "eye": "os",
-                           "scheduled_at": "2026-06-20T09:00:00Z"})
+                     json={"operation_type_id": ivi["id"], "eye": "os"})
     assert op.status_code == 201, op.text
+    assert _flow(client, auth, visit["id"]) == "surgery_assigned"
+    sched = client.post(f"{API}/operations/{op.json()['id']}/schedule", headers=auth,
+                        json={"scheduled_at": "2026-06-20T09:00:00Z"})
+    assert sched.status_code == 200, sched.text
     assert _flow(client, auth, visit["id"]) == "surgery_scheduled"
 
 
@@ -248,9 +254,12 @@ def test_settling_a_later_bill_never_regresses_the_flow(client, auth):
     _call_next(client, auth, branch_id, "doctor")
 
     phaco = _operation_type(client, auth, "PHACO")
-    client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
-                json={"operation_type_id": phaco["id"], "eye": "od"})
-    assert _flow(client, auth, visit["id"]) == "surgery_assigned"
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"], "eye": "od"}).json()
+    # Reception schedules it — this is what bills the visit (TZ Modul 6).
+    client.post(f"{API}/operations/{op['id']}/schedule", headers=auth,
+                json={"scheduled_at": "2026-07-01T09:00:00Z"})
+    assert _flow(client, auth, visit["id"]) == "surgery_scheduled"
 
     # Reception settles the surgery bill: flow must NOT regress, and no new
     # diagnostic ticket may be minted (the reported number is at most the
@@ -261,7 +270,7 @@ def test_settling_a_later_bill_never_regresses_the_flow(client, auth):
     assert pay["queue_ticket_number"] is None or pay["queue_ticket_number"].startswith("V-")
     tickets = _visit_tickets(client, auth, branch_id, visit["id"])
     assert len([t for t in tickets if t["track"] == "diagnostic"]) == 1  # старый, done
-    assert _flow(client, auth, visit["id"]) == "surgery_assigned"
+    assert _flow(client, auth, visit["id"]) == "surgery_scheduled"
 
 
 def test_cancelling_the_plan_recomputes_the_flow(client, auth):

@@ -88,7 +88,7 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 12a | IP Cameras | ✅ | Isolated `cameras` table (Hikvision pattern, write-only password); connect-by-IP, ISAPI test, backend JPEG **snapshot proxy** (httpx DigestAuth) → Flutter live view by polling (`Image.memory`); capture-to-disk. RTSP/MJPEG live video = future (needs transcode) |
 | 13 | Doctors / EMR | ✅ | **Form 025-8** exam (1:1 visit) + printable `card.pdf`; Flutter doctor card with refractometer auto-fill; treatment plans ⬜ Phase 3 |
 | 14 | Treatment | ✅ | Prescriptions (procedure/medication), dispense writes stock off; courses/schedules ⬜ |
-| 15 | Operations | ✅ | Types with consumable templates, prescribe→bills the visit, perform→FEFO auto write-off |
+| 15 | Operations | ✅ | **TZ Modul 6 flow**: doctor refers (no bill) → reception schedules (date/surgeon/price override, bills the visit) → start → perform (FEFO auto write-off) → complete (result on card); statuses referred→scheduled→in_progress→performed→completed; department worklist `GET /operations`, period+by-surgeon report `GET /operations/report`; Flutter `/operations` screen |
 | 16 | Inventory / Warehouse | ✅ | Products, batches/expiry, FEFO engine, min-stock alerts, movement ledger; transfers/stocktake ⬜ |
 | 17 | Purchasing / Suppliers | 🚧 | Suppliers + goods receipts live; purchase orders ⬜ |
 | 18 | Payroll | ✅ | Percent-based doctor pay (`salary_percent`), monthly calc from completed payments, idempotent payout → expense; CSV (`/finance` → Зарплата) |

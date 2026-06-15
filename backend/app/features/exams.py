@@ -17,12 +17,18 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.print_forms import build_exam_card_pdf
+from app.models.diagnosis import VisitDiagnosis
 from app.models.exam import EyeExam
 from app.models.exam_template import ExamTemplate
 from app.models.patient import Patient
 from app.models.visit import Visit
 from app.schemas.common import Message
-from app.schemas.exam import EyeExamOut, EyeExamUpsert
+from app.schemas.exam import (
+    EyeExamOut,
+    EyeExamUpsert,
+    VisitDiagnosisCreate,
+    VisitDiagnosisOut,
+)
 from app.schemas.exam_template import ExamTemplateCreate, ExamTemplateOut
 from app.schemas.search import FrequentDiagnosis
 
@@ -85,6 +91,71 @@ def get_exam(visit_id: UUID, db: Annotated[Session, Depends(get_db)]) -> EyeExam
     return exam
 
 
+# ── Visit diagnoses (TZ §7.1.5 — a visit accumulates many) ───────────────────
+def _visit_diagnoses(db: Session, visit_id: UUID) -> list[VisitDiagnosis]:
+    return list(
+        db.execute(
+            select(VisitDiagnosis)
+            .where(VisitDiagnosis.visit_id == visit_id)
+            .order_by(VisitDiagnosis.created_at.asc())
+        ).scalars().all()
+    )
+
+
+@router.get(
+    "/visits/{visit_id}/diagnoses",
+    response_model=list[VisitDiagnosisOut],
+    dependencies=[Depends(require_permission("exams.read"))],
+)
+def list_diagnoses(visit_id: UUID, db: Annotated[Session, Depends(get_db)]) -> list[VisitDiagnosis]:
+    get_or_404_visit(db, visit_id)
+    return _visit_diagnoses(db, visit_id)
+
+
+@router.post("/visits/{visit_id}/diagnoses", response_model=VisitDiagnosisOut,
+             status_code=status.HTTP_201_CREATED)
+def add_diagnosis(
+    visit_id: UUID,
+    payload: VisitDiagnosisCreate,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("exams.write"))],
+) -> VisitDiagnosis:
+    visit = get_or_404_visit(db, visit_id)
+    diagnosis = VisitDiagnosis(
+        visit_id=visit.id,
+        patient_id=visit.patient_id,
+        doctor_id=actor.id,
+        diagnosis=payload.diagnosis.strip(),
+        icd10=(payload.icd10.strip() if payload.icd10 and payload.icd10.strip() else None),
+    )
+    db.add(diagnosis)
+    db.flush()
+    record_audit(db, action="create", entity_type="visit_diagnosis",
+                 entity_id=diagnosis.id, actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Added diagnosis «{diagnosis.diagnosis}» to visit {visit.visit_no}")
+    db.commit()
+    db.refresh(diagnosis)
+    return diagnosis
+
+
+@router.delete("/diagnoses/{diagnosis_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_diagnosis(
+    diagnosis_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("exams.write"))],
+) -> None:
+    diagnosis = db.get(VisitDiagnosis, diagnosis_id)
+    if diagnosis is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Diagnosis not found")
+    visit = db.get(Visit, diagnosis.visit_id)
+    summary = f"Removed diagnosis «{diagnosis.diagnosis}»"
+    db.delete(diagnosis)
+    record_audit(db, action="delete", entity_type="visit_diagnosis",
+                 entity_id=diagnosis_id, actor_id=actor.id,
+                 branch_id=visit.branch_id if visit else None, summary=summary)
+    db.commit()
+
+
 @router.get(
     "/visits/{visit_id}/exam/card.pdf",
     dependencies=[Depends(require_permission("exams.read"))],
@@ -96,7 +167,7 @@ def exam_card_pdf(visit_id: UUID, db: Annotated[Session, Depends(get_db)]) -> Re
     exam = db.execute(select(EyeExam).where(EyeExam.visit_id == visit_id)).scalar_one_or_none()
     if exam is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No exam recorded for this visit")
-    pdf = build_exam_card_pdf(exam)
+    pdf = build_exam_card_pdf(exam, diagnoses=_visit_diagnoses(db, visit_id))
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -114,14 +185,13 @@ def frequent_diagnoses(
 ) -> list[FrequentDiagnosis]:
     """The CURRENT doctor's top-10 most-used diagnoses, for one-click reuse."""
     rows = db.execute(
-        select(EyeExam.diagnosis, func.count().label("cnt"))
+        select(VisitDiagnosis.diagnosis, func.count().label("cnt"))
         .where(
-            EyeExam.doctor_id == actor.id,
-            EyeExam.diagnosis.is_not(None),
-            func.trim(EyeExam.diagnosis) != "",
+            VisitDiagnosis.doctor_id == actor.id,
+            func.trim(VisitDiagnosis.diagnosis) != "",
         )
-        .group_by(EyeExam.diagnosis)
-        .order_by(func.count().desc(), EyeExam.diagnosis.asc())
+        .group_by(VisitDiagnosis.diagnosis)
+        .order_by(func.count().desc(), VisitDiagnosis.diagnosis.asc())
         .limit(10)
     ).all()
     return [FrequentDiagnosis(diagnosis=diagnosis, count=count) for diagnosis, count in rows]

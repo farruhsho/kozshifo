@@ -86,9 +86,25 @@ class ClinicalRepository {
     }
   }
 
-  /// Prescribe an operation; the backend also bills the linked service
-  /// onto the visit in the same transaction.
-  Future<Operation> prescribeOperation({
+  /// Operations-department worklist (TZ Modul 6). Filter by [status] (referred,
+  /// scheduled, in_progress, performed, completed, cancelled) and/or [branchId].
+  Future<List<Operation>> operations({String? status, String? branchId}) async {
+    try {
+      final resp = await _dio.get('/operations', queryParameters: {
+        'status': ?status,
+        'branch_id': ?branchId,
+      });
+      return (resp.data as List<dynamic>)
+          .map((e) => Operation.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Doctor refers the patient to surgery (TZ: «Operatsiyaga yuborish») —
+  /// type + recommendation only. NOT billed; reception schedules it later.
+  Future<Operation> referOperation({
     required String visitId,
     required String operationTypeId,
     required String eye,
@@ -108,11 +124,56 @@ class ClinicalRepository {
     }
   }
 
+  /// Reception schedules a referred operation: date/time, surgeon and price
+  /// (override optional). This is what bills the linked service onto the visit.
+  Future<Operation> scheduleOperation({
+    required String id,
+    required String scheduledAt,
+    String? surgeonId,
+    String? price,
+    String? notes,
+  }) async {
+    try {
+      final resp = await _dio.post('/operations/$id/schedule', data: {
+        'scheduled_at': scheduledAt,
+        'surgeon_id': ?surgeonId,
+        'price': ?price,
+        'notes': ?notes,
+      });
+      return Operation.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Mark a scheduled operation as in progress (TZ: «Bajarilmoqda»).
+  Future<Operation> startOperation(String id) async {
+    try {
+      final resp = await _dio.post('/operations/$id/start');
+      return Operation.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Mark performed; the backend auto-writes-off the consumables and answers
   /// 409 with the missing product in `detail` when stock is insufficient.
   Future<Operation> performOperation(String id) async {
     try {
       final resp = await _dio.post('/operations/$id/perform');
+      return Operation.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Wrap up a performed operation (TZ: «Yakunlandi»); the outcome is written
+  /// to the patient card.
+  Future<Operation> completeOperation(String id, {String? result}) async {
+    try {
+      final resp = await _dio.post('/operations/$id/complete', data: {
+        'result': ?result,
+      });
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -199,6 +260,11 @@ final operationTypesProvider = FutureProvider.autoDispose<List<OperationType>>(
 final visitOperationsProvider = FutureProvider.autoDispose
     .family<List<Operation>, String>((ref, visitId) =>
         ref.watch(clinicalRepositoryProvider).visitOperations(visitId));
+
+/// Operations-department worklist, filtered by status (null → all statuses).
+final operationsWorklistProvider = FutureProvider.autoDispose
+    .family<List<Operation>, String?>((ref, status) =>
+        ref.watch(clinicalRepositoryProvider).operations(status: status));
 
 final visitTreatmentsProvider = FutureProvider.autoDispose
     .family<List<Treatment>, String>((ref, visitId) =>

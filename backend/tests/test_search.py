@@ -163,13 +163,15 @@ def test_frequent_diagnoses_are_per_doctor(client, auth, seeded):
         assert v.status_code == 201, v.text
         return v.json()["id"]
 
+    # Diagnoses now accumulate as their own rows (TZ §7.1.5); the frequent list
+    # aggregates VisitDiagnosis rows authored by the current doctor.
     for diagnosis in ("Миопия", "Миопия", "Катаракта"):
-        resp = client.put(
-            f"{API}/visits/{_new_visit_id()}/exam", headers=doctor,
+        resp = client.post(
+            f"{API}/visits/{_new_visit_id()}/diagnoses", headers=doctor,
             json={"diagnosis": diagnosis},
         )
-        assert resp.status_code == 200, resp.text
-    # An exam without a diagnosis must not pollute the list.
+        assert resp.status_code == 201, resp.text
+    # A visit with an exam but no diagnosis must not pollute the list.
     blank = client.put(f"{API}/visits/{_new_visit_id()}/exam", headers=doctor,
                        json={"complaints": "без диагноза"})
     assert blank.status_code == 200, blank.text

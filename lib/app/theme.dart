@@ -89,7 +89,11 @@ class KozTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size.fromHeight(48),
+          // Height-only minimum. `Size.fromHeight` sets width=infinity, which
+          // throws "BoxConstraints forces an infinite width" for any button
+          // placed in a Row (loose width). Full-width buttons get their width
+          // from a tight parent (stretch Column / SizedBox), not from here.
+          minimumSize: const Size(0, 48),
           backgroundColor: AppColors.accent,
           foregroundColor: Colors.white,
           textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
@@ -99,7 +103,9 @@ class KozTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size.fromHeight(46),
+          // Height-only minimum (see filledButtonTheme above): avoid infinite
+          // width when an outlined button sits in a Row.
+          minimumSize: const Size(0, 46),
           foregroundColor: AppColors.sub,
           side: const BorderSide(color: AppColors.line),
           shape: RoundedRectangleBorder(

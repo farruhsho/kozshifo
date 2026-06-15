@@ -59,6 +59,12 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     super.initState();
     _autosaveTimer = Timer.periodic(const Duration(seconds: 3), (_) => _autosave());
     _loadRestorable();
+    // Land with the cursor in the patient search box. An explicit post-frame
+    // request reliably wins even if an ancestor Focus (AppShell) already holds
+    // focus — plain `autofocus` would be ignored in that case.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _patient == null) _searchFocus.requestFocus();
+    });
   }
 
   @override
@@ -408,8 +414,11 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         const SingleActivator(LogicalKeyboardKey.keyP, control: true): _hotPrintReceipt,
         const SingleActivator(LogicalKeyboardKey.enter, control: true): _hotPrimary,
       },
+      // NB: this wrapper Focus must NOT autofocus — it would steal initial
+      // focus from the patient search field below (whose own autofocus then
+      // never wins), leaving the field un-typeable. The CallbackShortcuts above
+      // still fire because the focused search field is inside this subtree.
       child: Focus(
-        autofocus: true,
         child: Scaffold(
           appBar: AppBar(title: const Text('Ресепшен')),
           body: SingleChildScrollView(

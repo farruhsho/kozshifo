@@ -45,3 +45,7 @@ class PaymentResult(BaseModel):
     visit_status: str
     visit_balance: Decimal
     queue_ticket_number: str | None = None
+    # Emergency intake: >0 means the visit/ticket is priority — the receipt shows
+    # «ЭКСТРЕННЫЙ ПРИЕМ» and the TV board flags it.
+    priority: int = 0
+    priority_reason: str | None = None

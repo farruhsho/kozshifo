@@ -66,6 +66,21 @@ class TerminalTestResult(BaseModel):
     error: str | None = None  # populated when online is false
 
 
+class PushConfigIn(BaseModel):
+    """Where the terminal should POST its events. Both optional — the server
+    auto-detects its own LAN IP and defaults the port to 8000 when omitted.
+    The web client passes the origin host/port it was served from."""
+
+    server_host: str | None = Field(None, max_length=255)
+    server_port: int | None = Field(None, ge=1, le=65535)
+
+
+class PushConfigResult(BaseModel):
+    configured: bool
+    url: str  # the push URL set on the device (token masked)
+    error: str | None = None
+
+
 class EnrollmentRow(BaseModel):
     """One staff member's Face ID enrollment status."""
 

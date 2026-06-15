@@ -20,6 +20,7 @@ import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/patients/data/patients_repository.dart';
 import 'package:kozshifo/features/patients/domain/patient.dart';
 import 'package:kozshifo/features/reception/data/reception_repository.dart';
+import 'package:kozshifo/features/reception/domain/patient_summary.dart';
 import 'package:kozshifo/features/reception/domain/reception_visit.dart';
 import 'package:kozshifo/features/reception/domain/service.dart';
 import 'package:kozshifo/features/reception/presentation/reception_screen.dart';
@@ -158,6 +159,16 @@ class _FakeReceptionRepository extends ReceptionRepository {
     required List<({String serviceId, int quantity})> items,
   }) async =>
       _discountedVisit;
+
+  // The reception history panel fetches this when a patient is selected.
+  @override
+  Future<PatientSummary> patientSummary(String patientId) async =>
+      const PatientSummary(
+        patientId: 'p1',
+        visitCount: 1,
+        totalDebt: '0.00',
+        isRepeat: false,
+      );
 }
 
 void main() {
@@ -230,6 +241,13 @@ void main() {
   group('Reception open-visit panel with discount', () {
     testWidgets('shows Сумма / Скидка / «К оплате» = payable + Скидка button',
         (tester) async {
+      // Desktop width: the screen uses the two-column layout at ≥1000px (real
+      // usage). At the default 800×600 the cards stack and the right-column
+      // actions fall below the fold.
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [

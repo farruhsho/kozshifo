@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_SECRET_KEY = "dev-insecure-change-me-please-0123456789abcdef"
 _DEV_DIRECTOR_PASSWORD = "Director!2026"
+# backend/ — anchor file paths here so the SQLite DB / uploads are the SAME
+# regardless of the process working directory (uvicorn from repo root vs backend,
+# preview, scripts). A CWD-relative default silently opens a different, stale DB.
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -27,11 +32,12 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
 
     # Database — SQLite by default so the platform runs with zero external setup.
-    database_url: str = "sqlite:///./kozshifo.db"
+    # Anchored to backend/ (not CWD) so every launcher opens the same file.
+    database_url: str = f"sqlite:///{(_BACKEND_DIR / 'kozshifo.db').as_posix()}"
 
     # File storage for device-result binaries (B-scans etc.).
     # In the Docker image point this at the writable volume: /app/data/uploads.
-    upload_dir: str = "./uploads"
+    upload_dir: str = str(_BACKEND_DIR / "uploads")
 
     # Notifications — Telegram is optional; without a token events are only
     # logged to the notifications table.
@@ -52,7 +58,10 @@ class Settings(BaseSettings):
     # Workday start "HH:MM" (clinic local time) — first punch-in after this is "late".
     work_day_start: str = "09:00"
 
-    # CORS
+    # CORS — local dev ports only. In production the Firebase Hosting frontend
+    # (kozshifo-prod, Blaze) reaches /api via same-origin rewrites to Cloud Run,
+    # so no cross-origin Firebase entry is needed. Override with CORS_ORIGINS env
+    # if a cross-origin client is ever added.
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
 
     # Seed
@@ -67,22 +76,22 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
-    @field_validator("database_url", mode="after")
+    @field_validator("database_url", mode="before")
     @classmethod
-    def _pin_psycopg_driver(cls, v: str) -> str:
-        """Force the psycopg (v3) driver on bare Postgres DSNs.
+    def _normalize_db_url(cls, v: object) -> object:
+        """Pin managed-Postgres URLs to the installed driver (psycopg v3).
 
-        Managed Postgres providers (Railway, Render, Heroku…) inject a DSN with
-        the bare ``postgresql://`` — or legacy ``postgres://`` — scheme, which
-        SQLAlchemy maps to the psycopg2 dialect. We ship psycopg v3 only, so
-        pin ``+psycopg`` here; the same DATABASE_URL then works unchanged both
-        locally (docker-compose) and on a managed provider. Idempotent: a DSN
-        that already names a driver (``postgresql+psycopg://``) is left as-is.
+        Hosts like Railway/Render/Heroku inject ``postgres://`` or
+        ``postgresql://`` — SQLAlchemy maps the bare scheme to psycopg2 (not
+        installed), so connect fails. We ship psycopg3, so rewrite to the
+        explicit ``+psycopg`` dialect. SQLite and already-qualified URLs pass
+        through untouched.
         """
-        if v.startswith("postgres://"):
-            v = "postgresql://" + v[len("postgres://"):]
-        if v.startswith("postgresql://"):
-            v = "postgresql+psycopg://" + v[len("postgresql://"):]
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                return "postgresql+psycopg://" + v[len("postgres://"):]
+            if v.startswith("postgresql://"):
+                return "postgresql+psycopg://" + v[len("postgresql://"):]
         return v
 
     @model_validator(mode="after")

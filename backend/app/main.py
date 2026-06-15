@@ -79,9 +79,31 @@ def create_app() -> FastAPI:
             )
         return await call_next(request)
 
+    # The backend self-hosts the compiled Flutter app (build/web). Tell the
+    # browser NOT to cache it, so a fresh `flutter build web` is always picked up
+    # — a stale cached main.dart.js (e.g. one built against a different API URL)
+    # is a classic cause of a phantom "нет связи" after the build changed.
+    _NO_CACHE_EXEMPT = (settings.api_prefix, "/health", "/tv", "/docs", "/redoc", "/openapi")
+
+    @app.middleware("http")
+    async def _no_store_static(request: Request, call_next):
+        response = await call_next(request)
+        if not request.url.path.startswith(_NO_CACHE_EXEMPT):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/health", tags=["System"])
     def health() -> dict:
         return {"status": "ok", "app": settings.app_name, "version": __version__, "env": settings.environment}
+
+    def _tv_board_html() -> HTMLResponse:
+        return HTMLResponse((_STATIC_DIR / "tv_board.html").read_text(encoding="utf-8"))
+
+    @app.get("/tv", response_class=HTMLResponse, tags=["System"])
+    def tv_board_picker() -> HTMLResponse:
+        """TV board WITHOUT a branch — the page shows a branch picker (no UUID
+        to remember): open http://<server>:8000/tv and tap the branch."""
+        return _tv_board_html()
 
     @app.get("/tv/{branch_id}", response_class=HTMLResponse, tags=["System"])
     def tv_board_page(branch_id: UUID) -> HTMLResponse:
@@ -91,8 +113,7 @@ def create_app() -> FastAPI:
         /api/v1/queue/tv-board/{branch_id}. The branch_id path segment also
         validates as a UUID here so typos fail fast with a 422.
         """
-        html = (_STATIC_DIR / "tv_board.html").read_text(encoding="utf-8")
-        return HTMLResponse(html)
+        return _tv_board_html()
 
     app.include_router(api_router, prefix=settings.api_prefix)
 

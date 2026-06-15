@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import socket
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
@@ -46,6 +47,8 @@ from app.schemas.access_control import (
     AccessEventOut,
     EnrollmentRow,
     EnrollResult,
+    PushConfigIn,
+    PushConfigResult,
     TerminalCreate,
     TerminalOut,
     TerminalTestResult,
@@ -71,6 +74,18 @@ def _next_employee_no(db: Session) -> str:
     ).scalars().all()
     nums = [int(r) for r in rows if r and r.isdigit()]
     return str((max(nums) + 1) if nums else 1001)
+
+
+def _detect_lan_ip() -> str:
+    """Best-effort primary LAN IPv4 of this server (the address the device pushes to)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))  # no packets sent; picks the default-route iface
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 def _as_utc(ts: datetime) -> datetime:
@@ -170,6 +185,38 @@ def test_terminal(
         serial=info.get("serialNumber"),
         device_name=info.get("deviceName"),
     )
+
+
+@router.post("/terminals/{terminal_id}/configure-push", response_model=PushConfigResult)
+def configure_push(
+    terminal_id: UUID,
+    payload: PushConfigIn,
+    db: Annotated[Session, Depends(get_db)],
+    _: Annotated[CurrentUser, Depends(require_permission("access_control.manage"))],
+) -> PushConfigResult:
+    """One-click: tell the terminal to POST its events to our webhook.
+
+    Saves the operator from configuring the device web UI by hand. Needs the
+    webhook secret configured (HIKVISION_EVENT_TOKEN); the server's LAN IP is
+    auto-detected unless the caller passes the host it reached us on.
+    """
+    terminal = _get_terminal_or_404(db, terminal_id)
+    token = settings.hikvision_event_token
+    if not token:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Webhook secret is not configured (set HIKVISION_EVENT_TOKEN in the server .env)",
+        )
+    server_host = payload.server_host or _detect_lan_ip()
+    server_port = payload.server_port or 8000
+    masked = f"http://{server_host}:{server_port}/api/v1/access-control/event/****"
+
+    client = HikvisionClient.from_terminal(terminal)
+    try:
+        client.enable_event_push(server_host, server_port, token, host_id=1)
+        return PushConfigResult(configured=True, url=masked)
+    except (TerminalUnreachable, TerminalError) as exc:
+        return PushConfigResult(configured=False, url=masked, error=str(exc))
 
 
 # ------------------------------------------------------------------ enrollment

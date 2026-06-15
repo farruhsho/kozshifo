@@ -102,6 +102,30 @@ class AccessControlRepository {
     }
   }
 
+  /// One-click: tell the terminal to push its events to our webhook.
+  /// [serverHost]/[serverPort] = the address the device should reach us on
+  /// (the web origin); when omitted the server auto-detects its LAN IP.
+  Future<({bool configured, String url, String? error})> configurePush(
+    String id, {
+    String? serverHost,
+    int? serverPort,
+  }) async {
+    try {
+      final resp = await _dio.post(
+        '/access-control/terminals/$id/configure-push',
+        data: {'server_host': ?serverHost, 'server_port': ?serverPort},
+      );
+      final d = resp.data as Map<String, dynamic>;
+      return (
+        configured: d['configured'] as bool,
+        url: d['url'] as String,
+        error: d['error'] as String?,
+      );
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   // ── Enrollment ──────────────────────────────────────────────────────────────
 
   Future<List<EnrollmentRow>> enrollment() async {

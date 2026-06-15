@@ -4,6 +4,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/storage/ui_prefs.dart';
 import '../application/auth_controller.dart';
 
+/// Демо-аккаунты для быстрого входа (тест-режим). Существуют ТОЛЬКО в dev —
+/// сервер сидит их при ENVIRONMENT=development; в проде их нет (вход не сработает).
+/// Суперадмин = владелец (is_superuser, полный доступ). Ресепшен совмещает
+/// кассу и склад — поэтому отдельных кнопок «Касса»/«Склад» нет.
+typedef _DemoAccount = ({String label, String email, String password, IconData icon});
+
+const _demoAccounts = <_DemoAccount>[
+  (label: 'Суперадмин', email: 'superadmin@kozshifo.uz', password: 'Superadmin!2026', icon: Icons.admin_panel_settings_outlined),
+  (label: 'Директор', email: 'director@kozshifo.uz', password: 'Director!2026', icon: Icons.workspace_premium_outlined),
+  (label: 'Ресепшен', email: 'reception@kozshifo.uz', password: 'Reception!2026', icon: Icons.point_of_sale_outlined),
+  (label: 'Врач', email: 'vrach@kozshifo.uz', password: 'Vrach!2026', icon: Icons.medical_services_outlined),
+  (label: 'Диагност', email: 'diagnost@kozshifo.uz', password: 'Diagnost!2026', icon: Icons.biotech_outlined),
+];
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -61,6 +75,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await auth.login(email, _password.text);
       // Persist (or clear) the remembered email only after a successful login.
       await prefs.writeRememberedEmail(_remember ? email : null);
+      // Router redirect handles navigation on success.
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Быстрый вход тестовым аккаунтом — без ручного ввода/валидации формы.
+  Future<void> _quickLogin(_DemoAccount a) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final auth = ref.read(authControllerProvider.notifier);
+    try {
+      await auth.login(a.email, a.password);
       // Router redirect handles navigation on success.
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -152,6 +183,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                             ? const SizedBox(
                                 height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2))
                             : const Text('Войти'),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          const Expanded(child: Divider()),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Text('Быстрый вход (тест)',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: scheme.outline)),
+                          ),
+                          const Expanded(child: Divider()),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          for (final a in _demoAccounts)
+                            OutlinedButton.icon(
+                              onPressed: _loading ? null : () => _quickLogin(a),
+                              icon: Icon(a.icon, size: 18),
+                              label: Text(a.label),
+                            ),
+                        ],
                       ),
                     ],
                   ),

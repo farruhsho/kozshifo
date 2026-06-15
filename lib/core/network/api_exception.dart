@@ -28,15 +28,29 @@ class ApiException implements Exception {
         }
         return ApiException(detail.toString(), statusCode: status);
       }
+      // The address the request actually went to — surfacing it turns a vague
+      // «нет связи» into a self-diagnosing message (e.g. shows when the app was
+      // opened from web.app, where there is no backend, instead of 127.0.0.1:8000).
+      String where;
+      try {
+        final u = error.requestOptions.uri;
+        where = '${u.scheme}://${u.host}${u.hasPort ? ':${u.port}' : ''}';
+      } catch (_) {
+        where = '—';
+      }
       switch (error.type) {
         case DioExceptionType.connectionTimeout:
         case DioExceptionType.receiveTimeout:
         case DioExceptionType.sendTimeout:
-          return ApiException('Сервер не отвечает. Попробуйте позже.', statusCode: status);
+          return ApiException('Сервер не отвечает ($where). Попробуйте позже.', statusCode: status);
         case DioExceptionType.connectionError:
-          return ApiException('Нет связи с сервером. Проверьте, запущен ли backend.', statusCode: status);
+          return ApiException(
+            'Нет связи с сервером ($where). Откройте приложение по адресу '
+            'запущенного backend (http://127.0.0.1:8000), а не по web.app.',
+            statusCode: status,
+          );
         default:
-          return ApiException('Ошибка запроса (${status ?? 'нет ответа'}).', statusCode: status);
+          return ApiException('Ошибка запроса (${status ?? 'нет ответа'}) → $where.', statusCode: status);
       }
     }
     return ApiException(error.toString());

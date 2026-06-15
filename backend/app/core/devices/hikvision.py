@@ -91,6 +91,18 @@ class HikvisionClient:
             timeout=timeout,
         )
 
+    @classmethod
+    def from_camera(cls, camera: Any, *, timeout: float = 5.0) -> "HikvisionClient":
+        """Build a client from a Camera ORM row (same connection shape as a terminal)."""
+        return cls(
+            camera.host,
+            camera.port,
+            camera.username,
+            camera.password,
+            use_https=camera.use_https,
+            timeout=timeout,
+        )
+
     # ----------------------------------------------------------------- transport
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
@@ -101,6 +113,14 @@ class HikvisionClient:
                 resp = client.request(method, f"{self._base}{path}", **kwargs)
         except httpx.HTTPError as exc:
             raise TerminalUnreachable(f"{type(exc).__name__}: {exc}") from exc
+        except (NotImplementedError, KeyError) as exc:
+            # httpx.DigestAuth raises these (not HTTPError) when a device offers an
+            # unsupported challenge — qop="auth-int" -> NotImplementedError, an
+            # unknown algorithm -> KeyError. Map them to the graceful "device down"
+            # path so an odd-firmware camera/terminal yields 502, never a 500.
+            raise TerminalUnreachable(
+                f"unsupported digest auth challenge from device ({type(exc).__name__})"
+            ) from exc
         if resp.status_code == 401:
             raise TerminalUnreachable("authentication failed (check username / password)")
         return resp
@@ -130,6 +150,24 @@ class HikvisionClient:
         if resp.status_code >= 400:
             raise TerminalError(f"deviceInfo: HTTP {resp.status_code}")
         return _parse_device_info(resp.text)
+
+    def get_snapshot(self, *, channel: int = 1, path: str | None = None) -> bytes:
+        """Pull one still JPEG frame — the unit of the snapshot-polling live view.
+
+        Hikvision ISAPI: GET /ISAPI/Streaming/channels/{channel}01/picture
+        (channel 1 main stream = 101). A non-Hikvision camera can pass an explicit
+        snapshot ``path``. Returns the raw image bytes; raises ``TerminalError`` on
+        an error status and ``TerminalUnreachable`` when the camera is down/auth
+        fails (the feature layer maps these to a 502, never a 500).
+        """
+        snapshot_path = path or f"/ISAPI/Streaming/channels/{channel}01/picture"
+        resp = self._request("GET", snapshot_path)
+        if resp.status_code >= 400:
+            raise TerminalError(f"snapshot: HTTP {resp.status_code}")
+        content = resp.content
+        if not content:
+            raise TerminalError("snapshot: empty response from camera")
+        return content
 
     def enroll_user(
         self,
@@ -184,6 +222,52 @@ class HikvisionClient:
             "POST", "/ISAPI/Intelligent/FDLib/FaceDataRecord?format=json", files=files
         )
         return self._check_isapi_ok(resp, "upload_face")
+
+    def enable_event_push(
+        self,
+        server_ip: str,
+        server_port: int,
+        token: str,
+        *,
+        host_id: int = 1,
+    ) -> dict:
+        """Point the terminal at our webhook so it pushes events automatically.
+
+        Sets HTTP host #1 (PUT /ISAPI/Event/notification/httpHosts/{id}) — the
+        device then POSTs every access event to
+        ``http://server_ip:server_port/api/v1/access-control/event/<token>``.
+        Saves the operator a trip into the device web UI. [verify on device] —
+        a few firmwares additionally require enabling "Notify Surveillance
+        Center" linkage on the access events.
+        """
+        url_path = f"/api/v1/access-control/event/{token}"
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<HttpHostNotification version="2.0" '
+            'xmlns="http://www.isapi.org/ver20/XMLSchema">'
+            f"<id>{host_id}</id>"
+            f"<url>{url_path}</url>"
+            "<protocolType>HTTP</protocolType>"
+            "<parameterFormatType>JSON</parameterFormatType>"
+            "<addressingFormatType>ipaddress</addressingFormatType>"
+            f"<ipAddress>{server_ip}</ipAddress>"
+            f"<portNo>{server_port}</portNo>"
+            "<httpAuthenticationMethod>none</httpAuthenticationMethod>"
+            "</HttpHostNotification>"
+        )
+        resp = self._request(
+            "PUT",
+            f"/ISAPI/Event/notification/httpHosts/{host_id}",
+            content=body.encode("utf-8"),
+            headers={"Content-Type": "application/xml"},
+        )
+        if resp.status_code >= 400:
+            raise TerminalError(f"enable_event_push: HTTP {resp.status_code} {resp.text[:200]}")
+        # Success is a ResponseStatus XML with <statusCode>1</statusCode> / "OK".
+        text = resp.text or ""
+        if "<statusCode>" in text and "<statusCode>1<" not in text and "OK" not in text:
+            raise TerminalError(f"enable_event_push: device rejected config — {text[:200]}")
+        return {"url_path": url_path}
 
     def fetch_events(
         self,

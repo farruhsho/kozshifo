@@ -11,9 +11,13 @@ generation never hard-fails on an exotic host.
 from __future__ import annotations
 
 import io
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
+from reportlab.graphics import renderPDF
+from reportlab.graphics.barcode import qr
+from reportlab.graphics.shapes import Drawing
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import simpleSplit
@@ -22,6 +26,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
 from app.models.exam import EyeExam
+from app.models.payment import Payment
+from app.models.visit import Visit
 
 _FONT_CANDIDATES: list[tuple[str, str]] = [
     # (regular, bold)
@@ -129,6 +135,122 @@ def _visus_line(eye: str, va: str | None, sph, cyl, axis, va_cc: str | None) -> 
     correction = ", ".join(corr) if corr else "—"
     cc = f" = {va_cc}" if va_cc else ""
     return f"Visus {eye} {_fmt(va) or '—'} ; коррекция билан: {correction}{cc}"
+
+
+_METHOD_RU = {"cash": "Наличные", "card": "Карта", "qr": "QR", "transfer": "Перечисление"}
+
+
+def _money(v: object) -> str:
+    """Grouped sum with a Russian thousands separator: 1 290 000 сум."""
+    n = Decimal(str(v or 0)).quantize(Decimal("1"))
+    return f"{n:,}".replace(",", " ") + " сум"
+
+
+def build_receipt_pdf(
+    payment: Payment,
+    visit: Visit,
+    *,
+    queue_ticket_number: str | None = None,
+) -> bytes:
+    """Compact 80mm thermal-style receipt (чек) for one payment.
+
+    Shows the clinic, date/time, public patient № (patient_no), ФИО, the visit's
+    services + prices, discount, total, this payment's method, balance, the queue
+    ticket, the «ЭКСТРЕННЫЙ ПРИЕМ» flag, and a QR encoding the visit. The visit
+    (with its patient + items) is passed in by the caller — Payment has only an FK.
+    """
+    _register_fonts()
+    patient = visit.patient
+
+    width = 80 * mm
+    margin = 5 * mm
+    inner = width - 2 * margin
+    # Tall enough for a long item list; the viewer crops trailing whitespace.
+    height = 200 * mm
+    buf = io.BytesIO()
+    c = Canvas(buf, pagesize=(width, height))
+    c.setTitle(f"Чек {payment.receipt_no}")
+    y = height - margin
+
+    def line(txt: str, *, font: str = FONT, size: float = 8, center: bool = False,
+             gap: float = 4.2 * mm) -> None:
+        nonlocal y
+        for seg in (simpleSplit(txt, font, size, inner) or [""]):
+            c.setFont(font, size)
+            if center:
+                c.drawCentredString(width / 2, y, seg)
+            else:
+                c.drawString(margin, y, seg)
+            y -= gap
+
+    def row(left: str, right: str, *, font: str = FONT, size: float = 8) -> None:
+        nonlocal y
+        c.setFont(font, size)
+        c.drawString(margin, y, left)
+        c.drawRightString(width - margin, y, right)
+        y -= 4.2 * mm
+
+    def rule() -> None:
+        nonlocal y
+        c.setLineWidth(0.4)
+        c.setDash(1, 2)
+        c.line(margin, y + 1.5 * mm, width - margin, y + 1.5 * mm)
+        c.setDash()
+        y -= 2.5 * mm
+
+    line("«KO'Z SHIFO»", font=FONT_BOLD, size=12, center=True)
+    line("офтальмологик клиника", size=7.5, center=True)
+    rule()
+
+    paid_at: datetime = payment.created_at
+    row("Чек №:", payment.receipt_no, font=FONT_BOLD)
+    row("Дата:", paid_at.strftime("%d.%m.%Y %H:%M"))
+    row("ID пациента:", patient.patient_no or patient.mrn, font=FONT_BOLD)
+    line(patient.full_name, font=FONT_BOLD, size=9)
+    row("Визит:", visit.visit_no)
+
+    if visit.priority and visit.priority > 0:
+        line("⚠ ЭКСТРЕННЫЙ ПРИЕМ", font=FONT_BOLD, size=9, center=True)
+        if visit.priority_reason:
+            line(f"Причина: {visit.priority_reason}", size=7.5, center=True)
+    rule()
+
+    line("Услуги:", font=FONT_BOLD)
+    for it in visit.items:
+        qty = f" x{it.quantity}" if it.quantity and it.quantity > 1 else ""
+        row(f"• {it.service_name}{qty}", _money(it.total))
+    rule()
+
+    row("Сумма:", _money(visit.total_amount))
+    if visit.discount_value and Decimal(visit.discount_value) > 0:
+        reason = f" ({visit.discount_reason})" if visit.discount_reason else ""
+        row("Скидка" + reason + ":", "− " + _money(visit.discount_value))
+    row("ИТОГО:", _money(visit.payable), font=FONT_BOLD, size=9.5)
+    row("Оплата (" + _METHOD_RU.get(payment.method, payment.method) + "):", _money(payment.amount))
+    if Decimal(visit.balance) > 0:
+        row("Остаток (долг):", _money(visit.balance), font=FONT_BOLD)
+    rule()
+
+    if queue_ticket_number:
+        line("Талон в очередь", size=7.5, center=True)
+        line(queue_ticket_number, font=FONT_BOLD, size=20, center=True, gap=8 * mm)
+        rule()
+
+    # QR encoding the visit (scannable identity for fast lookup).
+    payload = f"KOZSHIFO|patient:{patient.patient_no or patient.mrn}|visit:{visit.visit_no}|receipt:{payment.receipt_no}"
+    qr_widget = qr.QrCodeWidget(payload)
+    b = qr_widget.getBounds()
+    qw, qh = b[2] - b[0], b[3] - b[1]
+    size = 26 * mm
+    d = Drawing(size, size, transform=[size / qw, 0, 0, size / qh, 0, 0])
+    d.add(qr_widget)
+    renderPDF.draw(d, c, (width - size) / 2, y - size)
+    y -= size + 3 * mm
+
+    line("Спасибо за визит!", size=8, center=True)
+
+    c.save()
+    return buf.getvalue()
 
 
 def build_exam_card_pdf(exam: EyeExam) -> bytes:

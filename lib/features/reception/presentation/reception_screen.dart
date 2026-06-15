@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/utils/file_saver.dart';
 import '../../../core/utils/flow_labels.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
@@ -29,6 +31,7 @@ class ReceptionScreen extends ConsumerStatefulWidget {
 
 class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
   Timer? _debounce;
   List<Patient> _found = const [];
   bool _searching = false;
@@ -39,11 +42,15 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   ReceptionVisit? _visit;
   PaymentResult? _result;
   bool _busy = false;
+  // EMERGENCY intake state (mirrors the visit's server-side priority).
+  bool _emergency = false;
+  String? _emergencyReason;
 
   @override
   void dispose() {
     _debounce?.cancel();
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -178,12 +185,83 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
   }
 
+  /// «ЭКСТРЕННО» — mark/clear emergency on the open visit. The minted ticket
+  /// inherits the priority + reason (jumps the queue, flags «ЭКСТРЕННЫЙ»).
+  Future<void> _toggleEmergency() async {
+    final visit = _visit;
+    if (visit == null) return;
+    if (_emergency) {
+      setState(() => _busy = true);
+      try {
+        await ref.read(receptionRepositoryProvider)
+            .setEmergency(visitId: visit.id, emergency: false);
+        if (mounted) setState(() { _emergency = false; _emergencyReason = null; });
+      } catch (e) {
+        if (mounted) _snack('$e', error: true);
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+      return;
+    }
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (_) => const _EmergencyReasonDialog(),
+    );
+    if (reason == null || reason.trim().isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(receptionRepositoryProvider)
+          .setEmergency(visitId: visit.id, emergency: true, reason: reason.trim());
+      if (mounted) {
+        setState(() { _emergency = true; _emergencyReason = reason.trim(); });
+        _snack('Отмечено как ЭКСТРЕННЫЙ приём');
+      }
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Downloads + opens the receipt PDF (browser then prints it).
+  Future<void> _printReceipt(String paymentId, String receiptNo) async {
+    try {
+      final bytes = await ref.read(receptionRepositoryProvider).receiptPdf(paymentId);
+      await saveBytes(bytes, 'receipt-$receiptNo.pdf', 'application/pdf');
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    }
+  }
+
+  // Hotkey actions (Ctrl+Enter context-aware: open visit → take payment).
+  void _hotNewPatient() {
+    final canRegister = ref.read(authControllerProvider).user?.can('patients.create') ?? false;
+    if (canRegister && _patient == null && !_busy) _registerNew();
+  }
+
+  void _hotPrimary() {
+    if (_busy) return;
+    if (_result != null) return;
+    if (_visit == null) {
+      if (_patient != null && _cart.isNotEmpty) _openVisit();
+    } else {
+      _takePayment();
+    }
+  }
+
+  void _hotPrintReceipt() {
+    final r = _result;
+    if (r != null) _printReceipt(r.payment.id, r.payment.receiptNo);
+  }
+
   void _reset() {
     setState(() {
       _patient = null;
       _cart.clear();
       _visit = null;
       _result = null;
+      _emergency = false;
+      _emergencyReason = null;
       _found = const [];
       _lastQuery = '';
       _searchController.clear();
@@ -222,23 +300,36 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     );
     final right = _cartSection(canBill, canDiscount);
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Ресепшен')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: wide
-            ? Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(flex: 3, child: left),
-                  const SizedBox(width: 16),
-                  Expanded(flex: 2, child: right),
-                ],
-              )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [left, const SizedBox(height: 16), right],
-              ),
+    // Reception hotkeys (spec): Ctrl+N новый пациент · Ctrl+F поиск ·
+    // Ctrl+P печать чека · Ctrl+Enter сохранить визит / принять оплату.
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true): _hotNewPatient,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true): _searchFocus.requestFocus,
+        const SingleActivator(LogicalKeyboardKey.keyP, control: true): _hotPrintReceipt,
+        const SingleActivator(LogicalKeyboardKey.enter, control: true): _hotPrimary,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          appBar: AppBar(title: const Text('Ресепшен')),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: wide
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 3, child: left),
+                      const SizedBox(width: 16),
+                      Expanded(flex: 2, child: right),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [left, const SizedBox(height: 16), right],
+                  ),
+          ),
+        ),
       ),
     );
   }
@@ -251,9 +342,11 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             Expanded(
               child: TextField(
                 controller: _searchController,
+                focusNode: _searchFocus,
+                autofocus: true,
                 onChanged: _onSearchChanged,
                 decoration: InputDecoration(
-                  hintText: 'Поиск: ФИО, карта, телефон',
+                  hintText: 'Поиск: ID, ФИО, телефон, дата рождения',
                   prefixIcon: _searching
                       ? const Padding(
                           padding: EdgeInsets.all(12),
@@ -305,7 +398,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             ),
             onTap: () => _registerNew(initialPhone: _lastQuery),
           ),
-      ] else
+      ] else ...[
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: CircleAvatar(child: Text(_patient!.initials)),
@@ -319,7 +412,66 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                 )
               : null,
         ),
+        _historyPanel(_patient!.id),
+      ],
     ]);
+  }
+
+  /// История пациента: посещения, последний визит/диагноз, долг, повторный.
+  Widget _historyPanel(String patientId) {
+    final summary = ref.watch(patientSummaryProvider(patientId));
+    return summary.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: LinearProgressIndicator(),
+      ),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (s) {
+        final cs = Theme.of(context).colorScheme;
+        final chips = <Widget>[
+          _miniChip(Icons.event_repeat, 'Визитов: ${s.visitCount}'),
+          if (s.isRepeat) _miniChip(Icons.verified_user, 'Повторный', color: cs.primary),
+          if (s.lastVisitAt != null) _miniChip(Icons.history, 'Был: ${s.lastVisitAt}'),
+          if (s.hasDebt)
+            _miniChip(Icons.account_balance_wallet,
+                'Долг: ${formatMoney(s.totalDebt)}', color: cs.error),
+        ];
+        return Container(
+          margin: const EdgeInsets.only(top: 4),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHighest.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(spacing: 8, runSpacing: 8, children: chips),
+              if (s.lastDiagnosis != null) ...[
+                const SizedBox(height: 8),
+                Text('Посл. диагноз: ${s.lastDiagnosis}',
+                    style: Theme.of(context).textTheme.bodySmall),
+              ],
+              if (s.lastOperation != null)
+                Text('Посл. операция: ${s.lastOperation}',
+                    style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _miniChip(IconData icon, String label, {Color? color}) {
+    final c = color ?? Theme.of(context).colorScheme.onSurfaceVariant;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 15, color: c),
+        const SizedBox(width: 4),
+        Text(label, style: TextStyle(fontSize: 12.5, color: c, fontWeight: FontWeight.w600)),
+      ],
+    );
   }
 
   Widget _servicesSection(AsyncValue<List<Service>> services, bool canBill) {
@@ -375,8 +527,10 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     return Row(
       children: [
         Text(label, style: style),
-        const Spacer(),
-        Text(value, style: style),
+        const SizedBox(width: 8),
+        // Flexible + right-align: a long «−15 000 сум (Пенсионер)» wraps instead
+        // of overflowing the narrow right column.
+        Expanded(child: Text(value, style: style, textAlign: TextAlign.right)),
       ],
     );
   }
@@ -461,6 +615,31 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           label: const Text('Открыть визит'),
         )
       else ...[
+        if (_emergency) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    color: Theme.of(context).colorScheme.error, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'ЭКСТРЕННЫЙ ПРИЕМ${_emergencyReason == null ? '' : ' · $_emergencyReason'}',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         // balance — остаток к доплате (payable − оплачено), его ведёт сервер.
         Text('Визит ${visit.visitNo} · остаток ${formatMoney(visit.balance)}'),
         const SizedBox(height: 4),
@@ -487,6 +666,18 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           onPressed: (canDiscount && !_busy) ? _editDiscount : null,
           icon: const Icon(Icons.percent),
           label: const Text('Скидка'),
+        ),
+        const SizedBox(height: 8),
+        // «ЭКСТРЕННО» — приоритет в очереди + красная метка на талоне/ТВ/чеке.
+        OutlinedButton.icon(
+          onPressed: (canDiscount && !_busy) ? _toggleEmergency : null,
+          icon: Icon(_emergency ? Icons.cancel : Icons.warning_amber_rounded,
+              color: _emergency ? null : Theme.of(context).colorScheme.error),
+          style: OutlinedButton.styleFrom(
+            foregroundColor:
+                _emergency ? null : Theme.of(context).colorScheme.error,
+          ),
+          label: Text(_emergency ? 'Снять экстренность' : 'ЭКСТРЕННО'),
         ),
         const SizedBox(height: 8),
         // Аварийный выход: пациент передумал / услуги выбраны неверно.
@@ -539,10 +730,24 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
               ),
             ),
           const SizedBox(height: 12),
-          FilledButton.tonalIcon(
-            onPressed: _reset,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Новый приём'),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _printReceipt(r.payment.id, r.payment.receiptNo),
+                  icon: const Icon(Icons.print),
+                  label: const Text('Печать чека'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: _reset,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Новый приём'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -669,6 +874,88 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Оплатить'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Причина экстренного приёма (для очереди/чека/аналитики).
+const _emergencyReasons = <String>[
+  'Травма глаза',
+  'ДТП',
+  'Острая боль',
+  'Резкое снижение зрения',
+  'Инородное тело',
+  'Химический ожог',
+  'Другое',
+];
+
+class _EmergencyReasonDialog extends StatefulWidget {
+  const _EmergencyReasonDialog();
+
+  @override
+  State<_EmergencyReasonDialog> createState() => _EmergencyReasonDialogState();
+}
+
+class _EmergencyReasonDialogState extends State<_EmergencyReasonDialog> {
+  String _reason = _emergencyReasons.first;
+  final _custom = TextEditingController();
+
+  @override
+  void dispose() {
+    _custom.dispose();
+    super.dispose();
+  }
+
+  String get _value => _reason == 'Другое' ? _custom.text.trim() : _reason;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Экстренный приём'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Пациент получит приоритет в очереди, красную метку на табло и в чеке.',
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: _reason,
+              decoration: const InputDecoration(
+                  labelText: 'Причина (обязательно)', isDense: true),
+              items: [
+                for (final r in _emergencyReasons)
+                  DropdownMenuItem(value: r, child: Text(r)),
+              ],
+              onChanged: (v) => setState(() => _reason = v ?? _emergencyReasons.first),
+            ),
+            if (_reason == 'Другое') ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _custom,
+                autofocus: true,
+                decoration: const InputDecoration(
+                    labelText: 'Причина (свой вариант)', isDense: true),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _value.isEmpty ? null : () => Navigator.of(context).pop(_value),
+          style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error),
+          child: const Text('Отметить экстренным'),
         ),
       ],
     );

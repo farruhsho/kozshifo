@@ -7,9 +7,9 @@ import '../../auth/application/auth_controller.dart';
 import '../data/clinical_repository.dart';
 import '../domain/operation.dart';
 
-/// Секция «Операции» карты пациента: операции визита со статусами,
-/// выполнение (со списанием расходников) и назначение новой операции —
-/// назначение автоматически добавляет связанную услугу в счёт визита.
+/// Секция «Операции» карты пациента (TZ Modul 6): врач направляет пациента на
+/// операцию (тип + рекомендация, без счёта). Дату/хирурга/цену и выполнение
+/// оформляет ресепшен в разделе «Операции».
 class OperationsSection extends ConsumerWidget {
   const OperationsSection(
       {super.key, required this.visitId, required this.patientId, this.branchId});
@@ -25,7 +25,6 @@ class OperationsSection extends ConsumerWidget {
     final operations = ref.watch(visitOperationsProvider(visitId));
     final user = ref.watch(authControllerProvider).user;
     final canPrescribe = user?.can('operations.prescribe') ?? false;
-    final canPerform = user?.can('operations.perform') ?? false;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -49,7 +48,7 @@ class OperationsSection extends ConsumerWidget {
                 return Column(
                   children: [
                     for (final op in items)
-                      _operationTile(context, ref, op, canPerform, canPrescribe),
+                      _operationTile(context, ref, op, canPrescribe),
                   ],
                 );
               },
@@ -59,9 +58,9 @@ class OperationsSection extends ConsumerWidget {
               Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
-                  onPressed: () => _prescribe(context, ref),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Назначить операцию'),
+                  onPressed: () => _refer(context, ref),
+                  icon: const Icon(Icons.send_outlined),
+                  label: const Text('Направить на операцию'),
                 ),
               ),
             ],
@@ -71,25 +70,32 @@ class OperationsSection extends ConsumerWidget {
     );
   }
 
-  Widget _operationTile(BuildContext context, WidgetRef ref, Operation op,
-      bool canPerform, bool canPrescribe) {
+  Widget _operationTile(
+      BuildContext context, WidgetRef ref, Operation op, bool canPrescribe) {
     final statusColor = switch (op.status) {
-      'planned' => Colors.orange,
-      'done' => Colors.green,
+      'referred' => Colors.blue,
+      'scheduled' => Colors.orange,
+      'in_progress' => Colors.purple,
+      'performed' => Colors.green,
+      'completed' => Colors.green,
       _ => Colors.grey,
     };
+    final subtitle = [
+      if (op.notes != null && op.notes!.isNotEmpty) op.notes!,
+      if (op.surgeonName != null) 'Хирург: ${op.surgeonName}',
+    ].join(' · ');
     return ListTile(
       dense: true,
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.medical_services_outlined),
       title: Text('${op.typeName} · ${op.eyeLabel}'),
-      subtitle: op.notes == null
+      subtitle: subtitle.isEmpty
           ? null
-          : Text(op.notes!, style: Theme.of(context).textTheme.bodySmall),
+          : Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (op.priority == 'urgent')
+          if (op.isUrgent)
             Padding(
               padding: const EdgeInsets.only(right: 6),
               child: Chip(
@@ -106,12 +112,7 @@ class OperationsSection extends ConsumerWidget {
             labelStyle: TextStyle(color: statusColor),
             side: BorderSide.none,
           ),
-          if (canPerform && op.isPlanned)
-            TextButton(
-              onPressed: () => _perform(context, ref, op),
-              child: const Text('Выполнить'),
-            ),
-          if (canPrescribe && op.isPlanned)
+          if (canPrescribe && op.isOpen)
             TextButton(
               onPressed: () => _cancel(context, ref, op),
               child: const Text('Отменить'),
@@ -121,56 +122,27 @@ class OperationsSection extends ConsumerWidget {
     );
   }
 
-  Future<void> _perform(
-      BuildContext context, WidgetRef ref, Operation op) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(op.typeName),
-        content: const Text('Списать расходники и отметить выполненной?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Выполнить')),
-        ],
-      ),
-    );
-    if (ok != true || !context.mounted) return;
-    try {
-      await ref.read(clinicalRepositoryProvider).performOperation(op.id);
-      if (!context.mounted) return;
-      ref.invalidate(visitOperationsProvider(visitId));
-      _snack(context, 'Операция выполнена, расходники списаны');
-    } catch (e) {
-      // 409 несёт сообщение «не хватает …» — показываем его как есть.
-      if (context.mounted) _snack(context, e.toString(), error: true);
-    }
-  }
-
   Future<void> _cancel(
       BuildContext context, WidgetRef ref, Operation op) async {
     try {
       await ref.read(clinicalRepositoryProvider).cancelOperation(op.id);
       if (!context.mounted) return;
       ref.invalidate(visitOperationsProvider(visitId));
-      _snack(context, 'Операция отменена');
+      _snack(context, 'Направление отменено');
     } catch (e) {
       if (context.mounted) _snack(context, e.toString(), error: true);
     }
   }
 
-  Future<void> _prescribe(BuildContext context, WidgetRef ref) async {
+  Future<void> _refer(BuildContext context, WidgetRef ref) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) =>
-          _PrescribeOperationDialog(visitId: visitId, branchId: branchId),
+          _ReferOperationDialog(visitId: visitId, branchId: branchId),
     );
     if (ok == true && context.mounted) {
       ref.invalidate(visitOperationsProvider(visitId));
-      _snack(context, 'Операция назначена и добавлена в счёт визита');
+      _snack(context, 'Пациент направлен на операцию — ресепшен оформит детали');
     }
   }
 
@@ -182,21 +154,22 @@ class OperationsSection extends ConsumerWidget {
   }
 }
 
-/// Диалог назначения: тип операции (с ценой), приоритет, глаз, примечание +
-/// живая проверка наличия расходников по филиалу визита (advisory).
-class _PrescribeOperationDialog extends ConsumerStatefulWidget {
-  const _PrescribeOperationDialog({required this.visitId, this.branchId});
+/// Диалог направления: тип операции (цена — ориентир из каталога), приоритет,
+/// глаз, рекомендация + живая проверка наличия расходников по филиалу визита
+/// (advisory). Счёт НЕ выставляется — это сделает ресепшен при планировании.
+class _ReferOperationDialog extends ConsumerStatefulWidget {
+  const _ReferOperationDialog({required this.visitId, this.branchId});
 
   final String visitId;
   final String? branchId;
 
   @override
-  ConsumerState<_PrescribeOperationDialog> createState() =>
-      _PrescribeOperationDialogState();
+  ConsumerState<_ReferOperationDialog> createState() =>
+      _ReferOperationDialogState();
 }
 
-class _PrescribeOperationDialogState
-    extends ConsumerState<_PrescribeOperationDialog> {
+class _ReferOperationDialogState
+    extends ConsumerState<_ReferOperationDialog> {
   final _notes = TextEditingController();
   String? _typeId;
   String _eye = 'od';
@@ -248,7 +221,7 @@ class _PrescribeOperationDialogState
     setState(() => _saving = true);
     try {
       final notes = _notes.text.trim();
-      await ref.read(clinicalRepositoryProvider).prescribeOperation(
+      await ref.read(clinicalRepositoryProvider).referOperation(
             visitId: widget.visitId,
             operationTypeId: typeId,
             eye: _eye,
@@ -272,7 +245,7 @@ class _PrescribeOperationDialogState
     final types = ref.watch(operationTypesProvider);
 
     return AlertDialog(
-      title: const Text('Назначить операцию'),
+      title: const Text('Направить на операцию'),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(
@@ -342,7 +315,7 @@ class _PrescribeOperationDialogState
                 controller: _notes,
                 maxLines: 2,
                 decoration: const InputDecoration(
-                    labelText: 'Примечание (необязательно)'),
+                    labelText: 'Рекомендация врача (необязательно)'),
               ),
             ],
           ),
@@ -360,7 +333,7 @@ class _PrescribeOperationDialogState
                   height: 18,
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2))
-              : const Text('Назначить'),
+              : const Text('Направить'),
         ),
       ],
     );

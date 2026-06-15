@@ -67,3 +67,21 @@ def require_permission(*codes: str):
         return user
 
     return _checker
+
+
+def require_any_permission(*codes: str):
+    """Dependency factory: require AT LEAST ONE of the given permission codes.
+
+    Usage:  Depends(require_any_permission("operations.prescribe", "operations.schedule"))
+    """
+
+    def _checker(user: CurrentUser) -> User:
+        effective = user.effective_permission_codes()
+        if not user.is_superuser and not any(c in effective for c in codes):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing permission(s): one of {', '.join(codes)}",
+            )
+        return user
+
+    return _checker

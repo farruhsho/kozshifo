@@ -59,7 +59,8 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Operations (surgery)
     ("operations.read", "operations", "View operations & types"),
     ("operations.manage", "operations", "Manage operation types"),
-    ("operations.prescribe", "operations", "Prescribe / cancel operations"),
+    ("operations.prescribe", "operations", "Refer / cancel operations (doctor)"),
+    ("operations.schedule", "operations", "Schedule operations: date/surgeon/price (reception)"),
     ("operations.perform", "operations", "Perform operations (auto write-off)"),
     # Treatment
     ("treatments.read", "treatment", "View treatment prescriptions"),
@@ -128,7 +129,9 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "expenses.read", "expenses.manage",
         "services.read", "branches.read",
         "exams.read",
-        "operations.read", "treatments.read",
+        # Operations dept (TZ Modul 6): reception schedules referred operations
+        # (date/surgeon/price) — the act of billing them onto the visit.
+        "operations.read", "operations.schedule", "treatments.read",
         "devices.read", "notifications.read",
         # cameras: front desk connects & watches the live view
         "cameras.view", "cameras.manage",

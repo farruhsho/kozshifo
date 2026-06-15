@@ -123,17 +123,24 @@ def patient_timeline(
             add(r.measured_at, "device_result", f"Результат прибора: {r.result_type}",
                 detail=original_name, visit_id=r.visit_id, ref_id=r.id)
 
-    # Operations: prescribed always; performed/cancelled as extra events.
+    # Operations (TZ Modul 6): referral always; scheduling, performance,
+    # completion and cancellation surface as extra timeline events.
     if allowed("operations.read"):
         operations = db.execute(
             select(Operation).where(Operation.patient_id == patient_id)
         ).scalars().all()
         for op in operations:
             name = op.type_name  # via the joined-loaded operation_type relationship
-            add(op.created_at, "operation_prescribed", f"Назначена операция: {name}",
+            add(op.created_at, "operation_referred", f"Направление на операцию: {name}",
                 visit_id=op.visit_id, ref_id=op.id)
+            if op.scheduled_at is not None:
+                add(op.scheduled_at, "operation_scheduled", f"Операция запланирована: {name}",
+                    visit_id=op.visit_id, ref_id=op.id)
             if op.performed_at is not None:
                 add(op.performed_at, "operation_performed", f"Операция выполнена: {name}",
+                    visit_id=op.visit_id, ref_id=op.id)
+            if op.completed_at is not None:
+                add(op.completed_at, "operation_completed", f"Операция завершена: {name}",
                     visit_id=op.visit_id, ref_id=op.id)
             if op.status == "cancelled":
                 add(op.updated_at, "operation_cancelled", f"Операция отменена: {name}",

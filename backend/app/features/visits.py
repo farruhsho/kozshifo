@@ -40,11 +40,17 @@ def _recompute_total(visit: Visit) -> None:
     visit.total_amount = sum((Decimal(i.total) for i in visit.items), Decimal("0.00"))
 
 
-def _make_item(db: Session, service_id: UUID, quantity: int) -> VisitItem:
+def _make_item(db: Session, service_id: UUID, quantity: int,
+               unit_price: Decimal | None = None) -> VisitItem:
+    """Build a billed line for a service.
+
+    `unit_price` overrides the catalog price (TZ Modul 6: reception may set a
+    per-operation price). The service is still the name/billing-trace source.
+    """
     service = db.get(Service, service_id)
     if service is None or not service.is_active:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown or inactive service {service_id}")
-    unit = Decimal(service.price)
+    unit = Decimal(unit_price) if unit_price is not None else Decimal(service.price)
     return VisitItem(
         service_id=service.id,
         service_name=service.name,

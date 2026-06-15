@@ -108,6 +108,13 @@ const kAppDestinations = <AppDestination>[
     permissions: ['queue.read'],
   ),
   AppDestination(
+    Icons.healing_outlined,
+    Icons.healing,
+    'Операции',
+    '/operations',
+    permissions: ['operations.read'],
+  ),
+  AppDestination(
     Icons.people_outline,
     Icons.people,
     'Пациенты',

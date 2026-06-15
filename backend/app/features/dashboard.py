@@ -85,7 +85,7 @@ def _count_operations_done(db: Session, since: datetime) -> int:
     """Performed operations since `since` (same UTC day/month boundaries as revenue)."""
     return db.execute(
         select(func.count()).select_from(Operation)
-        .where(Operation.status == "done", Operation.performed_at >= since)
+        .where(Operation.status.in_(Operation.DONE_STATUSES), Operation.performed_at >= since)
     ).scalar_one()
 
 

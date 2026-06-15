@@ -1,10 +1,20 @@
-﻿"""Operations & treatments: seeded catalog, billing on prescribe, FEFO write-off
-on perform (atomic on shortage), medication dispense, RBAC."""
+﻿"""Operations & treatments (TZ Modul 6): seeded catalog, doctor referral,
+reception scheduling (bills the visit, price override), FEFO write-off on
+perform (atomic on shortage), completion, worklist, report, RBAC."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from tests.conftest import API
+
+_SCHED_AT = "2026-07-01T09:00:00+00:00"
+
+
+def _schedule(client, auth, op_id: str, **body):
+    """Reception schedules a referred operation (date required)."""
+    body.setdefault("scheduled_at", _SCHED_AT)
+    return client.post(f"{API}/operations/{op_id}/schedule", headers=auth, json=body)
 
 # PHACO template (seed): sku -> qty written off per operation
 _PHACO_CONSUMPTION = {
@@ -76,32 +86,64 @@ def test_operation_types_seeded(client, auth):
     assert len(ivi["consumables"]) == 2
 
 
-def test_prescribe_bills_the_visit(client, auth):
+def test_refer_does_not_bill_then_schedule_bills_the_visit(client, auth):
     branch_id = _branch_id(client, auth)
     visit = _new_visit(client, auth, branch_id, "bill")
     assert Decimal(visit["total_amount"]) == Decimal("0.00")
     phaco = _operation_type(client, auth, "PHACO")
 
+    # 1) Doctor refers — recorded, NOT billed.
     created = client.post(
         f"{API}/visits/{visit['id']}/operations", headers=auth,
-        json={"operation_type_id": phaco["id"], "eye": "od"},
+        json={"operation_type_id": phaco["id"], "eye": "od", "notes": "катаракта OD"},
     )
     assert created.status_code == 201, created.text
     operation = created.json()
-    assert operation["status"] == "planned"
+    assert operation["status"] == "referred"
+    assert operation["price"] is None
+    assert operation["referring_doctor_id"] is not None
     assert operation["type_name"] == "Факоэмульсификация катаракты с ИОЛ"
-    assert operation["eye"] == "od"
+    assert Decimal(client.get(f"{API}/visits/{visit['id']}", headers=auth)
+                   .json()["total_amount"]) == Decimal("0.00")
 
-    # The linked service landed on the visit as a billed item.
+    # 2) Reception schedules — now the linked service lands on the visit.
+    scheduled = _schedule(client, auth, operation["id"])
+    assert scheduled.status_code == 200, scheduled.text
+    sched = scheduled.json()
+    assert sched["status"] == "scheduled"
+    assert Decimal(sched["price"]) == Decimal("5000000.00")
+    assert sched["scheduled_at"] is not None
+
     refreshed = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
     assert Decimal(refreshed["total_amount"]) == Decimal("5000000.00")
     billed = [i for i in refreshed["items"] if i["service_name"] == "Факоэмульсификация катаракты с ИОЛ"]
     assert len(billed) == 1
     assert Decimal(billed[0]["total"]) == Decimal("5000000.00")
 
-    # And it shows up in the visit's operation list.
     listed = client.get(f"{API}/visits/{visit['id']}/operations", headers=auth).json()
     assert [o["id"] for o in listed] == [operation["id"]]
+
+
+def test_schedule_price_override(client, auth):
+    """Reception may override the catalog price; the visit bills the override."""
+    branch_id = _branch_id(client, auth)
+    visit = _new_visit(client, auth, branch_id, "override")
+    ivi = _operation_type(client, auth, "IVI")  # catalog 1 500 000
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": ivi["id"]}).json()
+
+    scheduled = _schedule(client, auth, op["id"], price="1200000")
+    assert scheduled.status_code == 200, scheduled.text
+    assert Decimal(scheduled.json()["price"]) == Decimal("1200000.00")
+    refreshed = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
+    assert Decimal(refreshed["total_amount"]) == Decimal("1200000.00")
+
+    # Re-schedule (still unpaid) adjusts the same billed line, not a second one.
+    again = _schedule(client, auth, op["id"], price="1000000")
+    assert again.status_code == 200, again.text
+    refreshed = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
+    assert len(refreshed["items"]) == 1
+    assert Decimal(refreshed["total_amount"]) == Decimal("1000000.00")
 
 
 def test_perform_writes_off_fefo_and_blocks_on_shortage(client, auth):
@@ -112,6 +154,10 @@ def test_perform_writes_off_fefo_and_blocks_on_shortage(client, auth):
         f"{API}/visits/{visit['id']}/operations", headers=auth,
         json={"operation_type_id": phaco["id"]},
     ).json()
+    # A bare referral cannot be performed — it must be scheduled first.
+    too_early = client.post(f"{API}/operations/{operation['id']}/perform", headers=auth)
+    assert too_early.status_code == 409, too_early.text
+    assert _schedule(client, auth, operation["id"]).status_code == 200
 
     # Stock everything generously EXCEPT the knife — exactly 1 IOL, no KNIFE-275.
     _receipt(client, auth, branch_id, [
@@ -129,14 +175,14 @@ def test_perform_writes_off_fefo_and_blocks_on_shortage(client, auth):
     # …and is atomic: nothing was consumed from the products that WERE available.
     after_denied = {sku: _on_hand(client, auth, branch_id, sku) for sku in _PHACO_CONSUMPTION}
     assert after_denied == before
-    still_planned = client.get(f"{API}/visits/{visit['id']}/operations", headers=auth).json()[0]
-    assert still_planned["status"] == "planned"
+    still_scheduled = client.get(f"{API}/visits/{visit['id']}/operations", headers=auth).json()[0]
+    assert still_scheduled["status"] == "scheduled"
 
     # Receive the missing knife -> perform succeeds and decrements per template.
     _receipt(client, auth, branch_id, [("KNIFE-275", "1")])
     done = client.post(f"{API}/operations/{operation['id']}/perform", headers=auth)
     assert done.status_code == 200, done.text
-    assert done.json()["status"] == "done"
+    assert done.json()["status"] == "performed"
     assert done.json()["performed_at"] is not None
 
     for sku, qty in _PHACO_CONSUMPTION.items():
@@ -144,7 +190,34 @@ def test_perform_writes_off_fefo_and_blocks_on_shortage(client, auth):
         assert _on_hand(client, auth, branch_id, sku) == expected, sku
 
 
-def test_perform_twice_and_cancel_after_done_409(client, auth):
+def test_start_perform_complete_lifecycle(client, auth):
+    """scheduled -> in_progress -> performed -> completed, with the outcome
+    recorded on the operation (TZ Modul 6)."""
+    branch_id = _branch_id(client, auth)
+    _receipt(client, auth, branch_id, [("SYR-1", "5"), ("GLOVES-ST", "5")])
+    visit = _new_visit(client, auth, branch_id, "lifecycle")
+    ivi = _operation_type(client, auth, "IVI")
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": ivi["id"], "eye": "os"}).json()
+    assert _schedule(client, auth, op["id"]).status_code == 200
+
+    started = client.post(f"{API}/operations/{op['id']}/start", headers=auth)
+    assert started.status_code == 200, started.text
+    assert started.json()["status"] == "in_progress"
+
+    performed = client.post(f"{API}/operations/{op['id']}/perform", headers=auth)
+    assert performed.status_code == 200, performed.text
+    assert performed.json()["status"] == "performed"
+
+    completed = client.post(f"{API}/operations/{op['id']}/complete", headers=auth,
+                            json={"result": "Без осложнений"})
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["result"] == "Без осложнений"
+    assert completed.json()["completed_at"] is not None
+
+
+def test_perform_twice_and_cancel_after_performed_409(client, auth):
     branch_id = _branch_id(client, auth)
     _receipt(client, auth, branch_id, [("SYR-1", "5"), ("GLOVES-ST", "5")])
     visit = _new_visit(client, auth, branch_id, "twice")
@@ -153,13 +226,14 @@ def test_perform_twice_and_cancel_after_done_409(client, auth):
         f"{API}/visits/{visit['id']}/operations", headers=auth,
         json={"operation_type_id": ivi["id"], "eye": "os"},
     ).json()
+    assert _schedule(client, auth, operation["id"]).status_code == 200
 
     assert client.post(f"{API}/operations/{operation['id']}/perform", headers=auth).status_code == 200
     again = client.post(f"{API}/operations/{operation['id']}/perform", headers=auth)
     assert again.status_code == 409
 
     cancelled = client.post(f"{API}/operations/{operation['id']}/cancel", headers=auth)
-    assert cancelled.status_code == 409  # done operations cannot be cancelled
+    assert cancelled.status_code == 409  # performed operations cannot be cancelled
 
 
 def test_treatment_medication_dispense(client, auth):
@@ -226,12 +300,13 @@ def test_clinical_rbac(client, auth):
     assert "operations.prescribe" in denied.json()["detail"]
 
 
-def test_cancel_planned_operation_debills_the_visit(client, auth):
-    """Cancelling a planned (unpaid) operation removes its billed item."""
+def test_cancel_scheduled_operation_debills_the_visit(client, auth):
+    """Cancelling a scheduled (unpaid) operation removes its billed item."""
     visit_id = _new_visit(client, auth, _branch_id(client, auth), "debill")["id"]
     phaco = _operation_type(client, auth, "PHACO")
     op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
                      json={"operation_type_id": phaco["id"], "eye": "od"}).json()
+    assert _schedule(client, auth, op["id"]).status_code == 200
     before = client.get(f"{API}/visits/{visit_id}", headers=auth).json()
     assert Decimal(before["total_amount"]) == Decimal("5000000.00")
 
@@ -242,11 +317,25 @@ def test_cancel_planned_operation_debills_the_visit(client, auth):
     assert after["items"] == []
 
 
+def test_cancel_bare_referral_has_no_bill(client, auth):
+    """A referral that was never scheduled has nothing to de-bill."""
+    visit_id = _new_visit(client, auth, _branch_id(client, auth), "refcancel")["id"]
+    phaco = _operation_type(client, auth, "PHACO")
+    op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"]}).json()
+    cancelled = client.post(f"{API}/operations/{op['id']}/cancel", headers=auth)
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["status"] == "cancelled"
+    after = client.get(f"{API}/visits/{visit_id}", headers=auth).json()
+    assert Decimal(after["total_amount"]) == Decimal("0.00")
+
+
 def test_cancel_paid_operation_requires_refund_first(client, auth):
     visit_id = _new_visit(client, auth, _branch_id(client, auth), "paidcancel")["id"]
     phaco = _operation_type(client, auth, "PHACO")
     op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
                      json={"operation_type_id": phaco["id"], "eye": "ou"}).json()
+    assert _schedule(client, auth, op["id"]).status_code == 200
     visit = client.get(f"{API}/visits/{visit_id}", headers=auth).json()
     # issue_queue_ticket=False: a stray waiting ticket would hijack call-next
     # in the patient-journey test that shares this session DB.
@@ -265,7 +354,8 @@ def test_perform_blocked_on_cancelled_visit(client, auth):
     phaco = _operation_type(client, auth, "PHACO")
     op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
                      json={"operation_type_id": phaco["id"], "eye": "os"}).json()
-    # Reception aborts the (unpaid) visit; the planned operation must die with it.
+    assert _schedule(client, auth, op["id"]).status_code == 200
+    # Reception aborts the (unpaid) visit; the scheduled operation must die with it.
     cancelled = client.post(f"{API}/visits/{visit_id}/cancel", headers=auth)
     assert cancelled.status_code == 200, cancelled.text
 
@@ -277,3 +367,57 @@ def test_perform_blocked_on_cancelled_visit(client, auth):
     t_denied = client.post(f"{API}/visits/{visit_id}/treatments", headers=auth,
                            json={"kind": "procedure", "name": "Тест"})
     assert t_denied.status_code == 409
+
+
+def test_operations_worklist(client, auth):
+    """The department worklist surfaces referred/scheduled operations and
+    filters by status."""
+    branch_id = _branch_id(client, auth)
+    visit = _new_visit(client, auth, branch_id, "worklist")
+    ivi = _operation_type(client, auth, "IVI")
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": ivi["id"], "priority": "urgent",
+                           "notes": "срочно"}).json()
+
+    referred = client.get(f"{API}/operations", headers=auth, params={"status": "referred"})
+    assert referred.status_code == 200, referred.text
+    ids = [o["id"] for o in referred.json()]
+    assert op["id"] in ids
+    row = next(o for o in referred.json() if o["id"] == op["id"])
+    assert row["patient_name"]  # enriched for the worklist
+    assert row["priority"] == "urgent"
+
+    # After scheduling it leaves the "referred" filter and enters "scheduled".
+    assert _schedule(client, auth, op["id"]).status_code == 200
+    assert op["id"] not in [o["id"] for o in
+                            client.get(f"{API}/operations", headers=auth,
+                                       params={"status": "referred"}).json()]
+    assert op["id"] in [o["id"] for o in
+                        client.get(f"{API}/operations", headers=auth,
+                                   params={"status": "scheduled"}).json()]
+
+
+def test_operations_report_by_surgeon(client, auth):
+    """Period report counts performed operations and breaks revenue down by surgeon."""
+    branch_id = _branch_id(client, auth)
+    _receipt(client, auth, branch_id, [("SYR-1", "10"), ("GLOVES-ST", "10")])
+    # A surgeon to attribute the operation to.
+    surgeon = client.post(f"{API}/users", headers=auth,
+                          json={"email": "surgeon.rep@kozshifo.uz", "full_name": "Жаррох Тестов",
+                                "password": "Vrach!2026", "role_names": ["Doctor"]}).json()
+    visit = _new_visit(client, auth, branch_id, "report")
+    ivi = _operation_type(client, auth, "IVI")
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": ivi["id"]}).json()
+    assert _schedule(client, auth, op["id"], surgeon_id=surgeon["id"], price="900000").status_code == 200
+    assert client.post(f"{API}/operations/{op['id']}/perform", headers=auth).status_code == 200
+
+    report = client.get(f"{API}/operations/report", headers=auth,
+                        params={"date_from": "2020-01-01T00:00:00+00:00",
+                                "date_to": "2100-01-01T00:00:00+00:00"})
+    assert report.status_code == 200, report.text
+    data = report.json()
+    assert data["count"] >= 1
+    surgeons = {s["surgeon_id"]: s for s in data["by_surgeon"]}
+    assert surgeon["id"] in surgeons
+    assert Decimal(surgeons[surgeon["id"]]["total_amount"]) >= Decimal("900000.00")

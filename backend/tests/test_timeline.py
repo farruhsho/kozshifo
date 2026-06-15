@@ -98,8 +98,8 @@ def test_timeline_assembles_full_journey_sorted_desc(client, auth):
 
     assert by_kind["treatment_prescribed"]["title"] == "Назначение: Гимнастика для глаз"
 
-    assert by_kind["operation_prescribed"]["title"] == (
-        f"Назначена операция: {journey['op_type_name']}"
+    assert by_kind["operation_referred"]["title"] == (
+        f"Направление на операцию: {journey['op_type_name']}"
     )
 
     # Every event carries the visit reference back to the same visit.
@@ -146,7 +146,7 @@ def test_timeline_rbac(client, auth):
     assert ok.status_code == 200, ok.text
     cashier_kinds = {e["kind"] for e in ok.json()["events"]}
     assert "payment" in cashier_kinds
-    assert not cashier_kinds & {"exam", "device_result", "operation_prescribed",
+    assert not cashier_kinds & {"exam", "device_result", "operation_referred",
                                 "operation_performed", "treatment_prescribed",
                                 "treatment_done"}
 

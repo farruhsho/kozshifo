@@ -112,10 +112,26 @@ on every mutation · multi-branch**.
   `cameras.view` to Doctor, all to Director. Migration `a650ccc3e510`. The RMK-700
   serial / CAS-2000BER file adapters remain deferred (hardware path TBD).
 
-**Verified green:** backend `pytest` = 187 passed · Flutter `flutter test` = 130 passed
+**Verified green:** backend `pytest` = 217 passed · Flutter `flutter test` = 139 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (head `a650ccc3e510`; this round
-added the `queue_tickets.assigned_user_id` column and the isolated `cameras` table).
+`alembic upgrade head` + `alembic check` = clean (head `a1c4e7f9d2b0`; this round
+added the operations TZ-Modul-6 referral flow).
+
+- **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
+  the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga
+  yuborish», type + recommendation, **not billed**); **reception schedules** it
+  (date/time, surgeon, **price** — catalog default with optional override —
+  which is what **bills** the visit); then **start → perform** (FEFO consumable
+  write-off) **→ complete** (clinical result on the patient card). Statuses:
+  `referred → scheduled → in_progress → performed → completed` (+ `cancelled`,
+  which de-bills an unpaid line). Model split `doctor_id` into
+  `referring_doctor_id` + `surgeon_id` (the performer becomes the surgeon if
+  reception left it unset). New: department **worklist** `GET /operations`
+  (branch-scoped, status filter), **report** `GET /operations/report`
+  (count + revenue + by-surgeon), permission `operations.schedule` (granted to
+  Reception), `require_any_permission` helper. Flutter: doctor card now
+  «Направить на операцию», new `/operations` department screen
+  (schedule/start/perform/complete). Migration `a1c4e7f9d2b0`.
 
 ## 2. Repo map (where things live)
 

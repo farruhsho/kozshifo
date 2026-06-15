@@ -18,6 +18,7 @@ import 'package:kozshifo/features/doctor/domain/exam_template.dart';
 import 'package:kozshifo/features/doctor/domain/eye_exam.dart';
 import 'package:kozshifo/features/doctor/domain/frequent_diagnosis.dart';
 import 'package:kozshifo/features/doctor/domain/timeline_event.dart';
+import 'package:kozshifo/features/doctor/domain/visit_diagnosis.dart';
 import 'package:kozshifo/features/doctor/domain/visit_summary.dart';
 import 'package:kozshifo/features/doctor/presentation/patient_card_screen.dart';
 import 'package:kozshifo/features/doctor/presentation/patient_info_card.dart';
@@ -90,6 +91,10 @@ class _FakeDoctorRepository extends DoctorRepository {
 
   @override
   Future<List<ExamTemplate>> examTemplates() async => const [];
+
+  @override
+  Future<List<VisitDiagnosis>> diagnosesForVisit(String visitId) async =>
+      const [];
 
   @override
   Future<Uint8List> cardPdf(String visitId) async => Uint8List(0);

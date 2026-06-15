@@ -60,6 +60,25 @@ class EyeExamUpsert(BaseModel):
     doctor_id: UUID | None = None  # defaults to the current user on create
 
 
+class VisitDiagnosisCreate(BaseModel):
+    """One diagnosis line a doctor adds to a visit (TZ §7.1.5 — many per visit)."""
+
+    diagnosis: str = Field(min_length=1)
+    icd10: str | None = Field(None, max_length=16)
+
+
+class VisitDiagnosisOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    visit_id: UUID
+    patient_id: UUID
+    doctor_id: UUID | None
+    diagnosis: str
+    icd10: str | None
+    created_at: datetime
+
+
 class EyeExamOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

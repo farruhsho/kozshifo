@@ -8,6 +8,7 @@ from app.models.camera import Camera
 from app.models.catalog import Service, ServiceCategory
 from app.models.finance import Expense
 from app.models.device import Device, DeviceResult
+from app.models.diagnosis import VisitDiagnosis
 from app.models.exam import EyeExam
 from app.models.exam_template import ExamTemplate
 from app.models.face_terminal import FaceTerminal
@@ -56,6 +57,7 @@ __all__ = [
     "Treatment",
     "User",
     "Visit",
+    "VisitDiagnosis",
     "VisitItem",
     "role_permissions",
     "user_permissions",

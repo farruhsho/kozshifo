@@ -9,6 +9,7 @@ import '../domain/exam_template.dart';
 import '../domain/eye_exam.dart';
 import '../domain/frequent_diagnosis.dart';
 import '../domain/timeline_event.dart';
+import '../domain/visit_diagnosis.dart';
 import '../domain/visit_summary.dart';
 
 final doctorRepositoryProvider = Provider<DoctorRepository>(
@@ -152,6 +153,42 @@ class DoctorRepository {
     }
   }
 
+  /// Diagnoses accumulated on a visit (TZ §7.1.5), oldest-first.
+  Future<List<VisitDiagnosis>> diagnosesForVisit(String visitId) async {
+    try {
+      final resp = await _dio.get('/visits/$visitId/diagnoses');
+      return (resp.data as List<dynamic>)
+          .map((e) => VisitDiagnosis.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  Future<VisitDiagnosis> addDiagnosis(
+    String visitId, {
+    required String diagnosis,
+    String? icd10,
+  }) async {
+    try {
+      final resp = await _dio.post(
+        '/visits/$visitId/diagnoses',
+        data: {'diagnosis': diagnosis, 'icd10': ?icd10},
+      );
+      return VisitDiagnosis.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  Future<void> deleteDiagnosis(String diagnosisId) async {
+    try {
+      await _dio.delete('/diagnoses/$diagnosisId');
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Copies a refractometer DeviceResult into the visit's exam (OD/OS sph/cyl/axis).
   Future<EyeExam> applyRefraction(String visitId, String resultId) async {
     try {
@@ -195,3 +232,10 @@ final frequentDiagnosesProvider =
 final examTemplatesProvider = FutureProvider.autoDispose<List<ExamTemplate>>(
   (ref) => ref.watch(doctorRepositoryProvider).examTemplates(),
 );
+
+/// Диагнозы визита (TZ §7.1.5) — много на один визит; ключ — visitId.
+final visitDiagnosesProvider = FutureProvider.autoDispose
+    .family<List<VisitDiagnosis>, String>(
+      (ref, visitId) =>
+          ref.watch(doctorRepositoryProvider).diagnosesForVisit(visitId),
+    );

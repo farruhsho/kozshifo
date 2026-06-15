@@ -21,6 +21,7 @@ import '../data/exam_draft_store.dart';
 import '../domain/exam_template.dart';
 import '../domain/eye_exam.dart';
 import '../domain/timeline_event.dart';
+import '../domain/visit_diagnosis.dart';
 import '../domain/visit_summary.dart';
 import 'patient_info_card.dart';
 
@@ -99,6 +100,8 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
   bool _printing = false;
   bool _applyingRefraction = false;
   bool _finishing = false;
+  bool _addingDiagnosis = false;
+  String? _deletingDiagnosisId;
 
   /// Автосейв черновика: любой ввод помечает форму «грязной», периодический
   /// таймер раз в 3 c сбрасывает грязную форму в [ExamDraftStore].
@@ -753,10 +756,34 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _section('Ташхис / Тавсия (заключение)', [
+          // Уже добавленные диагнозы визита (их может быть несколько, TZ §7.1.5).
+          _diagnosesList(),
+          if (enabled) const Divider(height: 20),
+          // Compose-блок: шаблоны и частые диагнозы заполняют поля ниже, кнопка
+          // «Добавить диагноз» накапливает их в список визита.
           if (enabled) _examTemplatesBlock(),
           if (enabled) _frequentDiagnosisChips(),
           _text('diagnosis', 'Ташхис (диагноз)', enabled, maxLines: 2),
           _text('icd10', 'МКБ-10 (код)', enabled),
+          if (enabled)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: FilledButton.tonalIcon(
+                  onPressed: _addingDiagnosis ? null : _addDiagnosis,
+                  icon: _addingDiagnosis
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.add),
+                  label: const Text('Добавить диагноз'),
+                ),
+              ),
+            ),
+          const Divider(height: 20),
           _text(
             'recommendations',
             'Тавсия (рекомендации)',
@@ -824,6 +851,96 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     _dirty = false;
     setState(() => _draftRestored = false);
     await ref.read(examDraftStoreProvider).clearDraft(visitId);
+  }
+
+  /// «Қўшиш»: текущий compose-ввод (диагноз + МКБ-10) добавляется как ещё один
+  /// диагноз визита (TZ §7.1.5 — диагнозы накапливаются). Поле очищается, чтобы
+  /// сразу ввести следующий. Рекомендации остаются в осмотре.
+  Future<void> _addDiagnosis() async {
+    final visitId = _visitId;
+    if (visitId == null) return;
+    final text = _c['diagnosis']!.text.trim();
+    if (text.isEmpty) {
+      _snack('Введите текст диагноза', error: true);
+      return;
+    }
+    final icd = _c['icd10']!.text.trim();
+    setState(() => _addingDiagnosis = true);
+    try {
+      await ref
+          .read(doctorRepositoryProvider)
+          .addDiagnosis(visitId, diagnosis: text, icd10: icd.isEmpty ? null : icd);
+      if (!mounted) return;
+      _c['diagnosis']!.clear();
+      _c['icd10']!.clear();
+      ref.invalidate(visitDiagnosesProvider(visitId));
+      ref.invalidate(frequentDiagnosesProvider);
+      _snack('Диагноз добавлен');
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _addingDiagnosis = false);
+    }
+  }
+
+  Future<void> _removeDiagnosis(VisitDiagnosis d) async {
+    setState(() => _deletingDiagnosisId = d.id);
+    try {
+      await ref.read(doctorRepositoryProvider).deleteDiagnosis(d.id);
+      if (!mounted) return;
+      ref.invalidate(visitDiagnosesProvider(d.visitId));
+      ref.invalidate(frequentDiagnosesProvider);
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _deletingDiagnosisId = null);
+    }
+  }
+
+  /// Список уже добавленных диагнозов визита (TZ §7.1.5) с удалением.
+  Widget _diagnosesList() {
+    final visitId = _visitId;
+    if (visitId == null) return const SizedBox.shrink();
+    final diagnoses = ref.watch(visitDiagnosesProvider(visitId));
+    return AsyncValueWidget<List<VisitDiagnosis>>(
+      value: diagnoses,
+      onRetry: () => ref.invalidate(visitDiagnosesProvider(visitId)),
+      builder: (items) {
+        if (items.isEmpty) {
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text('Диагнозов пока нет — добавьте ниже.',
+                  style: Theme.of(context).textTheme.bodySmall),
+            ),
+          );
+        }
+        return Column(
+          children: [
+            for (final d in items)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.coronavirus_outlined, size: 18),
+                title: Text(d.diagnosis),
+                subtitle: d.icd10 == null ? null : Text('МКБ-10: ${d.icd10}'),
+                trailing: _deletingDiagnosisId == d.id
+                    ? const SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : IconButton(
+                        tooltip: 'Удалить',
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => _removeDiagnosis(d),
+                      ),
+              ),
+          ],
+        );
+      },
+    );
   }
 
   /// Подставить сохранённый шаблон в поля заключения (диагноз/МКБ/рекомендации).

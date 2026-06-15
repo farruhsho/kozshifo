@@ -159,6 +159,23 @@ def test_receipt_pdf_renders(client, auth):
     assert len(pdf.content) > 1000  # real document, not a stub
 
 
+# ── TV board branch picker ────────────────────────────────────────────────────
+
+def test_tv_branches_public_and_bare_tv_page(client):
+    # Public list (no auth) for the board's branch picker.
+    r = client.get(f"{API}/queue/tv-branches")
+    assert r.status_code == 200, r.text
+    rows = r.json()
+    assert isinstance(rows, list) and rows
+    assert all("id" in b and "name" in b for b in rows)
+    assert r.headers.get("access-control-allow-origin") == "*"
+
+    # Bare /tv (no branch) still serves the board HTML — it shows the picker.
+    page = client.get("/tv")
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+
+
 # ── search by patient_no / birth date ─────────────────────────────────────────
 
 def test_search_by_patient_no_and_birth_date(client, auth):

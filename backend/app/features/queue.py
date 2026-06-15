@@ -31,6 +31,7 @@ from app.schemas.queue import (
     QueueTicketOut,
     QueueTrack,
     SpecialistOut,
+    TvBranchOption,
     TVBoard,
     TVBoardEntry,
     TVTrack,
@@ -359,6 +360,17 @@ def _tv_entry(t: QueueTicket) -> TVBoardEntry:
         assigned=t.assigned_user.full_name if t.assigned_user is not None else None,
         emergency=t.priority > 0,
     )
+
+
+@router.get("/tv-branches", response_model=list[TvBranchOption])
+def tv_branches(db: Annotated[Session, Depends(get_db)], response: Response) -> list[Branch]:
+    """Public (no auth): branch id+name for the standalone TV board's picker.
+
+    Branch names are already shown on the public board, so exposing the list is
+    safe; ACAO:* lets the board page run from file:// or another host.
+    """
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return list(db.execute(select(Branch).order_by(Branch.name)).scalars().all())
 
 
 @router.get("/tv-board/{branch_id}", response_model=TVBoard)

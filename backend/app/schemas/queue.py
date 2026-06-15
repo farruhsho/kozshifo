@@ -86,3 +86,12 @@ class TVBoard(BaseModel):
     branch_name: str | None = None
     doctor: TVTrack
     diagnostic: TVTrack
+
+
+class TvBranchOption(BaseModel):
+    """Public (no auth) branch id+name for the TV board's branch picker."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str

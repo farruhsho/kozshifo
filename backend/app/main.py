@@ -83,6 +83,15 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"status": "ok", "app": settings.app_name, "version": __version__, "env": settings.environment}
 
+    def _tv_board_html() -> HTMLResponse:
+        return HTMLResponse((_STATIC_DIR / "tv_board.html").read_text(encoding="utf-8"))
+
+    @app.get("/tv", response_class=HTMLResponse, tags=["System"])
+    def tv_board_picker() -> HTMLResponse:
+        """TV board WITHOUT a branch — the page shows a branch picker (no UUID
+        to remember): open http://<server>:8000/tv and tap the branch."""
+        return _tv_board_html()
+
     @app.get("/tv/{branch_id}", response_class=HTMLResponse, tags=["System"])
     def tv_board_page(branch_id: UUID) -> HTMLResponse:
         """Standalone waiting-room TV board (no auth — shows privacy-safe data only).
@@ -91,8 +100,7 @@ def create_app() -> FastAPI:
         /api/v1/queue/tv-board/{branch_id}. The branch_id path segment also
         validates as a UUID here so typos fail fast with a 422.
         """
-        html = (_STATIC_DIR / "tv_board.html").read_text(encoding="utf-8")
-        return HTMLResponse(html)
+        return _tv_board_html()
 
     app.include_router(api_router, prefix=settings.api_prefix)
 

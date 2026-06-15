@@ -91,6 +91,19 @@
     letter-spacing: 0.12vw; animation: pulse 1.1s ease-in-out infinite;
   }
   tr.emergency td { color: var(--emergency); font-weight: 800; }
+  .branch-picker {
+    position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.8vh; padding: 4vh;
+    background: rgba(11, 18, 32, 0.97);
+  }
+  .picker-title { font-size: 4vh; font-weight: 800; }
+  .picker-sub { font-size: 2.3vh; color: var(--muted); margin-bottom: 1.2vh; }
+  .picker-btn {
+    display: block; min-width: 44vw; text-align: center; text-decoration: none;
+    font-size: 3.2vh; font-weight: 700; color: var(--text); background: var(--doctor);
+    padding: 2.2vh 3vw; border-radius: 1.2vh;
+  }
+  .picker-btn:hover, .picker-btn:focus { background: var(--doctor-deep); outline: none; }
   @keyframes pulse { 50% { opacity: 0.45; } }
   .now-meta { text-align: center; font-size: 2.8vh; }
   .now-meta .who { color: var(--muted); font-size: 2.3vh; margin-top: 0.4vh; }
@@ -214,11 +227,34 @@
   setInterval(tickClock, 10000);
   setTimeout(function () { location.reload(); }, 24 * 60 * 60 * 1000);
 
-  if (!BRANCH) {
-    els.status.textContent = 'branch не задан: /tv/{branch_id} или ?branch=<uuid>';
-    els.status.className = 'offline';
-    return;
+  function showBranchPicker() {
+    function fallback() {
+      els.status.textContent = 'branch не задан: /tv/{branch_id} или ?branch=<uuid>';
+      els.status.className = 'offline';
+    }
+    els.status.textContent = 'Загрузка филиалов…';
+    fetch(API + '/api/v1/queue/tv-branches')
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (list) {
+        if (!list || !list.length) { fallback(); return; }
+        var box = document.createElement('div');
+        box.className = 'branch-picker';
+        box.innerHTML = '<div class="picker-title">KOʼZ SHIFO · Табло очереди</div>' +
+          '<div class="picker-sub">Выберите филиал</div>';
+        list.forEach(function (b) {
+          var a = document.createElement('a');
+          a.className = 'picker-btn';
+          a.href = '?branch=' + encodeURIComponent(b.id);
+          a.textContent = b.name;
+          box.appendChild(a);
+        });
+        document.body.appendChild(box);
+        els.status.textContent = '';
+      })
+      .catch(fallback);
   }
+
+  if (!BRANCH) { showBranchPicker(); return; }
 
   // ── Звук: гонг + озвучка; mute с памятью ───────────────────────────────────
   var muted = false;

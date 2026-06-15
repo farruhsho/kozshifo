@@ -14,6 +14,9 @@ bcrypt>=4.1,<5.0
 python-multipart>=0.0.9
 reportlab>=4.1,<5.0
 httpx>=0.27
+# Cloud object storage for staff face photos (Firebase Storage / GCS) — optional;
+# code degrades to a no-op if FIREBASE_STORAGE_BUCKET is unset.
+google-cloud-storage>=2.16,<4.0
 
 # ── Dev / test ────────────────────────────────────────────────────────────────
 pytest>=8.0

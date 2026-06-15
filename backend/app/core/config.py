@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # Workday start "HH:MM" (clinic local time) — first punch-in after this is "late".
     work_day_start: str = "09:00"
 
+    # Cloud object storage (Firebase Storage / GCS) for staff face photos —
+    # optional. Local uploads on Cloud Run / Railway are ephemeral, so when a
+    # bucket is configured the Face ID face photos are mirrored to it as a
+    # durable backup under staff_faces/<employeeNo>.jpg. Unset = no-op (the
+    # clinic runs fine without it; photos still go to the device + local disk).
+    firebase_storage_bucket: str | None = None
+    # Path to the service-account JSON. If set, the storage client authenticates
+    # with it; otherwise it falls back to Application Default Credentials.
+    google_application_credentials: str | None = None
+
     # CORS — local dev ports only. In production the Firebase Hosting frontend
     # (kozshifo-prod, Blaze) reaches /api via same-origin rewrites to Cloud Run,
     # so no cross-origin Firebase entry is needed. Override with CORS_ORIGINS env

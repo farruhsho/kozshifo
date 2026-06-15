@@ -40,6 +40,7 @@ from app.core.dates import business_today
 from app.core.deps import CurrentUser, require_permission
 from app.core.devices.hikvision import HikvisionClient, TerminalError, TerminalUnreachable
 from app.core.files import MAX_FILE_BYTES, save_upload
+from app.core.storage import upload_face_photo
 from app.models.attendance import AttendanceEvent
 from app.models.face_terminal import FaceTerminal
 from app.models.user import User
@@ -309,6 +310,10 @@ def upload_user_face(
         save_upload(content, file.filename or "face.jpg")
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+
+    # Durable backup to cloud storage (best-effort, no-op if unconfigured) — so a
+    # face survives an ephemeral server and can be re-pushed to a new terminal.
+    upload_face_photo(user.faceid_employee_no, content)
 
     client = HikvisionClient.from_terminal(terminal)
     try:

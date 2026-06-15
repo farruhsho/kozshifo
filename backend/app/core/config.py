@@ -58,14 +58,11 @@ class Settings(BaseSettings):
     # Workday start "HH:MM" (clinic local time) — first punch-in after this is "late".
     work_day_start: str = "09:00"
 
-    # CORS — local dev ports + the free Firebase Hosting frontend (Spark plan,
-    # no Blaze) which calls this backend cross-origin. Override per deploy with
-    # the CORS_ORIGINS env var (comma-separated). When the clinic's own server
-    # serves the UI itself the requests are same-origin and CORS is moot.
-    cors_origins: list[str] = [
-        "http://localhost:3000", "http://localhost:8080", "http://localhost:5173",
-        "https://kozshifo-32e6f.web.app", "https://kozshifo-32e6f.firebaseapp.com",
-    ]
+    # CORS — local dev ports only. In production the Firebase Hosting frontend
+    # (kozshifo-prod, Blaze) reaches /api via same-origin rewrites to Cloud Run,
+    # so no cross-origin Firebase entry is needed. Override with CORS_ORIGINS env
+    # if a cross-origin client is ever added.
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8080", "http://localhost:5173"]
 
     # Seed
     seed_director_email: str = "director@kozshifo.uz"

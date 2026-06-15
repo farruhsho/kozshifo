@@ -67,6 +67,24 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def _pin_psycopg_driver(cls, v: str) -> str:
+        """Force the psycopg (v3) driver on bare Postgres DSNs.
+
+        Managed Postgres providers (Railway, Render, Heroku…) inject a DSN with
+        the bare ``postgresql://`` — or legacy ``postgres://`` — scheme, which
+        SQLAlchemy maps to the psycopg2 dialect. We ship psycopg v3 only, so
+        pin ``+psycopg`` here; the same DATABASE_URL then works unchanged both
+        locally (docker-compose) and on a managed provider. Idempotent: a DSN
+        that already names a driver (``postgresql+psycopg://``) is left as-is.
+        """
+        if v.startswith("postgres://"):
+            v = "postgresql://" + v[len("postgres://"):]
+        if v.startswith("postgresql://"):
+            v = "postgresql+psycopg://" + v[len("postgresql://"):]
+        return v
+
     @model_validator(mode="after")
     def _production_guards(self) -> "Settings":
         """Fail fast instead of running production with repo-public secrets.

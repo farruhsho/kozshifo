@@ -1,0 +1,24 @@
+# Keep the Docker build context small and reproducible. Most of these are
+# gitignored too, so they are absent when Railway builds from GitHub — this
+# matters for LOCAL `docker build` where the working tree is dirty.
+.git
+.github
+.dart_tool/
+build/
+coverage/
+**/__pycache__/
+*.pyc
+backend/.venv/
+backend/uploads/
+*.db
+*.sqlite3
+.env
+**/.env
+.firebase/
+.idea/
+.vscode/
+*.iml
+# Docs / scratch — not needed in the image.
+*.docx
+_tz_*.txt
+.claude/

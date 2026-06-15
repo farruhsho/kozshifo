@@ -104,7 +104,12 @@ def test_operations_counters_after_perform(client, auth):
     )
     assert created.status_code == 201, created.text
 
-    # Planned operations must NOT count — only performed ones do.
+    # Referred/scheduled operations must NOT count — only performed ones do.
+    assert _summary(client, auth)["operations_today"] == before["operations_today"]
+
+    sched = client.post(f"{API}/operations/{created.json()['id']}/schedule", headers=auth,
+                        json={"scheduled_at": "2026-07-01T09:00:00Z"})
+    assert sched.status_code == 200, sched.text
     assert _summary(client, auth)["operations_today"] == before["operations_today"]
 
     done = client.post(f"{API}/operations/{created.json()['id']}/perform", headers=auth)

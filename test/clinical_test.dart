@@ -47,23 +47,32 @@ void main() {
     'id': 'op-1',
     'visit_id': 'v-1',
     'patient_id': 'p-1',
-    'doctor_id': 'u-1',
+    'patient_name': 'Иванов Иван',
+    'referring_doctor_id': 'u-1',
+    'referring_doctor_name': 'Доктор Окулист',
+    'surgeon_id': null,
+    'surgeon_name': null,
     'operation_type_id': 'ot-1',
     'type_name': 'Факоэмульсификация катаракты + ИОЛ',
     'eye': 'od',
-    'status': 'planned',
+    'status': 'referred',
+    'price': null,
     'scheduled_at': null,
     'performed_at': null,
+    'completed_at': null,
     'notes': 'под местной анестезией',
+    'result': null,
     'created_at': '2026-06-12T10:00:00Z',
   };
 
-  test('Operation parses; isPlanned + eyeLabel/statusLabel helpers', () {
+  test('Operation parses; isReferred + eyeLabel/statusLabel helpers', () {
     final op = Operation.fromJson(operationJson);
     expect(op.operationTypeId, 'ot-1');
-    expect(op.isPlanned, isTrue);
+    expect(op.patientName, 'Иванов Иван');
+    expect(op.isReferred, isTrue);
+    expect(op.isOpen, isTrue);
     expect(op.eyeLabel, 'правый глаз');
-    expect(op.statusLabel, 'запланирована');
+    expect(op.statusLabel, 'направлен');
     expect(Operation.fromJson(op.toJson()), op);
 
     final os = op.copyWith(eye: 'os');
@@ -75,6 +84,7 @@ void main() {
   test('Operation priority: parses urgent, defaults to normal when omitted', () {
     final urgent = Operation.fromJson({...operationJson, 'priority': 'urgent'});
     expect(urgent.priority, 'urgent');
+    expect(urgent.isUrgent, isTrue);
     expect(Operation.fromJson(urgent.toJson()), urgent);
 
     // operationJson has no 'priority' key — the model must default it.
@@ -82,18 +92,41 @@ void main() {
     expect(op.priority, 'normal');
   });
 
-  test('Operation done/cancelled labels; isPlanned false', () {
-    final done = Operation.fromJson({
+  test('Operation lifecycle labels: scheduled / performed / completed', () {
+    final scheduled = Operation.fromJson({
       ...operationJson,
-      'status': 'done',
-      'performed_at': '2026-06-12T12:30:00Z',
+      'status': 'scheduled',
+      'price': '5000000.00',
+      'scheduled_at': '2026-07-01T09:00:00Z',
+      'surgeon_id': 's-1',
+      'surgeon_name': 'Жаррох Жарроев',
     });
-    expect(done.isPlanned, isFalse);
-    expect(done.statusLabel, 'выполнена');
-    expect(done.performedAt, '2026-06-12T12:30:00Z');
+    expect(scheduled.isScheduled, isTrue);
+    expect(scheduled.isOpen, isTrue);
+    expect(scheduled.statusLabel, 'запланирована');
+    expect(scheduled.price, '5000000.00');
+    expect(scheduled.surgeonName, 'Жаррох Жарроев');
+
+    final performed = Operation.fromJson({
+      ...operationJson,
+      'status': 'performed',
+      'performed_at': '2026-07-01T12:30:00Z',
+    });
+    expect(performed.isPerformed, isTrue);
+    expect(performed.isOpen, isFalse);
+    expect(performed.statusLabel, 'выполнена');
+
+    final completed = Operation.fromJson({
+      ...operationJson,
+      'status': 'completed',
+      'result': 'Без осложнений',
+    });
+    expect(completed.statusLabel, 'завершена');
+    expect(completed.result, 'Без осложнений');
 
     final cancelled = Operation.fromJson({...operationJson, 'status': 'cancelled'});
     expect(cancelled.statusLabel, 'отменена');
+    expect(cancelled.isOpen, isFalse);
   });
 
   const medicationJson = <String, dynamic>{

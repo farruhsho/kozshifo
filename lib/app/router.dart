@@ -19,6 +19,7 @@ import '../features/finance/presentation/finance_screen.dart';
 import '../features/inventory/presentation/inventory_screen.dart';
 import '../features/lab/presentation/lab_screen.dart';
 import '../features/notifications/presentation/notifications_screen.dart';
+import '../features/operations/presentation/operations_screen.dart';
 import '../features/optics/presentation/optics_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
@@ -45,6 +46,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/worklist', builder: (_, _) => const WorklistScreen()),
           GoRoute(path: '/scheduling', builder: (_, _) => const SchedulingScreen()),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
+          GoRoute(path: '/operations', builder: (_, _) => const OperationsScreen()),
           GoRoute(path: '/analytics', builder: (_, _) => const AnalyticsScreen()),
           GoRoute(path: '/optics', builder: (_, _) => const OpticsScreen()),
           GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),

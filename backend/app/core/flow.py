@@ -117,15 +117,20 @@ def recompute_plan(db: Session, visit: Visit) -> None:
 
     ops = db.execute(
         select(Operation.status, Operation.scheduled_at)
-        .where(Operation.visit_id == visit.id, Operation.status.in_(("planned", "done")))
+        .where(
+            Operation.visit_id == visit.id,
+            Operation.status.in_(Operation.OPEN_STATUSES + Operation.DONE_STATUSES),
+        )
     ).all()
-    planned = [o for o in ops if o.status == "planned"]
-    if planned:
+    pending = [o for o in ops if o.status in Operation.OPEN_STATUSES]
+    if pending:
+        # A dated (reception-scheduled) operation reads as surgery_scheduled;
+        # a bare referral with no date yet stays surgery_assigned.
         visit.flow_status = ("surgery_scheduled"
-                             if any(o.scheduled_at is not None for o in planned)
+                             if any(o.scheduled_at is not None for o in pending)
                              else "surgery_assigned")
         return
-    if any(o.status == "done" for o in ops):
+    if any(o.status in Operation.DONE_STATUSES for o in ops):
         visit.flow_status = "surgery_completed"
         return
     has_treatment = db.execute(

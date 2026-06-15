@@ -7,6 +7,7 @@ from app.models.catalog import Service, ServiceCategory
 from app.models.finance import Expense
 from app.models.device import Device, DeviceResult
 from app.models.exam import EyeExam
+from app.models.face_terminal import FaceTerminal
 from app.models.inventory import InventoryCategory, Product, StockBatch, StockMovement, Supplier
 from app.models.notification import Notification
 from app.models.operation import Operation, OperationType, OperationTypeConsumable, Treatment
@@ -26,6 +27,7 @@ __all__ = [
     "DeviceResult",
     "Expense",
     "EyeExam",
+    "FaceTerminal",
     "InventoryCategory",
     "Notification",
     "Operation",

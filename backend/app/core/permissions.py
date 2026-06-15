@@ -77,6 +77,9 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("payroll.manage", "finance", "Post payroll payouts"),
     # IP telephony (TZ Modul 9)
     ("calls.read", "calls", "View / search call records"),
+    # Access control / Face ID terminals
+    ("access_control.read", "access_control", "View face terminals, enrollment & events"),
+    ("access_control.manage", "access_control", "Connect terminals, enroll staff faces"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("audit.read", "audit", "View audit log"),

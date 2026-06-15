@@ -11,6 +11,7 @@ import 'package:kozshifo/core/network/page.dart';
 import 'package:kozshifo/features/attendance/data/attendance_repository.dart';
 import 'package:kozshifo/features/attendance/domain/attendance_event.dart';
 import 'package:kozshifo/features/attendance/domain/attendance_report.dart';
+import 'package:kozshifo/features/attendance/domain/attendance_status.dart';
 import 'package:kozshifo/features/attendance/presentation/attendance_screen.dart';
 import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
@@ -139,17 +140,23 @@ void main() {
         (tester) async {
       await tester.pumpWidget(app());
       await tester.pump(); // loading frame
-      await tester.pump(); // report future resolved
+      await tester.pump(); // status/report futures resolved
 
-      expect(find.text('Учёт времени'), findsOneWidget);
+      // Заголовок раздела и FAB ручной отметки видны в любом представлении.
+      expect(find.text('Сотрудники'), findsOneWidget);
+      // attendance.manage (superuser) — ручная отметка доступна.
+      expect(find.widgetWithText(FloatingActionButton, 'Отметить вручную'),
+          findsOneWidget);
+
+      // Стартовое представление — «Сейчас»; для табеля переключаемся на него.
+      await tester.tap(find.text('Табель'));
+      await tester.pumpAndSettle();
+
       expect(find.text('Иванова Дилноза'), findsOneWidget);
       expect(find.text('Итого: 8ч 25м'), findsOneWidget);
       expect(find.text('Пропусков: 1'), findsOneWidget);
       expect(find.text('Опозданий: 1'), findsOneWidget);
       expect(find.textContaining('Начало дня: 09:00'), findsOneWidget);
-      // attendance.manage (superuser) — ручная отметка доступна.
-      expect(find.widgetWithText(FloatingActionButton, 'Отметить вручную'),
-          findsOneWidget);
 
       // Разворачиваем сотрудника — видна таблица дней и бейдж опоздания.
       await tester.tap(find.text('Иванова Дилноза'));
@@ -187,6 +194,21 @@ class _FakeAttendanceRepository extends AttendanceRepository {
     required String dateTo,
   }) async =>
       AttendanceReport.fromJson(_reportJson);
+
+  @override
+  Future<AttendanceStatus> status() async => const AttendanceStatus(
+        asOf: '2026-06-13T10:00:00Z',
+        workDayStart: '09:00',
+        integrationEnabled: false,
+        totalStaff: 1,
+        presentCount: 1,
+        leftCount: 0,
+        absentCount: 0,
+        lateCount: 0,
+        staff: [
+          StaffNow(userId: 'u-1', fullName: 'Иванова Дилноза', status: 'present'),
+        ],
+      );
 
   @override
   Future<Page<AttendanceEvent>> events({

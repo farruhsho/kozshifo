@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # Endpoints answer 503 while the key is unset (integration disabled).
     attendance_api_key: str | None = None  # Face ID terminal -> POST /attendance/punch
     pbx_api_key: str | None = None  # PBX/Asterisk -> POST /calls/ingest
+    # Hikvision face terminal -> POST /access-control/event/{token}. The secret
+    # lives in the push URL (the device can't set custom auth headers). Unset =
+    # webhook answers 503 (integration disabled). See features/access_control.
+    hikvision_event_token: str | None = None
+    # Optional source-IP allowlist for the webhook (device LAN IPs). Empty =
+    # accept any source that knows the token.
+    hikvision_allowed_ips: list[str] = []
     # Workday start "HH:MM" (clinic local time) — first punch-in after this is "late".
     work_day_start: str = "09:00"
 
@@ -53,9 +60,9 @@ class Settings(BaseSettings):
     seed_director_password: str = _DEV_DIRECTOR_PASSWORD
     seed_on_startup: bool = True
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", "hikvision_allowed_ips", mode="before")
     @classmethod
-    def _split_origins(cls, v: object) -> object:
+    def _split_csv(cls, v: object) -> object:
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v

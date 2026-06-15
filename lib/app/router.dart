@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/widgets/app_shell.dart';
+import '../features/access_control/presentation/access_control_screen.dart';
 import '../features/admin/presentation/admin_screen.dart';
 import '../features/attendance/presentation/attendance_screen.dart';
 import '../features/auth/application/auth_controller.dart';
@@ -46,6 +47,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(path: '/calls', builder: (_, _) => const CallsScreen()),
           GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
           GoRoute(path: '/inventory', builder: (_, _) => const InventoryScreen()),
+          GoRoute(
+              path: '/access-control',
+              builder: (_, _) => const AccessControlScreen()),
           GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
         ],
       ),

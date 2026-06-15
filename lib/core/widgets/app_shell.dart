@@ -75,7 +75,7 @@ const kAppDestinations = <AppDestination>[
   AppDestination(
     Icons.badge_outlined,
     Icons.badge,
-    'Учёт времени',
+    'Сотрудники',
     '/attendance',
     permissions: ['attendance.read'],
   ),
@@ -99,6 +99,13 @@ const kAppDestinations = <AppDestination>[
     'Склад',
     '/inventory',
     permissions: ['inventory.read'],
+  ),
+  AppDestination(
+    Icons.face_outlined,
+    Icons.face,
+    'Face ID',
+    '/access-control',
+    permissions: ['access_control.read'],
   ),
   AppDestination(
     Icons.settings_outlined,

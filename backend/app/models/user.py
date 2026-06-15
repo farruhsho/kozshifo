@@ -28,6 +28,13 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # Payroll (TZ Modul 8): doctor's cut of revenue from their visits, in
     # percent. NULL = not on percent-based pay.
     salary_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # Face ID / access control: this staff member's person id on the Hikvision
+    # terminal(s). The mapping key between a recognition event (employeeNoString)
+    # and our user. NULL = not enrolled on any terminal. See
+    # docs/INTEGRATIONS_HIKVISION.md and features/access_control.py.
+    faceid_employee_no: Mapped[str | None] = mapped_column(
+        String(32), unique=True, index=True, nullable=True
+    )
 
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles, back_populates="users", lazy="selectin"

@@ -9,6 +9,7 @@ import '../../auth/application/auth_controller.dart';
 import '../data/attendance_repository.dart';
 import '../domain/attendance_event.dart';
 import '../domain/attendance_report.dart';
+import '../domain/attendance_status.dart';
 
 /// «Xч Yм» из минут табеля (worked_minutes / total_minutes).
 String formatMinutes(int minutes) => '${minutes ~/ 60}ч ${minutes % 60}м';
@@ -33,6 +34,10 @@ String _dayLabel(String day) {
 
 enum _QuickPeriod { today, week, month }
 
+/// «Сейчас» — живой контроль сотрудников; «Табель» — отчёт за период;
+/// «Журнал» — сырые отметки.
+enum _View { now, timesheet, journal }
+
 /// Учёт рабочего времени (Face ID): табель посещаемости + сырой журнал
 /// отметок + ручные коррекции (attendance.manage) + экспорт CSV.
 class AttendanceScreen extends ConsumerStatefulWidget {
@@ -45,7 +50,7 @@ class AttendanceScreen extends ConsumerStatefulWidget {
 class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   _QuickPeriod? _quick = _QuickPeriod.week;
   late DateTimeRange _range = _rangeFor(_QuickPeriod.week);
-  bool _journal = false;
+  _View _view = _View.now;
   bool _exporting = false;
   // Смена ключа пересоздаёт журнал после ручной отметки (он копит страницы).
   int _logTick = 0;
@@ -116,6 +121,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
     if (ok == true && mounted) {
       ref.invalidate(attendanceReportProvider);
+      ref.invalidate(attendanceStatusProvider);
       setState(() => _logTick++);
       _snack('Отметка добавлена');
     }
@@ -127,20 +133,29 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final canManage = user?.can('attendance.manage') ?? false;
     final period = _period;
 
+    final showPeriod = _view != _View.now;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Учёт времени'),
+        title: const Text('Сотрудники'),
         actions: [
-          IconButton(
-            tooltip: 'Экспорт CSV (Excel)',
-            onPressed: _exporting ? null : _exportCsv,
-            icon: _exporting
-                ? const SizedBox(
-                    height: 18,
-                    width: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.download_outlined),
-          ),
+          if (_view == _View.now)
+            IconButton(
+              tooltip: 'Обновить',
+              onPressed: () => ref.invalidate(attendanceStatusProvider),
+              icon: const Icon(Icons.refresh),
+            )
+          else
+            IconButton(
+              tooltip: 'Экспорт CSV (Excel)',
+              onPressed: _exporting ? null : _exportCsv,
+              icon: _exporting
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.download_outlined),
+            ),
         ],
       ),
       floatingActionButton: canManage
@@ -160,64 +175,226 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                ChoiceChip(
-                  label: const Text('Сегодня'),
-                  selected: _quick == _QuickPeriod.today,
-                  onSelected: (_) => setState(() {
-                    _quick = _QuickPeriod.today;
-                    _range = _rangeFor(_QuickPeriod.today);
-                  }),
-                ),
-                ChoiceChip(
-                  label: const Text('Неделя'),
-                  selected: _quick == _QuickPeriod.week,
-                  onSelected: (_) => setState(() {
-                    _quick = _QuickPeriod.week;
-                    _range = _rangeFor(_QuickPeriod.week);
-                  }),
-                ),
-                ChoiceChip(
-                  label: const Text('Месяц'),
-                  selected: _quick == _QuickPeriod.month,
-                  onSelected: (_) => setState(() {
-                    _quick = _QuickPeriod.month;
-                    _range = _rangeFor(_QuickPeriod.month);
-                  }),
-                ),
-                ActionChip(
-                  avatar: const Icon(Icons.calendar_month_outlined, size: 18),
-                  label: Text(_quick == null
-                      ? '${_ruDate.format(_range.start)} — ${_ruDate.format(_range.end)}'
-                      : 'Период…'),
-                  onPressed: _pickCustomRange,
-                ),
-                SegmentedButton<bool>(
+                SegmentedButton<_View>(
                   showSelectedIcon: false,
                   segments: const [
                     ButtonSegment(
-                        value: false,
+                        value: _View.now,
+                        label: Text('Сейчас'),
+                        icon: Icon(Icons.groups_outlined)),
+                    ButtonSegment(
+                        value: _View.timesheet,
                         label: Text('Табель'),
                         icon: Icon(Icons.table_chart_outlined)),
                     ButtonSegment(
-                        value: true,
+                        value: _View.journal,
                         label: Text('Журнал'),
                         icon: Icon(Icons.list_alt_outlined)),
                   ],
-                  selected: {_journal},
-                  onSelectionChanged: (s) =>
-                      setState(() => _journal = s.first),
+                  selected: {_view},
+                  onSelectionChanged: (s) => setState(() => _view = s.first),
                 ),
+                if (showPeriod) ...[
+                  ChoiceChip(
+                    label: const Text('Сегодня'),
+                    selected: _quick == _QuickPeriod.today,
+                    onSelected: (_) => setState(() {
+                      _quick = _QuickPeriod.today;
+                      _range = _rangeFor(_QuickPeriod.today);
+                    }),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Неделя'),
+                    selected: _quick == _QuickPeriod.week,
+                    onSelected: (_) => setState(() {
+                      _quick = _QuickPeriod.week;
+                      _range = _rangeFor(_QuickPeriod.week);
+                    }),
+                  ),
+                  ChoiceChip(
+                    label: const Text('Месяц'),
+                    selected: _quick == _QuickPeriod.month,
+                    onSelected: (_) => setState(() {
+                      _quick = _QuickPeriod.month;
+                      _range = _rangeFor(_QuickPeriod.month);
+                    }),
+                  ),
+                  ActionChip(
+                    avatar: const Icon(Icons.calendar_month_outlined, size: 18),
+                    label: Text(_quick == null
+                        ? '${_ruDate.format(_range.start)} — ${_ruDate.format(_range.end)}'
+                        : 'Период…'),
+                    onPressed: _pickCustomRange,
+                  ),
+                ],
               ],
             ),
           ),
           Expanded(
-            child: _journal
-                ? _EventLogView(
-                    key: ValueKey('log-${period.from}-${period.to}-$_logTick'),
-                    period: period)
-                : _TimesheetView(period: period),
+            child: switch (_view) {
+              _View.now => const _StaffNowView(),
+              _View.timesheet => _TimesheetView(period: period),
+              _View.journal => _EventLogView(
+                  key: ValueKey('log-${period.from}-${period.to}-$_logTick'),
+                  period: period),
+            },
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ═══ Сейчас (живой контроль) ═════════════════════════════════════════════════
+
+/// Контроль-центр директора: кто на работе прямо сейчас, опоздания, часы за
+/// сегодня и состояние Face ID-интеграции.
+class _StaffNowView extends ConsumerWidget {
+  const _StaffNowView();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status = ref.watch(attendanceStatusProvider);
+    final scheme = Theme.of(context).colorScheme;
+
+    return AsyncValueWidget<AttendanceStatus>(
+      value: status,
+      onRetry: () => ref.invalidate(attendanceStatusProvider),
+      builder: (s) {
+        return RefreshIndicator(
+          onRefresh: () async => ref.invalidate(attendanceStatusProvider),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 88),
+            children: [
+              _faceIdBanner(context, s.integrationEnabled),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _countChip(context, 'На работе', s.presentCount, Colors.green),
+                  _countChip(context, 'Ушли', s.leftCount, scheme.outline),
+                  _countChip(context, 'Отсутствуют', s.absentCount,
+                      s.absentCount > 0 ? scheme.error : scheme.outline),
+                  _countChip(context, 'Опоздали', s.lateCount,
+                      s.lateCount > 0 ? Colors.orange : scheme.outline),
+                  Chip(
+                    avatar: const Icon(Icons.schedule_outlined, size: 18),
+                    label: Text('Начало дня: ${s.workDayStart}'),
+                    visualDensity: VisualDensity.compact,
+                    side: BorderSide.none,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (s.staff.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: Text('Сотрудников нет.')),
+                )
+              else
+                for (final m in s.staff) _StaffNowTile(member: m),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _faceIdBanner(BuildContext context, bool enabled) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      color: enabled ? scheme.secondaryContainer : scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Icon(enabled ? Icons.verified_user_outlined : Icons.report_gmailerrorred_outlined,
+                color: enabled ? scheme.onSecondaryContainer : scheme.onErrorContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                enabled
+                    ? 'Face ID подключён — терминал отмечает приход/уход автоматически.'
+                    : 'Face ID не настроен — отметки только вручную. '
+                        'Подключите терминал (ключ HIKVISION_EVENT_TOKEN).',
+                style: TextStyle(
+                  color: enabled
+                      ? scheme.onSecondaryContainer
+                      : scheme.onErrorContainer,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _countChip(BuildContext context, String label, int n, Color color) {
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      side: BorderSide(color: color.withValues(alpha: 0.4)),
+      label: Text('$label: $n',
+          style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+class _StaffNowTile extends StatelessWidget {
+  const _StaffNowTile({required this.member});
+
+  final StaffNow member;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final (label, color, icon) = switch (member.status) {
+      'present' => ('на работе', Colors.green, Icons.login),
+      'left' => ('ушёл', scheme.outline, Icons.logout),
+      _ => ('отсутствует', scheme.error, Icons.remove_circle_outline),
+    };
+    final subtitle = StringBuffer();
+    if (member.firstIn != null) subtitle.write('приход ${_timeLabel(member.firstIn)}');
+    if (member.workedMinutes > 0) {
+      if (subtitle.isNotEmpty) subtitle.write(' · ');
+      subtitle.write(formatMinutes(member.workedMinutes));
+    }
+    if (subtitle.isEmpty) subtitle.write('нет отметок сегодня');
+
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: color.withValues(alpha: 0.15),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        title: Text(member.fullName),
+        subtitle: Text(
+          member.role == null ? subtitle.toString() : '${member.role} · $subtitle',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        trailing: Wrap(
+          spacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (member.late)
+              Chip(
+                visualDensity: VisualDensity.compact,
+                backgroundColor: Colors.orange.withValues(alpha: 0.15),
+                side: BorderSide.none,
+                label: const Text('опоздание',
+                    style: TextStyle(color: Colors.orange, fontSize: 12)),
+              ),
+            Chip(
+              visualDensity: VisualDensity.compact,
+              backgroundColor: color.withValues(alpha: 0.12),
+              side: BorderSide.none,
+              label: Text(label, style: TextStyle(color: color, fontSize: 12)),
+            ),
+          ],
+        ),
       ),
     );
   }

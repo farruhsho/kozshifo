@@ -2,17 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../core/network/api_exception.dart';
+import '../../../core/theme/app_colors.dart';
+import '../../../core/theme/app_typography.dart';
 import '../../../core/utils/formatters.dart';
-import '../../../core/widgets/async_value_widget.dart';
+import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../clinical/data/clinical_repository.dart';
 import '../../clinical/domain/operation.dart';
 
 final _dateTime = DateFormat('dd.MM.yyyy HH:mm');
 
-/// Раздел «Операции» (TZ Modul 6) — рабочий список операционного отделения.
-/// Ресепшен планирует направленные операции (дата/цена), врач-хирург начинает,
-/// выполняет (списание расходников) и завершает их.
+/// Раздел «Операции» (TZ Modul 6) — рабочий список операционного отделения в
+/// дизайн-системе Clinic OS. Ресепшен планирует направленные операции
+/// (дата/цена), врач-хирург начинает, выполняет (списание расходников) и
+/// завершает их.
 class OperationsScreen extends ConsumerStatefulWidget {
   const OperationsScreen({super.key});
 
@@ -49,6 +53,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
         canSchedule || (user?.can('operations.prescribe') ?? false);
 
     return Scaffold(
+      backgroundColor: AppColors.bg,
       appBar: AppBar(
         title: const Text('Операции'),
         actions: [
@@ -59,48 +64,157 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
           ),
         ],
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Wrap(
-              spacing: 8,
-              children: [
-                for (final (label, value) in _tabs)
-                  ChoiceChip(
-                    label: Text(label),
-                    selected: _status == value,
-                    onSelected: (_) => setState(() => _status = value),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _hero(operations.asData?.value.length),
+              const SizedBox(height: 16),
+              _filterChips(),
+              const SizedBox(height: 16),
+              operations.when(
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 48),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (e, _) => AppCard(
+                  child: Center(
+                    child: Text(e is ApiException ? e.message : '$e',
+                        style: const TextStyle(color: AppColors.red)),
                   ),
+                ),
+                data: (items) {
+                  if (items.isEmpty) {
+                    return const AppCard(
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(vertical: 28),
+                        child: Center(child: Text('Операций нет')),
+                      ),
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final op in items)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _OperationCard(
+                            op: op,
+                            canSchedule: canSchedule,
+                            canPerform: canPerform,
+                            canCancel: canCancel,
+                            onChanged: _reload,
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _hero(int? count) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: AppColors.sidebarGradient,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.healing_outlined,
+              size: 34, color: AppColors.mintLight),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Операционное отделение',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18)),
+                const SizedBox(height: 4),
+                Text('Направления, планирование и выполнение операций',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: AppColors.mintLight.withValues(alpha: 0.9),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13.5)),
               ],
             ),
           ),
-          Expanded(
-            child: AsyncValueWidget<List<Operation>>(
-              value: operations,
-              onRetry: () =>
-                  ref.invalidate(operationsWorklistProvider(_status)),
-              builder: (items) {
-                if (items.isEmpty) {
-                  return const Center(child: Text('Операций нет.'));
-                }
-                return ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: items.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
-                  itemBuilder: (_, i) => _OperationCard(
-                    op: items[i],
-                    canSchedule: canSchedule,
-                    canPerform: canPerform,
-                    canCancel: canCancel,
-                    onChanged: _reload,
-                  ),
-                );
-              },
+          if (count != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text('$count',
+                  style: AppTypography.number(22, color: Colors.white)),
             ),
-          ),
         ],
+      ),
+    );
+  }
+
+  Widget _filterChips() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final (label, value) in _tabs)
+          _FilterChip(
+            label: label,
+            selected: _status == value,
+            onTap: () => setState(() => _status = value),
+          ),
+      ],
+    );
+  }
+}
+
+/// Pill-style filter chip in the brand teal (selected) / hairline (idle).
+class _FilterChip extends StatelessWidget {
+  const _FilterChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? AppColors.tealDark : AppColors.card,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+                color: selected ? AppColors.tealDark : AppColors.line),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: selected ? Colors.white : AppColors.sub,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13)),
+        ),
       ),
     );
   }
@@ -121,18 +235,28 @@ class _OperationCard extends ConsumerWidget {
   final bool canCancel;
   final VoidCallback onChanged;
 
+  static String _initials(String name) {
+    final words =
+        name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.isEmpty) return '—';
+    final buf = StringBuffer();
+    for (final w in words.take(2)) {
+      buf.write(w.characters.first);
+    }
+    return buf.toString().toUpperCase();
+  }
+
+  BadgeKind get _kind => switch (op.status) {
+        'referred' => BadgeKind.info,
+        'scheduled' => BadgeKind.warning,
+        'in_progress' => BadgeKind.info,
+        'performed' || 'completed' => BadgeKind.success,
+        _ => BadgeKind.neutral,
+      };
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final statusColor = switch (op.status) {
-      'referred' => Colors.blue,
-      'scheduled' => Colors.orange,
-      'in_progress' => Colors.purple,
-      'performed' || 'completed' => Colors.green,
-      _ => Colors.grey,
-    };
     final scheduled = DateTime.tryParse(op.scheduledAt ?? '')?.toLocal();
-
     final meta = <String>[
       op.eyeLabel,
       if (scheduled != null) _dateTime.format(scheduled),
@@ -140,97 +264,114 @@ class _OperationCard extends ConsumerWidget {
       if (op.surgeonName != null) 'Хирург: ${op.surgeonName}',
     ];
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(op.patientName,
-                      style: theme.textTheme.titleMedium,
-                      overflow: TextOverflow.ellipsis),
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              InitialsAvatar(_initials(op.patientName)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(op.patientName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 15)),
+                    const SizedBox(height: 2),
+                    Text(op.typeName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: AppColors.sub, fontSize: 13)),
+                  ],
                 ),
-                if (op.isUrgent)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Chip(
-                      label: const Text('срочная'),
-                      visualDensity: VisualDensity.compact,
-                      backgroundColor: Colors.red.withValues(alpha: 0.12),
-                      labelStyle:
-                          const TextStyle(color: Colors.red, fontSize: 12),
-                      side: BorderSide.none,
-                    ),
-                  ),
-                Chip(
-                  label: Text(op.statusLabel),
-                  backgroundColor: statusColor.withValues(alpha: 0.15),
-                  labelStyle: TextStyle(color: statusColor),
-                  side: BorderSide.none,
-                ),
+              ),
+              const SizedBox(width: 8),
+              if (op.isUrgent) ...[
+                const Pill(
+                    label: 'срочно', color: AppColors.red, bg: AppColors.redBg),
+                const SizedBox(width: 6),
               ],
-            ),
-            const SizedBox(height: 4),
-            Text(op.typeName, style: theme.textTheme.bodyLarge),
-            const SizedBox(height: 4),
-            Text(meta.join(' · '), style: theme.textTheme.bodySmall),
-            if (op.notes != null && op.notes!.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(op.notes!, style: theme.textTheme.bodySmall),
+              StatusBadge(op.statusLabel, kind: _kind),
             ],
-            const SizedBox(height: 8),
+          ),
+          const SizedBox(height: 10),
+          Text(meta.join('  ·  '),
+              style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
+          if (op.notes != null && op.notes!.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(op.notes!,
+                style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
+          ],
+          if (_hasActions) ...[
+            const SizedBox(height: 14),
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: _actions(context, ref),
             ),
           ],
-        ),
+        ],
       ),
     );
   }
 
+  bool get _hasActions =>
+      (canSchedule && (op.isReferred || op.isScheduled)) ||
+      (canPerform && (op.isScheduled || op.isInProgress || op.isPerformed)) ||
+      (canCancel && op.isOpen);
+
   List<Widget> _actions(BuildContext context, WidgetRef ref) {
     final widgets = <Widget>[];
-    if (canSchedule && (op.isReferred || op.isScheduled)) {
-      widgets.add(FilledButton.tonal(
-        onPressed: () => _schedule(context, ref),
-        child: Text(op.isReferred ? 'Запланировать' : 'Изменить'),
-      ));
-    }
+
+    // Secondary actions first (left), primary gradient CTA last (right).
     if (canPerform && op.isScheduled) {
-      widgets.add(TextButton(
-        onPressed: () => _act(context, ref,
-            (r) => r.startOperation(op.id), 'Операция начата'),
-        child: const Text('Начать'),
-      ));
+      widgets.add(_secondary(
+          'Начать',
+          () => _run(context, ref, (r) => r.startOperation(op.id),
+              'Операция начата')));
     }
-    if (canPerform && (op.isScheduled || op.isInProgress)) {
-      widgets.add(FilledButton(
-        onPressed: () => _perform(context, ref),
-        child: const Text('Выполнить'),
-      ));
-    }
-    if (canPerform && op.isPerformed) {
-      widgets.add(FilledButton(
-        onPressed: () => _complete(context, ref),
-        child: const Text('Завершить'),
-      ));
+    if (canSchedule && op.isScheduled) {
+      widgets.add(_secondary('Изменить', () => _schedule(context, ref)));
     }
     if (canCancel && op.isOpen) {
-      widgets.add(TextButton(
-        onPressed: () => _act(
-            context, ref, (r) => r.cancelOperation(op.id), 'Операция отменена'),
-        child: const Text('Отменить'),
-      ));
+      widgets.add(_secondary(
+          'Отменить',
+          () => _run(context, ref, (r) => r.cancelOperation(op.id),
+              'Операция отменена')));
+    }
+
+    // Primary CTA for the current state.
+    if (canSchedule && op.isReferred) {
+      widgets.add(_primary('Запланировать', () => _schedule(context, ref)));
+    } else if (canPerform && (op.isScheduled || op.isInProgress)) {
+      widgets.add(_primary('Выполнить', () => _perform(context, ref)));
+    } else if (canPerform && op.isPerformed) {
+      widgets.add(_primary('Завершить', () => _complete(context, ref)));
     }
     return widgets;
   }
 
-  Future<void> _act(
+  Widget _primary(String label, VoidCallback onPressed) => SizedBox(
+        width: 150,
+        child: GradientButton(label: label, height: 40, onPressed: onPressed),
+      );
+
+  Widget _secondary(String label, VoidCallback onPressed) => TextButton(
+        onPressed: onPressed,
+        style: TextButton.styleFrom(foregroundColor: AppColors.tealDark),
+        child: Text(label),
+      );
+
+  Future<void> _run(
     BuildContext context,
     WidgetRef ref,
     Future<Operation> Function(ClinicalRepository) call,
@@ -242,7 +383,9 @@ class _OperationCard extends ConsumerWidget {
       onChanged();
       _snack(context, okMessage);
     } catch (e) {
-      if (context.mounted) _snack(context, e.toString(), error: true);
+      if (context.mounted) {
+        _snack(context, e is ApiException ? e.message : '$e', error: true);
+      }
     }
   }
 
@@ -271,7 +414,7 @@ class _OperationCard extends ConsumerWidget {
       ),
     );
     if (ok != true || !context.mounted) return;
-    await _act(context, ref, (r) => r.performOperation(op.id),
+    await _run(context, ref, (r) => r.performOperation(op.id),
         'Операция выполнена, расходники списаны');
   }
 
@@ -299,7 +442,7 @@ class _OperationCard extends ConsumerWidget {
     );
     if (ok != true || !context.mounted) return;
     final result = controller.text.trim();
-    await _act(
+    await _run(
       context,
       ref,
       (r) => r.completeOperation(op.id, result: result.isEmpty ? null : result),
@@ -310,7 +453,7 @@ class _OperationCard extends ConsumerWidget {
   void _snack(BuildContext context, String message, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(message),
-      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+      backgroundColor: error ? AppColors.red : null,
     ));
   }
 }
@@ -374,7 +517,8 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
     if (date == null) return;
     setState(() => _saving = true);
     // Local wall-clock -> UTC ISO so the server stores an absolute instant.
-    final dt = DateTime(date.year, date.month, date.day, _time.hour, _time.minute);
+    final dt =
+        DateTime(date.year, date.month, date.day, _time.hour, _time.minute);
     final price = _price.text.trim();
     final notes = _notes.text.trim();
     try {
@@ -389,8 +533,8 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.toString()),
-          backgroundColor: Theme.of(context).colorScheme.error,
+          content: Text(e is ApiException ? e.message : '$e'),
+          backgroundColor: AppColors.red,
         ));
       }
     }
@@ -398,12 +542,13 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final dateLabel =
-        _date == null ? 'Выбрать дату' : DateFormat('dd.MM.yyyy').format(_date!);
+    final dateLabel = _date == null
+        ? 'Выбрать дату'
+        : DateFormat('dd.MM.yyyy').format(_date!);
     return AlertDialog(
       title: Text('Планирование: ${widget.op.typeName}'),
       content: SizedBox(
-        width: 420,
+        width: 440,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -432,6 +577,7 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
               controller: _price,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
+                isDense: true,
                 labelText: 'Цена',
                 helperText: 'Пусто — цена из каталога',
               ),
@@ -440,8 +586,8 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
             TextField(
               controller: _notes,
               maxLines: 2,
-              decoration:
-                  const InputDecoration(labelText: 'Примечание (необязательно)'),
+              decoration: const InputDecoration(
+                  isDense: true, labelText: 'Примечание (необязательно)'),
             ),
           ],
         ),

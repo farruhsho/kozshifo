@@ -14,8 +14,12 @@ from app.models.base import TimestampMixin, UUIDPKMixin
 class Patient(UUIDPKMixin, TimestampMixin, Base):
     __tablename__ = "patients"
 
-    # Medical Record Number — human-facing patient card identifier.
+    # Medical Record Number — internal patient card identifier (e.g. P-000123).
     mrn: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    # Public 8-digit patient number (e.g. 00000123) — the human-facing ID shown
+    # on receipts / queue / search. Generated alongside mrn; nullable only so the
+    # additive migration can backfill existing rows (the app always sets it).
+    patient_no: Mapped[str | None] = mapped_column(String(8), unique=True, index=True, nullable=True)
     first_name: Mapped[str] = mapped_column(String(128), nullable=False)
     last_name: Mapped[str] = mapped_column(String(128), nullable=False)
     middle_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -33,6 +37,7 @@ class Patient(UUIDPKMixin, TimestampMixin, Base):
     lead_source: Mapped[str | None] = mapped_column(String(16), index=True, nullable=True)
     # Form 025-8 cover (DOMAIN.md §2.1): place of work/study + dispensary follow-up.
     workplace: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    study_place: Mapped[str | None] = mapped_column(String(255), nullable=True)  # «Учёба»
     profession: Mapped[str | None] = mapped_column(String(128), nullable=True)
     dispensary_here: Mapped[str | None] = mapped_column(String(255), nullable=True)
     dispensary_other: Mapped[str | None] = mapped_column(String(255), nullable=True)

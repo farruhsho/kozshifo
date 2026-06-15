@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
+import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
 import '../data/dashboard_repository.dart';
 import '../domain/dashboard_summary.dart';
@@ -81,14 +84,11 @@ class _InsightsPanel extends ConsumerWidget {
           builder: (items) {
             if (items.isEmpty) {
               return Card(
-                color: Colors.green.shade50,
-                child: ListTile(
-                  leading: Icon(Icons.check_circle_outline,
-                      color: Colors.green.shade700),
+                color: AppColors.greenBg,
+                child: const ListTile(
+                  leading: Icon(Icons.check_circle_outline, color: AppColors.green),
                   title: Text('Всё в порядке — критичных сигналов нет',
-                      style: TextStyle(
-                          color: Colors.green.shade800,
-                          fontWeight: FontWeight.w600)),
+                      style: TextStyle(color: AppColors.green, fontWeight: FontWeight.w600)),
                 ),
               );
             }
@@ -116,8 +116,8 @@ class _InsightCard extends StatelessWidget {
     final (IconData icon, Color color) = insight.isCritical
         ? (Icons.error_outline, scheme.error)
         : insight.isWarning
-            ? (Icons.warning_amber_outlined, Colors.amber.shade800)
-            : (Icons.info_outline, Colors.blue.shade700);
+            ? (Icons.warning_amber_outlined, AppColors.amber)
+            : (Icons.info_outline, AppColors.blue);
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
@@ -145,43 +145,44 @@ class _KpiGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    void go(String r) => context.go(r);
     final cards = <Widget>[
-      _KpiCard(label: 'Выручка сегодня', value: formatMoney(data.revenueToday),
-          icon: Icons.payments_outlined, accent: true),
-      _KpiCard(label: 'Выручка за месяц', value: formatMoney(data.revenueMonth),
-          icon: Icons.calendar_month_outlined),
-      _KpiCard(label: 'Средний чек', value: formatMoney(data.averageCheckToday),
-          icon: Icons.receipt_long_outlined),
-      _KpiCard(label: 'Оплат сегодня', value: formatInt(data.paymentsToday),
-          icon: Icons.point_of_sale_outlined),
-      _KpiCard(label: 'Визитов сегодня', value: formatInt(data.visitsToday),
-          icon: Icons.event_available_outlined),
-      _KpiCard(label: 'Новых пациентов', value: formatInt(data.newPatientsToday),
-          icon: Icons.person_add_alt_outlined),
-      _KpiCard(label: 'Всего пациентов', value: formatInt(data.patientsTotal),
-          icon: Icons.groups_outlined),
-      _KpiCard(label: 'В очереди', value: formatInt(data.queueWaiting),
-          icon: Icons.queue_outlined),
-      _KpiCard(label: 'Операций сегодня', value: formatInt(data.operationsToday),
-          icon: Icons.medical_services_outlined),
-      _KpiCard(label: 'Операций за месяц', value: formatInt(data.operationsMonth),
-          icon: Icons.event_repeat_outlined),
-      _KpiCard(label: 'Дефицит склада', value: formatInt(data.lowStockCount),
-          icon: Icons.warning_amber_outlined, accent: data.lowStockCount > 0),
-      _KpiCard(label: 'Партии: срок ≤30 дней', value: formatInt(data.expiringSoonCount),
-          icon: Icons.hourglass_bottom_outlined),
+      KpiCard(label: 'Выручка сегодня', value: formatMoney(data.revenueToday),
+          iconKey: 'finance', accent: true, onTap: () => go('/finance')),
+      KpiCard(label: 'Выручка за месяц', value: formatMoney(data.revenueMonth),
+          iconKey: 'schedule', onTap: () => go('/finance')),
+      KpiCard(label: 'Средний чек', value: formatMoney(data.averageCheckToday),
+          iconKey: 'analytics'),
+      KpiCard(label: 'Оплат сегодня', value: formatInt(data.paymentsToday),
+          iconKey: 'finance', onTap: () => go('/finance')),
+      KpiCard(label: 'Визитов сегодня', value: formatInt(data.visitsToday),
+          iconKey: 'reception'),
+      KpiCard(label: 'Новых пациентов', value: formatInt(data.newPatientsToday),
+          iconKey: 'patients', onTap: () => go('/patients')),
+      KpiCard(label: 'Всего пациентов', value: formatInt(data.patientsTotal),
+          iconKey: 'patients', onTap: () => go('/patients')),
+      KpiCard(label: 'В очереди', value: formatInt(data.queueWaiting),
+          iconKey: 'queue', onTap: () => go('/queue')),
+      KpiCard(label: 'Операций сегодня', value: formatInt(data.operationsToday),
+          iconKey: 'worklist'),
+      KpiCard(label: 'Операций за месяц', value: formatInt(data.operationsMonth),
+          iconKey: 'worklist'),
+      KpiCard(label: 'Дефицит склада', value: formatInt(data.lowStockCount),
+          iconKey: 'inventory', onTap: () => go('/inventory')),
+      KpiCard(label: 'Партии: срок ≤30 дней', value: formatInt(data.expiringSoonCount),
+          iconKey: 'inventory', onTap: () => go('/inventory')),
     ];
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = (constraints.maxWidth / 260).floor().clamp(1, 4);
+        final columns = (constraints.maxWidth / 250).floor().clamp(1, 4);
         return GridView.count(
           crossAxisCount: columns,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           mainAxisSpacing: 16,
           crossAxisSpacing: 16,
-          childAspectRatio: 1.9,
+          childAspectRatio: 1.55,
           children: cards,
         );
       },
@@ -302,50 +303,4 @@ class _LeadSourceBar extends StatelessWidget {
   }
 }
 
-class _KpiCard extends StatelessWidget {
-  const _KpiCard({required this.label, required this.value, required this.icon, this.accent = false});
-
-  final String label;
-  final String value;
-  final IconData icon;
-  final bool accent;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final bg = accent ? scheme.primaryContainer : scheme.surfaceContainerHighest;
-    final fg = accent ? scheme.onPrimaryContainer : scheme.onSurface;
-    return Card(
-      color: bg,
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                Icon(icon, color: fg.withValues(alpha: 0.8), size: 22),
-                const Spacer(),
-              ],
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: fg, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text(label,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: fg.withValues(alpha: 0.75))),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// KPI tiles now use the shared KpiCard widget (lib/core/widgets/koz_widgets.dart).

@@ -13,6 +13,7 @@ like a phone number we additionally match with every non-digit stripped.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -30,6 +31,16 @@ router = APIRouter(tags=["Search"])
 
 # A query made only of digits, '+', spaces, dashes or parentheses is a phone.
 _PHONEISH = re.compile(r"[\d+\s\-()]+")
+
+
+def _parse_date(term: str) -> date | None:
+    """Recognise a birth-date query in DD.MM.YYYY or YYYY-MM-DD form."""
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(term, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 @router.get("/search", response_model=SearchOut)
@@ -51,13 +62,18 @@ def global_search(
     patient_clauses = [
         Patient.first_name.ilike(like),
         Patient.last_name.ilike(like),
+        Patient.middle_name.ilike(like),
         Patient.mrn.ilike(like),
+        Patient.patient_no.ilike(like),  # public 8-digit ID
         Patient.phone.ilike(like),
     ]
     if _PHONEISH.fullmatch(term):
         digits = re.sub(r"\D", "", term)
         if digits:  # «+998 90 123» must find «+998901234567»
             patient_clauses.append(Patient.phone.ilike(f"%{digits}%"))
+    dob = _parse_date(term)
+    if dob is not None:  # search by birth date (12.05.1990 or 1990-05-12)
+        patient_clauses.append(Patient.birth_date == dob)
     patients = db.execute(
         select(Patient)
         .where(or_(*patient_clauses))

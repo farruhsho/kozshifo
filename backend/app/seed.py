@@ -88,25 +88,35 @@ def _seed_director(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
 # Demo staff — ONE account per role for trying the system. DEV ONLY: these
 # well-known passwords must never exist in production (there the owner creates
 # staff through the /admin screen with real passwords).
-_DEMO_STAFF: list[tuple[str, str, str, str]] = [
-    # (email, full_name, password, role)
-    ("vrach@kozshifo.uz", "Доктор Исмоилов А.А.", "Vrach!2026", "Doctor"),
-    ("reception@kozshifo.uz", "Регистратор Юлдашева Н.", "Reception!2026", "Reception"),
-    ("kassa@kozshifo.uz", "Кассир Каримов Ш.", "Kassa!2026", "Cashier"),
-    ("sklad@kozshifo.uz", "Завсклад Турсунов Б.", "Sklad!2026", "Warehouse"),
+#
+# Per the owner's model the front desk (Reception) also runs the till (касса)
+# and the warehouse (склад) — so the Reception account/login covers all three,
+# and the quick-login screen shows no separate касса/склад buttons. The narrower
+# Cashier/Warehouse accounts stay seeded (dynamic roles for a split-duty clinic,
+# and the finance tests log in as them). The Superadmin account is the owner's
+# god-account (is_superuser) for observing and managing everything.
+_DEMO_STAFF: list[tuple[str, str, str, str, bool]] = [
+    # (email, full_name, password, role, is_superuser)
+    ("superadmin@kozshifo.uz", "Суперадмин (владелец)", "Superadmin!2026", "Superadmin", True),
+    ("vrach@kozshifo.uz", "Доктор Исмоилов А.А.", "Vrach!2026", "Doctor", False),
+    ("reception@kozshifo.uz", "Регистратор Юлдашева Н.", "Reception!2026", "Reception", False),
+    ("diagnost@kozshifo.uz", "Диагност Рахимова М.", "Diagnost!2026", "Diagnost", False),
+    ("kassa@kozshifo.uz", "Кассир Каримов Ш.", "Kassa!2026", "Cashier", False),
+    ("sklad@kozshifo.uz", "Завсклад Турсунов Б.", "Sklad!2026", "Warehouse", False),
 ]
 
 
 def _seed_demo_staff(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
     if settings.environment != "development":
         return
-    for email, full_name, password, role_name in _DEMO_STAFF:
+    for email, full_name, password, role_name, is_superuser in _DEMO_STAFF:
         if db.execute(select(User).where(User.email == email)).scalar_one_or_none() is None:
             user = User(
                 email=email,
                 full_name=full_name,
                 hashed_password=hash_password(password),
                 branch_id=branch.id,
+                is_superuser=is_superuser,
             )
             user.roles = [roles[role_name]]
             db.add(user)

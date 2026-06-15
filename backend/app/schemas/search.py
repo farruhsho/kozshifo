@@ -16,6 +16,7 @@ class SearchPatient(BaseModel):
 
     id: UUID
     mrn: str
+    patient_no: str | None
     full_name: str
     phone: str | None
 

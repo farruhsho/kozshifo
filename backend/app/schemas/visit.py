@@ -44,6 +44,13 @@ class VisitDiscountApply(BaseModel):
         return self
 
 
+class VisitPriorityApply(BaseModel):
+    """Reception EMERGENCY toggle. emergency=true needs a reason (analytics)."""
+
+    emergency: bool = True
+    reason: str | None = Field(None, max_length=128)
+
+
 class VisitCreate(BaseModel):
     patient_id: UUID
     branch_id: UUID
@@ -88,6 +95,9 @@ class VisitOut(BaseModel):
     discount_value: Decimal
     payable: Decimal
     balance: Decimal
+    # Emergency intake: priority>0 + reason (reception «ЭКСТРЕННО»).
+    priority: int
+    priority_reason: str | None
     notes: str | None
     opened_at: datetime
     closed_at: datetime | None

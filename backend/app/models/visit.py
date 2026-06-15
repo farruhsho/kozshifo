@@ -49,6 +49,11 @@ class Visit(UUIDPKMixin, TimestampMixin, Base):
     discount_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     discount_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     discount_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Emergency / priority intake (reception «ЭКСТРЕННО»). priority>0 jumps the
+    # queue: the ticket minted on payment inherits it (+ reason) and the receipt
+    # / TV board flag «ЭКСТРЕННЫЙ». Reason is kept for analytics & audit.
+    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    priority_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     opened_at: Mapped[datetime] = mapped_column(
         UTCDateTime, server_default=func.now(), nullable=False

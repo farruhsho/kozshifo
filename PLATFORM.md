@@ -77,7 +77,7 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 2 | Patients | ✅ | CRUD, MRN, search |
 | 3 | Reception / Visits | ✅ | Visit + billed items, totals/balance |
 | 4 | Finance (Payments) | ✅ | Take/refund payment (cash/card/QR/transfer), receipts, **visit discounts** (percent XOR amount + reason, payable-based balance), **expenses (rashod)**, daily/monthly cash reports by method + CSV (`/finance`) |
-| 5 | Queue | ✅ | **Two-track** D-diagnostics → auto V-doctor (no receptionist), per-track call-next, day-scoped, race-guarded |
+| 5 | Queue | ✅ | **Two-track** D-diagnostics → auto V-doctor (no receptionist), per-track call-next, day-scoped, race-guarded; **adressed routing** (assign a waiting ticket to a named specialist, opt-in `for_user_id` call-next, `/queue/specialists` picker) |
 | 6 | TV Queue | ✅ | 2x2 board (doctor blue / diagnostics green): big called number + cabinet + specialist, next-8 tables, voice announcements |
 | 7 | Service Catalog | ✅ | Categories, priced services |
 | 8 | Director Dashboard | 🚧 | KPIs + **self-improvement insights** (low stock, revenue drop, queue overload, stale visits, cancellation spikes — criticals auto-notify); conversions/LTV/forecast ⬜ |
@@ -85,6 +85,7 @@ Legend: ✅ foundation built & tested · 🚧 partial · ⬜ planned (phase)
 | 10 | Branches | ✅ | Multi-branch CRUD |
 | 11 | Diagnostics | ✅ | Folded into the EMR eye exam (refraction, IOP, biomicroscopy, A/B-scan note) |
 | 12 | Medical Devices (HL7/DICOM/serial…) | ✅ | Registry + results + adapter seam; 2 real devices seeded; binary upload/serving + Flutter preview for B-scans; serial/HL7/DICOM transports = stubs |
+| 12a | IP Cameras | ✅ | Isolated `cameras` table (Hikvision pattern, write-only password); connect-by-IP, ISAPI test, backend JPEG **snapshot proxy** (httpx DigestAuth) → Flutter live view by polling (`Image.memory`); capture-to-disk. RTSP/MJPEG live video = future (needs transcode) |
 | 13 | Doctors / EMR | ✅ | **Form 025-8** exam (1:1 visit) + printable `card.pdf`; Flutter doctor card with refractometer auto-fill; treatment plans ⬜ Phase 3 |
 | 14 | Treatment | ✅ | Prescriptions (procedure/medication), dispense writes stock off; courses/schedules ⬜ |
 | 15 | Operations | ✅ | Types with consumable templates, prescribe→bills the visit, perform→FEFO auto write-off |

@@ -1,4 +1,5 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -187,7 +188,9 @@ class _TerminalMenu extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return PopupMenuButton<String>(
       onSelected: (value) async {
-        if (value == 'delete') {
+        if (value == 'configure-push') {
+          await _configurePush(context, ref);
+        } else if (value == 'delete') {
           final confirmed = await showDialog<bool>(
             context: context,
             builder: (_) => AlertDialog(
@@ -218,9 +221,36 @@ class _TerminalMenu extends ConsumerWidget {
         }
       },
       itemBuilder: (_) => const [
+        PopupMenuItem(
+            value: 'configure-push',
+            child: Text('Настроить автоотправку событий')),
         PopupMenuItem(value: 'delete', child: Text('Удалить')),
       ],
     );
+  }
+
+  /// Один клик: просим терминал слать события на наш webhook (без захода в
+  /// веб-меню камеры). Сервер берёт LAN-IP сам; на вебе подсказываем адрес,
+  /// с которого открыт интерфейс.
+  Future<void> _configurePush(BuildContext context, WidgetRef ref) async {
+    _showSnack(context, 'Настраиваю отправку событий на «${terminal.name}»…');
+    try {
+      final res = await ref.read(accessControlRepositoryProvider).configurePush(
+            terminal.id,
+            serverHost: kIsWeb ? Uri.base.host : null,
+            serverPort: kIsWeb ? Uri.base.port : null,
+          );
+      if (!context.mounted) return;
+      _showSnack(
+        context,
+        res.configured
+            ? 'Готово — камера будет отправлять события на сервер'
+            : 'Не удалось настроить камеру: ${res.error ?? 'нет ответа'}',
+        error: !res.configured,
+      );
+    } catch (e) {
+      if (context.mounted) _showSnack(context, '$e', error: true);
+    }
   }
 }
 

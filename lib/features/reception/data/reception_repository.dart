@@ -1,8 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'dart:typed_data';
+
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
+import '../domain/patient_summary.dart';
 import '../domain/payment_result.dart';
 import '../domain/reception_visit.dart';
 import '../domain/service.dart';
@@ -103,7 +106,73 @@ class ReceptionRepository {
       throw ApiException.from(e);
     }
   }
+
+  /// Marks/clears EMERGENCY intake on a visit («ЭКСТРЕННО»). A reason is
+  /// required when [emergency] is true. Returns the updated visit (priority set).
+  Future<ReceptionVisit> setEmergency({
+    required String visitId,
+    required bool emergency,
+    String? reason,
+  }) async {
+    try {
+      final resp = await _dio.post('/visits/$visitId/priority',
+          data: {'emergency': emergency, 'reason': ?reason});
+      return ReceptionVisit.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// At-a-glance patient history for the reception panel.
+  Future<PatientSummary> patientSummary(String patientId) async {
+    try {
+      final resp = await _dio.get('/patients/$patientId/summary');
+      return PatientSummary.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Likely existing matches BEFORE creating a new patient (anti-duplicate).
+  Future<List<DuplicateCandidate>> findDuplicates({
+    String? lastName,
+    String? firstName,
+    String? phone,
+    String? birthDate,
+  }) async {
+    try {
+      final resp = await _dio.get('/patients/duplicates', queryParameters: {
+        'last_name': ?lastName,
+        'first_name': ?firstName,
+        'phone': ?phone,
+        'birth_date': ?birthDate,
+      });
+      return (resp.data as List<dynamic>)
+          .map((e) => DuplicateCandidate.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Receipt PDF bytes (чек) — the UI opens/prints them (web: blob URL).
+  Future<Uint8List> receiptPdf(String paymentId) async {
+    try {
+      final resp = await _dio.get<List<int>>(
+        '/payments/$paymentId/receipt.pdf',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(resp.data ?? const []);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
 }
+
+/// Reception history panel for a selected patient.
+final patientSummaryProvider = FutureProvider.autoDispose
+    .family<PatientSummary, String>((ref, patientId) =>
+        ref.watch(receptionRepositoryProvider).patientSummary(patientId));
 
 final activeServicesProvider = FutureProvider.autoDispose<List<Service>>(
     (ref) => ref.watch(receptionRepositoryProvider).services());

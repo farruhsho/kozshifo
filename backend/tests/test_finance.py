@@ -356,7 +356,11 @@ def test_salary_percent_validation_on_user_update(client, auth):
 
 def test_daily_report_methods_expenses_and_refunds(client, auth):
     _, payment = _paid_visit(client, auth, method="qr")
-    d = payment["created_at"][:10]  # the payment's own UTC business day
+    # Use the LOCAL business date (what the report buckets by), not the payment's
+    # raw UTC date — otherwise, in the hours where UTC date < local date, the
+    # just-made payment lands in a different local day than the report queried.
+    from app.core.dates import business_today
+    d = business_today().isoformat()
     amount = Decimal(payment["amount"])
 
     created = client.post(_EXPENSES, headers=auth,

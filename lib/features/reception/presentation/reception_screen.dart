@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +15,7 @@ import '../../patients/data/patients_repository.dart';
 import '../../patients/domain/patient.dart';
 import '../../patients/presentation/patients_screen.dart'
     show RegisterPatientDialog;
+import '../data/reception_draft_store.dart';
 import '../data/reception_repository.dart';
 import '../domain/payment_result.dart';
 import '../domain/reception_visit.dart';
@@ -46,12 +48,103 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   bool _emergency = false;
   String? _emergencyReason;
 
+  // Autosave: persist the in-progress draft (patient + cart, before the visit is
+  // opened) every 3s; offer to restore it after a crash/refresh.
+  Timer? _autosaveTimer;
+  String _savedSig = '';
+  Map<String, dynamic>? _restorable;
+
+  @override
+  void initState() {
+    super.initState();
+    _autosaveTimer = Timer.periodic(const Duration(seconds: 3), (_) => _autosave());
+    _loadRestorable();
+  }
+
   @override
   void dispose() {
+    _autosaveTimer?.cancel();
     _debounce?.cancel();
     _searchController.dispose();
     _searchFocus.dispose();
     super.dispose();
+  }
+
+  // ── Автосейв черновика ───────────────────────────────────────────────────────
+
+  /// Текущий черновик (только до открытия визита; иначе null).
+  Map<String, dynamic>? _currentDraft() {
+    if (_patient == null || _cart.isEmpty || _visit != null) return null;
+    return {
+      'patientId': _patient!.id,
+      'items': [
+        for (final e in _cart.entries) {'serviceId': e.key.id, 'qty': e.value},
+      ],
+    };
+  }
+
+  void _autosave() {
+    final draft = _currentDraft();
+    final sig = draft == null ? '' : jsonEncode(draft);
+    if (sig == _savedSig) return; // ничего не изменилось
+    _savedSig = sig;
+    final store = ref.read(receptionDraftStoreProvider);
+    if (draft == null) {
+      store.clear();
+    } else {
+      store.save(draft);
+    }
+  }
+
+  Future<void> _loadRestorable() async {
+    try {
+      final draft = await ref.read(receptionDraftStoreProvider).read();
+      if (draft != null && mounted && _patient == null && _cart.isEmpty) {
+        setState(() => _restorable = draft);
+      }
+    } catch (_) {
+      // SharedPreferences недоступен (например, в тестах) — без восстановления.
+    }
+  }
+
+  Future<void> _restoreDraft() async {
+    final draft = _restorable;
+    if (draft == null) return;
+    setState(() => _busy = true);
+    try {
+      final patient = await ref
+          .read(patientsRepositoryProvider)
+          .getById(draft['patientId'] as String);
+      final services = ref.read(activeServicesProvider).valueOrNull ??
+          await ref.read(receptionRepositoryProvider).services();
+      final byId = {for (final s in services) s.id: s};
+      final cart = <Service, int>{};
+      for (final raw in (draft['items'] as List<dynamic>)) {
+        final m = raw as Map<String, dynamic>;
+        final s = byId[m['serviceId']];
+        if (s != null) cart[s] = (m['qty'] as num).toInt();
+      }
+      if (mounted) {
+        setState(() {
+          _patient = patient;
+          _cart
+            ..clear()
+            ..addAll(cart);
+          _restorable = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) _snack('Не удалось восстановить черновик: $e', error: true);
+      _discardDraft();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _discardDraft() {
+    setState(() => _restorable = null);
+    _savedSig = '';
+    ref.read(receptionDraftStoreProvider).clear();
   }
 
   // ── Пациент ────────────────────────────────────────────────────────────────
@@ -124,6 +217,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             ],
           );
       if (mounted) setState(() => _visit = visit);
+      // Визит создан — черновик больше не нужен (истина на сервере).
+      _savedSig = '';
+      ref.read(receptionDraftStoreProvider).clear();
     } catch (e) {
       if (mounted) _snack('$e', error: true);
     } finally {
@@ -262,10 +358,13 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       _result = null;
       _emergency = false;
       _emergencyReason = null;
+      _restorable = null;
       _found = const [];
       _lastQuery = '';
       _searchController.clear();
     });
+    _savedSig = '';
+    ref.read(receptionDraftStoreProvider).clear();
   }
 
   void _snack(String message, {bool error = false}) {
@@ -315,21 +414,64 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           appBar: AppBar(title: const Text('Ресепшен')),
           body: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
-            child: wide
-                ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 3, child: left),
-                      const SizedBox(width: 16),
-                      Expanded(flex: 2, child: right),
-                    ],
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [left, const SizedBox(height: 16), right],
-                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_restorable != null) ...[
+                  _restoreBanner(),
+                  const SizedBox(height: 12),
+                ],
+                wide
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 3, child: left),
+                          const SizedBox(width: 16),
+                          Expanded(flex: 2, child: right),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [left, const SizedBox(height: 16), right],
+                      ),
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _restoreBanner() {
+    final items = (_restorable?['items'] as List?) ?? const [];
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.restore, color: cs.onTertiaryContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Найден незавершённый приём (услуг: ${items.length}). Восстановить?',
+              style: TextStyle(
+                  color: cs.onTertiaryContainer, fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton(
+            onPressed: _busy ? null : _discardDraft,
+            child: const Text('Отбросить'),
+          ),
+          const SizedBox(width: 4),
+          FilledButton(
+            onPressed: _busy ? null : _restoreDraft,
+            child: const Text('Восстановить'),
+          ),
+        ],
       ),
     );
   }

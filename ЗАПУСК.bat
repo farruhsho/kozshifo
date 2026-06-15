@@ -27,6 +27,12 @@ echo    NE otkryvay kozshifo-32e6f.web.app - tam servera net (404).
 echo   ============================================================
 echo.
 
+rem Free port 8000 first: a stale server from a previous window would block
+rem the new one (uvicorn "address already in use") and keep serving an OLD
+rem build - the #1 cause of a "net svyazi" / login error on relaunch.
+echo   Osvobozhdayu port 8000 (esli zanyat staroy kopiey)...
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+
 rem Background opener: waits until the server answers, then opens the browser.
 start "" powershell -NoProfile -WindowStyle Hidden -Command "for($i=0;$i -lt 90;$i++){try{$null=Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:8000/health' -TimeoutSec 1; Start-Process 'http://127.0.0.1:8000'; break}catch{Start-Sleep -Seconds 1}}"
 

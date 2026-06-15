@@ -1,11 +1,11 @@
 # KO'Z SHIFO — деплой backend в облако (Cloud Run + Cloud SQL Postgres).
-# ПРЕДУСЛОВИЕ: проект kozshifo-32e6f переведён на план Blaze (биллинг включён),
+# ПРЕДУСЛОВИЕ: проект kozshifo-prod переведён на план Blaze (биллинг включён),
 # gcloud установлен и авторизован (см. docs/FIREBASE.md).
 # Запуск:  powershell -ExecutionPolicy Bypass -File scripts/deploy_cloud.ps1
 
 $ErrorActionPreference = 'Stop'
 $g = "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"
-$PROJECT = 'kozshifo-32e6f'
+$PROJECT = 'kozshifo-prod'
 $REGION  = 'europe-west1'   # должен совпадать с firebase.json rewrites!
 $SQL_INSTANCE = 'kozshifo-db'
 $SQL_CONN = "${PROJECT}:${REGION}:${SQL_INSTANCE}"
@@ -52,6 +52,6 @@ firebase deploy --only hosting --project $PROJECT
 
 Write-Host '[6/6] Проверка...'
 Start-Sleep -Seconds 5
-Invoke-WebRequest -Uri 'https://kozshifo-32e6f.web.app/health' -UseBasicParsing | Select-Object -ExpandProperty Content
-Write-Host 'Готово: https://kozshifo-32e6f.web.app'
+Invoke-WebRequest -Uri 'https://kozshifo-prod.web.app/health' -UseBasicParsing | Select-Object -ExpandProperty Content
+Write-Host 'Готово: https://kozshifo-prod.web.app'
 Write-Host 'ВНИМАНИЕ: загруженные файлы (B-сканы) на Cloud Run эфемерны до переезда на свой сервер.'

@@ -1,4 +1,4 @@
-"""Smoke-test: write/read test data in Firestore (project kozshifo-32e6f).
+"""Smoke-test: write/read test data in Firestore (project kozshifo-prod).
 
 Proves the Firebase project + Firestore are alive. The clinic app itself
 talks to our FastAPI backend, NOT Firestore — this is a connectivity check.
@@ -11,7 +11,7 @@ import sys
 
 import httpx
 
-PROJECT = "kozshifo-32e6f"
+PROJECT = "kozshifo-prod"
 BASE = f"https://firestore.googleapis.com/v1/projects/{PROJECT}/databases/(default)/documents"
 GCLOUD = os.path.expandvars(
     r"%LOCALAPPDATA%\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd")

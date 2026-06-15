@@ -25,6 +25,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
+from app.models.diagnosis import VisitDiagnosis
 from app.models.exam import EyeExam
 from app.models.payment import Payment
 from app.models.visit import Visit
@@ -253,8 +254,13 @@ def build_receipt_pdf(
     return buf.getvalue()
 
 
-def build_exam_card_pdf(exam: EyeExam) -> bytes:
-    """Render the full Form 025-8 card for one exam (visit/patient/doctor joined)."""
+def build_exam_card_pdf(exam: EyeExam, diagnoses: list[VisitDiagnosis] | None = None) -> bytes:
+    """Render the full Form 025-8 card for one exam (visit/patient/doctor joined).
+
+    `diagnoses` is the visit's accumulated diagnosis list (TZ §7.1.5). When given
+    and non-empty it is printed line-by-line; otherwise the legacy single
+    `exam.diagnosis` field is used so older records still render.
+    """
     _register_fonts()
     patient = exam.patient
     visit = exam.visit
@@ -311,12 +317,21 @@ def build_exam_card_pdf(exam: EyeExam) -> bytes:
         w.text(label, value)
     w.text("Кўз A/B-скан текшеруви:", exam.ab_scan_note)
 
-    # Conclusion (DOMAIN.md §2.3)
+    # Conclusion (DOMAIN.md §2.3). Many diagnoses accumulate on the visit
+    # (TZ §7.1.5); each prints as its own numbered line with the ICD-10 code.
     w.rule()
-    diagnosis = exam.diagnosis or ""
-    if exam.icd10:
-        diagnosis = f"{diagnosis}  (МКБ-10: {exam.icd10})".strip()
-    w.text("Ташхис:", diagnosis, bold_label=True)
+    if diagnoses:
+        w.text("Ташхислар:", bold_label=True)
+        for i, d in enumerate(diagnoses, 1):
+            line = d.diagnosis
+            if d.icd10:
+                line = f"{line}  (МКБ-10: {d.icd10})"
+            w.text(f"{i}. {line}", indent=6 * mm)
+    else:
+        diagnosis = exam.diagnosis or ""
+        if exam.icd10:
+            diagnosis = f"{diagnosis}  (МКБ-10: {exam.icd10})".strip()
+        w.text("Ташхис:", diagnosis, bold_label=True)
     w.text("Тавсия:", exam.recommendations, bold_label=True)
     doctor_name = exam.doctor.full_name if exam.doctor else ""
     w.text("Шифокор:", f"{doctor_name}    имзо: _________________", bold_label=True)

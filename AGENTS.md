@@ -60,7 +60,7 @@ tokens re-deriving the project from scratch.
   `/attendance`, `/calls`, диалог скидки, ролевой лендинг + меню по правам.
   Остались железные интеграции: реальный Face ID терминал и PBX → см. ключи
   `ATTENDANCE_API_KEY`/`PBX_API_KEY` в `core/config.py`).
-- **Firebase: 🚧 wired** — app linked to project `kozshifo-32e6f`
+- **Firebase: 🚧 wired** — app linked to project `kozshifo-prod`
   (`lib/firebase_options.dart`, best-effort init in `main.dart`,
   build_runner verified alive). FCM/hosting and the DB-to-own-server
   migration plan live in **`docs/FIREBASE.md`** — read it before touching

@@ -1,13 +1,16 @@
 # Firebase — состояние и handoff для будущего агента
 
-> Статус на 2026-06-13: **WEB-КЛИЕНТ УЖЕ В ОБЛАКЕ** —
-> **https://kozshifo-32e6f.web.app** (Firebase Hosting, бесплатный план).
-> Backend в облако НЕ задеплоен: Cloud Run/Cloud SQL требуют план **Blaze**
-> (биллинг в проекте выключен, даже включение API падает с
-> UREQ_PROJECT_BILLING_NOT_FOUND). Всё подготовлено к деплою одной командой.
+> Статус на 2026-06-15: проект мигрирован на **`kozshifo-prod`** — отдельный
+> Firebase-проект владельца с **уже включённым планом Blaze**. Конфиги в репо
+> (`.firebaserc`, `scripts/deploy_cloud.ps1`) уже указывают на него. Осталось
+> на машине владельца: (1) `flutterfire configure --project=kozshifo-prod
+> --platforms=web,android,windows` (перегенерит `lib/firebase_options.dart`,
+> `android/app/google-services.json` — их можно сгенерить ТОЛЬКО под своим
+> логином), (2) собрать+задеплоить web на Hosting, (3) `scripts/deploy_cloud.ps1`
+> для backend (Cloud Run + Cloud SQL). Всё подготовлено к деплою одной командой.
 >
 > ## ЧТОБЫ ДОЗАПУСТИТЬ ОБЛАКО (2 шага)
-> 1. Владелец: https://console.firebase.google.com/project/kozshifo-32e6f/usage/details
+> 1. Владелец: https://console.firebase.google.com/project/kozshifo-prod/usage/details
 >    → Modify plan → **Blaze** (привязать карту; Cloud SQL db-f1-micro ≈ $9-15/мес).
 > 2. Запустить `powershell -ExecutionPolicy Bypass -File scripts/deploy_cloud.ps1`
 >    — включит API, создаст Cloud SQL Postgres, задеплоит backend в Cloud Run
@@ -15,9 +18,9 @@
 >    перевыложит Hosting с реврайтами `/api/**`, `/tv/**` → Cloud Run.
 >    Секреты генерируются и печатаются ОДИН раз — сохранить.
 >
-> Архитектура: один домен `kozshifo-32e6f.web.app` — статика с Hosting,
+> Архитектура: один домен `kozshifo-prod.web.app` — статика с Hosting,
 > `/api/**`+`/tv/**` проксируются на Cloud Run (CORS не нужен). Web собран с
-> `--dart-define=API_BASE_URL=https://kozshifo-32e6f.web.app`.
+> `--dart-define=API_BASE_URL=https://kozshifo-prod.web.app`.
 > ВАЖНО: реврайты уже в `firebase.json`; до включения Cloud Run API деплой
 > хостинга с ними падает — первый деплой сделан временно без реврайтов.
 > Cloud Run эфемерен: загруженные B-сканы не переживают рестарт (известное
@@ -30,8 +33,8 @@
 
 ## Что уже сделано (коммит этого файла)
 
-- Firebase-проект владельца: **`kozshifo-32e6f`** (CLI авторизован на этой машине).
-- `flutterfire configure --project=kozshifo-32e6f --platforms=web,android,windows`
+- Firebase-проект владельца: **`kozshifo-prod`** (Blaze включён; CLI авторизуется на машине владельца).
+- `flutterfire configure --project=kozshifo-prod --platforms=web,android,windows`
   выполнен → сгенерирован `lib/firebase_options.dart` (закоммичен — это
   публичные client-ключи), зарегистрированы приложения:
   - web `1:379102232982:web:4ce7c6f3c58b10fe6f5db7`
@@ -40,7 +43,7 @@
 - `firebase_core` добавлен в pubspec (**build_runner проверен — жив**, гейт
   AGENTS.md §6 пройден). Инициализация в `lib/main.dart` — best-effort
   try/catch: недоступный Firebase никогда не блокирует запуск клиники.
-- Повторная привязка/обновление конфигов: `flutterfire configure --project=kozshifo-32e6f`.
+- Повторная привязка/обновление конфигов: `flutterfire configure --project=kozshifo-prod`.
 
 ## Что НЕ сделано (следующие шаги, по команде владельца)
 

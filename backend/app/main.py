@@ -79,6 +79,19 @@ def create_app() -> FastAPI:
             )
         return await call_next(request)
 
+    # The backend self-hosts the compiled Flutter app (build/web). Tell the
+    # browser NOT to cache it, so a fresh `flutter build web` is always picked up
+    # — a stale cached main.dart.js (e.g. one built against a different API URL)
+    # is a classic cause of a phantom "нет связи" after the build changed.
+    _NO_CACHE_EXEMPT = (settings.api_prefix, "/health", "/tv", "/docs", "/redoc", "/openapi")
+
+    @app.middleware("http")
+    async def _no_store_static(request: Request, call_next):
+        response = await call_next(request)
+        if not request.url.path.startswith(_NO_CACHE_EXEMPT):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/health", tags=["System"])
     def health() -> dict:
         return {"status": "ok", "app": settings.app_name, "version": __version__, "env": settings.environment}

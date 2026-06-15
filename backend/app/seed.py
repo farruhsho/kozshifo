@@ -83,6 +83,11 @@ def _seed_director(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
         director.roles = [roles["Director"]]
         db.add(director)
         db.flush()
+    elif settings.seed_demo_staff:
+        # Keep the director password in sync with the configured value so the
+        # quick-login «Директор» button always works (resets a randomized one).
+        director.hashed_password = hash_password(settings.seed_director_password)
+        db.flush()
 
 
 # Demo staff — ONE account per role for trying the system. DEV ONLY: these
@@ -107,19 +112,23 @@ _DEMO_STAFF: list[tuple[str, str, str, str, bool]] = [
 
 
 def _seed_demo_staff(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
-    if settings.environment != "development":
+    # Demo accounts power the one-click quick-login buttons. They are seeded in
+    # ANY environment while SEED_DEMO_STAFF is on, and the well-known password is
+    # made AUTHORITATIVE (reset on every startup) so the buttons always work even
+    # if an account already exists with a different/randomized password.
+    if not settings.seed_demo_staff:
         return
     for email, full_name, password, role_name, is_superuser in _DEMO_STAFF:
-        if db.execute(select(User).where(User.email == email)).scalar_one_or_none() is None:
-            user = User(
-                email=email,
-                full_name=full_name,
-                hashed_password=hash_password(password),
-                branch_id=branch.id,
-                is_superuser=is_superuser,
-            )
-            user.roles = [roles[role_name]]
+        user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if user is None:
+            user = User(email=email, branch_id=branch.id)
             db.add(user)
+        user.full_name = full_name
+        user.hashed_password = hash_password(password)
+        user.is_superuser = is_superuser
+        user.roles = [roles[role_name]]
+        if user.branch_id is None:
+            user.branch_id = branch.id
     db.flush()
 
 

@@ -4,10 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/storage/ui_prefs.dart';
 import '../application/auth_controller.dart';
 
-/// Демо-аккаунты для быстрого входа (тест-режим). Существуют ТОЛЬКО в dev —
-/// сервер сидит их при ENVIRONMENT=development; в проде их нет (вход не сработает).
-/// Суперадмин = владелец (is_superuser, полный доступ). Ресепшен совмещает
-/// кассу и склад — поэтому отдельных кнопок «Касса»/«Склад» нет.
+/// Демо-аккаунты для быстрого входа. Сервер (сид) выставляет им эти известные
+/// пароли на каждом старте при SEED_DEMO_STAFF=true (по умолчанию включён) — в
+/// любом окружении, поэтому кнопки работают и локально, и на деплое. Для
+/// «боевого» режима отключи SEED_DEMO_STAFF — тогда сотрудников заводит владелец
+/// через /admin. Суперадмин = владелец (is_superuser, полный доступ).
 typedef _DemoAccount = ({String label, String email, String password, IconData icon});
 
 const _demoAccounts = <_DemoAccount>[
@@ -16,6 +17,8 @@ const _demoAccounts = <_DemoAccount>[
   (label: 'Ресепшен', email: 'reception@kozshifo.uz', password: 'Reception!2026', icon: Icons.point_of_sale_outlined),
   (label: 'Врач', email: 'vrach@kozshifo.uz', password: 'Vrach!2026', icon: Icons.medical_services_outlined),
   (label: 'Диагност', email: 'diagnost@kozshifo.uz', password: 'Diagnost!2026', icon: Icons.biotech_outlined),
+  (label: 'Касса', email: 'kassa@kozshifo.uz', password: 'Kassa!2026', icon: Icons.payments_outlined),
+  (label: 'Склад', email: 'sklad@kozshifo.uz', password: 'Sklad!2026', icon: Icons.inventory_2_outlined),
 ];
 
 class LoginScreen extends ConsumerStatefulWidget {

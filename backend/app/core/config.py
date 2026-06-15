@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     seed_director_email: str = "director@kozshifo.uz"
     seed_director_password: str = _DEV_DIRECTOR_PASSWORD
     seed_on_startup: bool = True
+    # Demo accounts (superadmin/vrach/reception/diagnost/kassa/sklad + the
+    # director password) are (re)seeded to KNOWN values on every startup so the
+    # one-click quick-login buttons always work — in any environment. Set
+    # SEED_DEMO_STAFF=false for a hardened deploy (then the owner manages real
+    # staff via /admin and only the director bootstrap account is created).
+    seed_demo_staff: bool = True
 
     @field_validator("cors_origins", "hikvision_allowed_ips", mode="before")
     @classmethod

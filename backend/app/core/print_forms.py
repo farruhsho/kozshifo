@@ -3,10 +3,13 @@
 First form: MoH Form 025-8 «Амбулатор тиббий карта» (Order № 777, 2017-12-25) —
 cover identity + «ОКУЛИСТ КУРИГИ» eye exam + Ташхис/Тавсия/Шифокор.
 
-Cyrillic support: reportlab's built-in Helvetica has no Cyrillic glyphs, so we
-register the first TTF found among common system fonts (Windows Arial, Linux
-DejaVu, macOS Arial). Helvetica remains the last-resort fallback so PDF
-generation never hard-fails on an exotic host.
+Cyrillic support: reportlab's built-in Helvetica has no Cyrillic glyphs (it
+prints every Cyrillic character as a black .notdef box — the «чёрные
+квадратики» users saw on Linux/Cloud Run, which ships no system font). We now
+**bundle** DejaVuSans (Cyrillic-complete, redistributable — see
+`app/assets/fonts/LICENSE_DEJAVU.txt`) and register it first, so the rendering
+is byte-for-byte identical on every host. System fonts and Helvetica remain as
+fallbacks so generation never hard-fails on an exotic environment.
 """
 from __future__ import annotations
 
@@ -30,8 +33,14 @@ from app.models.exam import EyeExam
 from app.models.payment import Payment
 from app.models.visit import Visit
 
+_BUNDLED_FONTS = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
 _FONT_CANDIDATES: list[tuple[str, str]] = [
     # (regular, bold)
+    # Bundled DejaVu first — guarantees Cyrillic on every host (incl. Docker slim
+    # / Cloud Run, which have no system fonts). Without it the Helvetica fallback
+    # renders all Cyrillic as tofu boxes.
+    (str(_BUNDLED_FONTS / "DejaVuSans.ttf"), str(_BUNDLED_FONTS / "DejaVuSans-Bold.ttf")),
     (r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\arialbd.ttf"),
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
      "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
@@ -191,17 +200,41 @@ def build_receipt_pdf(
         c.drawRightString(width - margin, y, right)
         y -= 4.2 * mm
 
-    def rule() -> None:
+    def rule(*, solid: bool = False) -> None:
         nonlocal y
-        c.setLineWidth(0.4)
-        c.setDash(1, 2)
+        c.setLineWidth(0.6 if solid else 0.4)
+        if not solid:
+            c.setDash(1, 2)
         c.line(margin, y + 1.5 * mm, width - margin, y + 1.5 * mm)
         c.setDash()
         y -= 2.5 * mm
 
-    line("«KO'Z SHIFO»", font=FONT_BOLD, size=12, center=True)
+    def boxed_row(left: str, right: str, *, size: float = 10) -> None:
+        """A bordered single row used to make the grand total stand out."""
+        nonlocal y
+        pad = 1.6 * mm
+        top, bot = y + size * 0.72 + pad, y - size * 0.30 - pad
+        c.setLineWidth(0.8)
+        c.roundRect(margin, bot, inner, top - bot, 1.5 * mm, stroke=1, fill=0)
+        c.setFont(FONT_BOLD, size)
+        c.drawString(margin + 2 * mm, y, left)
+        c.drawRightString(width - margin - 2 * mm, y, right)
+        y = bot - 3 * mm
+
+    def boxed_center(txt: str, *, size: float = 9, gap: float = 3 * mm) -> None:
+        nonlocal y
+        pad = 1.6 * mm
+        top, bot = y + size * 0.72 + pad, y - size * 0.30 - pad
+        c.setLineWidth(0.8)
+        c.roundRect(margin, bot, inner, top - bot, 1.5 * mm, stroke=1, fill=0)
+        c.setFont(FONT_BOLD, size)
+        c.drawCentredString(width / 2, y, txt)
+        y = bot - gap
+
+    line("«KO'Z SHIFO»", font=FONT_BOLD, size=13, center=True)
     line("офтальмологик клиника", size=7.5, center=True)
-    rule()
+    line("КАССОВЫЙ ЧЕК", size=7, center=True)
+    rule(solid=True)
 
     paid_at: datetime = payment.created_at
     row("Чек №:", payment.receipt_no, font=FONT_BOLD)
@@ -211,30 +244,33 @@ def build_receipt_pdf(
     row("Визит:", visit.visit_no)
 
     if visit.priority and visit.priority > 0:
-        line("! ЭКСТРЕННЫЙ ПРИЕМ !", font=FONT_BOLD, size=9, center=True)
+        y -= 0.8 * mm
+        boxed_center("⚠ ЭКСТРЕННЫЙ ПРИЕМ", size=9)
         if visit.priority_reason:
             line(f"Причина: {visit.priority_reason}", size=7.5, center=True)
     rule()
 
     line("Услуги:", font=FONT_BOLD)
     for it in visit.items:
-        qty = f" x{it.quantity}" if it.quantity and it.quantity > 1 else ""
+        qty = f" ×{it.quantity}" if it.quantity and it.quantity > 1 else ""
         row(f"• {it.service_name}{qty}", _money(it.total))
     rule()
 
     row("Сумма:", _money(visit.total_amount))
     if visit.discount_value and Decimal(visit.discount_value) > 0:
         reason = f" ({visit.discount_reason})" if visit.discount_reason else ""
-        row("Скидка" + reason + ":", "- " + _money(visit.discount_value))
-    row("ИТОГО:", _money(visit.payable), font=FONT_BOLD, size=9.5)
+        row("Скидка" + reason + ":", "− " + _money(visit.discount_value))
+    y -= 1 * mm
+    boxed_row("ИТОГО:", _money(visit.payable), size=10)
     row("Оплата (" + _METHOD_RU.get(payment.method, payment.method) + "):", _money(payment.amount))
     if Decimal(visit.balance) > 0:
         row("Остаток (долг):", _money(visit.balance), font=FONT_BOLD)
     rule()
 
     if queue_ticket_number:
-        line("Талон в очередь", size=7.5, center=True)
-        line(queue_ticket_number, font=FONT_BOLD, size=20, center=True, gap=8 * mm)
+        line("ТАЛОН В ОЧЕРЕДЬ", size=7.5, center=True)
+        y -= 1 * mm
+        boxed_center(queue_ticket_number, size=22, gap=4 * mm)
         rule()
 
     # QR encoding the visit (scannable identity for fast lookup).

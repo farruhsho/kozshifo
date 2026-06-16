@@ -261,6 +261,10 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       );
     } else {
       setState(() => _result = result);
+      // «При оплате сразу распечатывается очередь с чеком» — авто-печать
+      // чека вместе с талоном очереди (та же PDF). Кнопка «Печать чека»
+      // остаётся для повторной печати.
+      unawaited(_printReceipt(result.payment.id, result.payment.receiptNo));
     }
   }
 
@@ -343,13 +347,13 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
   }
 
-  /// Downloads + opens the receipt PDF (browser then prints it).
+  /// Fetches the receipt PDF and opens the browser print dialog (чек + талон).
   Future<void> _printReceipt(String paymentId, String receiptNo) async {
     try {
       final bytes = await ref
           .read(receptionRepositoryProvider)
           .receiptPdf(paymentId);
-      await saveBytes(bytes, 'receipt-$receiptNo.pdf', 'application/pdf');
+      await printBytes(bytes, 'receipt-$receiptNo.pdf', 'application/pdf');
     } catch (e) {
       if (mounted) _snack('$e', error: true);
     }

@@ -126,8 +126,19 @@ on every mutation · multi-branch**.
 - **Queue ticket number no longer clips: ✅** — a longer number (V-0003) overflowed
   the round avatar and wrapped/clipped («V-0 / 03»); now FittedBox-scaled to one
   line (`queue_screen.dart`, regression test in `test/queue_screen_test.dart`).
-- **Receipt чек tofu glyphs fixed: ✅** — `⚠` and the U+2212 minus aren't in Arial,
-  so they printed as black notdef squares; replaced with Arial-safe `!`/`-`.
+- **Receipt чек — no-tofu font + pretty layout + auto-print: ✅** — the real root
+  cause of the «чёрные квадратики» was that Docker slim / Cloud Run ship **no
+  system font**, so `_register_fonts()` fell back to Helvetica (zero Cyrillic) and
+  the whole receipt tofu'd. We now **bundle DejaVuSans** (Cyrillic-complete,
+  redistributable) under `backend/app/assets/fonts/` and register it first, so
+  rendering is identical on every host (`COPY app/` already ships it into the
+  image — no Dockerfile change). With a guaranteed font the receipt restored real
+  `⚠`/`−`/`×` glyphs and got a polished layout (solid header rule, framed ИТОГО,
+  framed ЭКСТРЕННЫЙ banner, boxed talon number). Regression guard:
+  `tests/test_print_forms.py` fails if FONT ever drops back to Helvetica. Flutter:
+  new `printBytes` (web → hidden-iframe print dialog; desktop → OS viewer) and the
+  reception flow **auto-prints чек+талон on full payment** (the «Печать чека»
+  button stays for re-print).
 - **Patient-journey epic — Ф1 foundation (doctor · cabinet · services): ✅ done** —
   groundwork for service-based queue routing and the reception payment flow. A
   doctor now has a `cabinet` (their consulting room) and a many-to-many set of
@@ -156,7 +167,7 @@ on every mutation · multi-branch**.
   separate doctor & diagnostician queue screens (auto-cabinet from the calling
   doctor) + route a paid ticket to the service's eligible doctor into their cabinet.
 
-**Verified green:** backend `pytest` = 225 passed · Flutter `flutter test` = 158 passed
+**Verified green:** backend `pytest` = 228 passed · Flutter `flutter test` = 158 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
 `alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф2
 services-for-reception added a read endpoint only — no schema change).

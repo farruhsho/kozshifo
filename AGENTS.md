@@ -123,11 +123,28 @@ on every mutation · multi-branch**.
   tick while the previous fetch is still in flight, so a slow backend can't
   stack GETs or let a late response clobber a newer list (`queue_screen.dart`;
   regression test `test/queue_screen_test.dart` also pins clean timer disposal).
+- **Queue ticket number no longer clips: ✅** — a longer number (V-0003) overflowed
+  the round avatar and wrapped/clipped («V-0 / 03»); now FittedBox-scaled to one
+  line (`queue_screen.dart`, regression test in `test/queue_screen_test.dart`).
+- **Receipt чек tofu glyphs fixed: ✅** — `⚠` and the U+2212 minus aren't in Arial,
+  so they printed as black notdef squares; replaced with Arial-safe `!`/`-`.
+- **Patient-journey epic — Ф1 foundation (doctor · cabinet · services): ✅ done** —
+  groundwork for service-based queue routing and the reception payment flow. A
+  doctor now has a `cabinet` (their consulting room) and a many-to-many set of
+  `services` they provide; a `Service` exposes its eligible `doctors`. The cabinet
+  lives on the doctor — reception never picks one at payment time; the queue will
+  route a paid ticket to an eligible doctor, into that doctor's cabinet. Backend:
+  `User.cabinet` + `service_doctors` M2M; `/users` accepts `cabinet`/`service_ids`,
+  `/services` accepts `doctor_ids`; migration `d3a7c1f4b920`. Flutter `/admin`:
+  «Кабинет» + «Услуги врача» on the staff create/edit dialogs, «Принимающие врачи»
+  on the service create/edit dialogs (one `_asyncMultiPick` helper; an inactive
+  but still-linked item stays visible/removable). **Next: Ф2** — reception payment
+  widget (method + sum, no cabinet) → print ticket+чек → queue.
 
-**Verified green:** backend `pytest` = 217 passed · Flutter `flutter test` = 147 passed
+**Verified green:** backend `pytest` = 223 passed · Flutter `flutter test` = 158 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (head `a1c4e7f9d2b0`; this round
-added the operations TZ-Modul-6 referral flow).
+`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; this round
+added the doctor cabinet + doctor↔service M2M for service-based queue routing).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

@@ -37,6 +37,7 @@ from app.schemas.operation import (
     OperationSchedule,
     OperationTypeCreate,
     OperationTypeOut,
+    PerformOperationRequest,
     SurgeonOperationStat,
 )
 
@@ -356,6 +357,8 @@ def perform_operation(
     operation_id: UUID,
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(require_permission("operations.perform"))],
+    # Optional body — omitted = template only (keeps existing no-body callers working).
+    payload: PerformOperationRequest | None = None,
 ) -> Operation:
     operation = _get_or_404(db, operation_id)
     if operation.status not in ("scheduled", "in_progress"):
@@ -369,28 +372,46 @@ def perform_operation(
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Cannot perform an operation on a {visit.status} visit")
     op_type = operation.operation_type
+    ad_hoc = payload.ad_hoc_consumables if payload is not None else []
 
-    # Pre-check availability of EVERY template consumable before writing anything
-    # off. write_off_fefo checks its own product, but a multi-line loop could
-    # otherwise consume the first products and fail midway — pre-checking keeps
-    # the whole perform atomic: on shortage nothing has been mutated.
-    for line in op_type.consumables:
-        available = on_hand(db, line.product_id, visit.branch_id)
-        if available < line.quantity:
+    # Consumables actually written off = the type's TEMPLATE plus any AD-HOC
+    # extras the operating team picked from the warehouse (reception logs what
+    # was really used). Both go through the same FEFO; ad-hoc lines are tagged in
+    # the movement reason for traceability. (product_id, quantity, reason) tuples.
+    lines = [
+        (c.product_id, c.quantity, f"Операция {op_type.name}")
+        for c in op_type.consumables
+    ]
+    lines += [
+        (a.product_id, a.quantity, f"Операция {op_type.name} — доп. расходник")
+        for a in ad_hoc
+    ]
+
+    # Pre-check per PRODUCT (summing duplicate lines — a product can be both a
+    # template consumable AND an ad-hoc extra, or listed twice) before writing
+    # anything off. Keeps the whole perform atomic AND makes the 409 report the
+    # TRUE cumulative demand, not one line's quantity.
+    demand: dict = {}
+    for product_id, quantity, _ in lines:
+        demand[product_id] = (demand.get(product_id) or 0) + quantity
+    for product_id, needed in demand.items():
+        available = on_hand(db, product_id, visit.branch_id)
+        if available < needed:
+            product = db.get(Product, product_id)
+            label = f"{product.name} ({product.sku})" if product else str(product_id)
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"Insufficient stock for {line.product.name} ({line.product.sku}): "
-                f"requested {line.quantity}, available {available}",
+                f"Insufficient stock for {label}: requested {needed}, available {available}",
             )
 
     try:
-        for line in op_type.consumables:
+        for product_id, quantity, reason in lines:
             write_off_fefo(
                 db,
-                product_id=line.product_id,
+                product_id=product_id,
                 branch_id=visit.branch_id,
-                quantity=line.quantity,
-                reason=f"Операция {op_type.name}",
+                quantity=quantity,
+                reason=reason,
                 ref_type="operation",
                 ref_id=operation.id,
                 actor_id=actor.id,
@@ -411,12 +432,13 @@ def perform_operation(
     if operation.surgeon_id is None:
         operation.surgeon_id = actor.id
     advance_flow(db, visit, "surgery_performed")  # workflow engine (same transaction)
+    n_adhoc = len(ad_hoc)
     record_audit(db, action="perform", entity_type="operation", entity_id=operation.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
-                 summary=f"Performed operation {op_type.name} ({operation.eye}); "
-                         f"auto write-off: {len(op_type.consumables)} positions")
+                 summary=f"Performed operation {op_type.name} ({operation.eye}); write-off: "
+                         f"{len(op_type.consumables)} template + {n_adhoc} ad-hoc positions")
     db.commit()
-    check_low_stock(db, [l.product_id for l in op_type.consumables], visit.branch_id)  # post-commit
+    check_low_stock(db, [pid for pid, _, _ in lines], visit.branch_id)  # post-commit
     db.refresh(operation)
     return operation
 

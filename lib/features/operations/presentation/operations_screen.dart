@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -10,6 +12,8 @@ import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../clinical/data/clinical_repository.dart';
 import '../../clinical/domain/operation.dart';
+import '../../inventory/data/inventory_repository.dart';
+import '../../inventory/domain/product.dart';
 
 final _dateTime = DateFormat('dd.MM.yyyy HH:mm');
 
@@ -81,8 +85,10 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 ),
                 error: (e, _) => AppCard(
                   child: Center(
-                    child: Text(e is ApiException ? e.message : '$e',
-                        style: const TextStyle(color: AppColors.red)),
+                    child: Text(
+                      e is ApiException ? e.message : '$e',
+                      style: const TextStyle(color: AppColors.red),
+                    ),
                   ),
                 ),
                 data: (items) {
@@ -128,29 +134,38 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.healing_outlined,
-              size: 34, color: AppColors.mintLight),
+          const Icon(
+            Icons.healing_outlined,
+            size: 34,
+            color: AppColors.mintLight,
+          ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Операционное отделение',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 18)),
+                const Text(
+                  'Операционное отделение',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 18,
+                  ),
+                ),
                 const SizedBox(height: 4),
-                Text('Направления, планирование и выполнение операций',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        color: AppColors.mintLight.withValues(alpha: 0.9),
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13.5)),
+                Text(
+                  'Направления, планирование и выполнение операций',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: AppColors.mintLight.withValues(alpha: 0.9),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
+                  ),
+                ),
               ],
             ),
           ),
@@ -161,8 +176,10 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
                 color: Colors.white.withValues(alpha: 0.10),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Text('$count',
-                  style: AppTypography.number(22, color: Colors.white)),
+              child: Text(
+                '$count',
+                style: AppTypography.number(22, color: Colors.white),
+              ),
             ),
         ],
       ),
@@ -187,8 +204,11 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
 
 /// Pill-style filter chip in the brand teal (selected) / hairline (idle).
 class _FilterChip extends StatelessWidget {
-  const _FilterChip(
-      {required this.label, required this.selected, required this.onTap});
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
 
   final String label;
   final bool selected;
@@ -207,13 +227,17 @@ class _FilterChip extends StatelessWidget {
             color: selected ? AppColors.tealDark : AppColors.card,
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-                color: selected ? AppColors.tealDark : AppColors.line),
+              color: selected ? AppColors.tealDark : AppColors.line,
+            ),
           ),
-          child: Text(label,
-              style: TextStyle(
-                  color: selected ? Colors.white : AppColors.sub,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13)),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.white : AppColors.sub,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
         ),
       ),
     );
@@ -236,8 +260,11 @@ class _OperationCard extends ConsumerWidget {
   final VoidCallback onChanged;
 
   static String _initials(String name) {
-    final words =
-        name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final words = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .toList();
     if (words.isEmpty) return '—';
     final buf = StringBuffer();
     for (final w in words.take(2)) {
@@ -247,12 +274,12 @@ class _OperationCard extends ConsumerWidget {
   }
 
   BadgeKind get _kind => switch (op.status) {
-        'referred' => BadgeKind.info,
-        'scheduled' => BadgeKind.warning,
-        'in_progress' => BadgeKind.info,
-        'performed' || 'completed' => BadgeKind.success,
-        _ => BadgeKind.neutral,
-      };
+    'referred' => BadgeKind.info,
+    'scheduled' => BadgeKind.warning,
+    'in_progress' => BadgeKind.info,
+    'performed' || 'completed' => BadgeKind.success,
+    _ => BadgeKind.neutral,
+  };
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -278,36 +305,51 @@ class _OperationCard extends ConsumerWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(op.patientName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700, fontSize: 15)),
+                    Text(
+                      op.patientName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
                     const SizedBox(height: 2),
-                    Text(op.typeName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: AppColors.sub, fontSize: 13)),
+                    Text(
+                      op.typeName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.sub,
+                        fontSize: 13,
+                      ),
+                    ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
               if (op.isUrgent) ...[
                 const Pill(
-                    label: 'срочно', color: AppColors.red, bg: AppColors.redBg),
+                  label: 'срочно',
+                  color: AppColors.red,
+                  bg: AppColors.redBg,
+                ),
                 const SizedBox(width: 6),
               ],
               StatusBadge(op.statusLabel, kind: _kind),
             ],
           ),
           const SizedBox(height: 10),
-          Text(meta.join('  ·  '),
-              style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
+          Text(
+            meta.join('  ·  '),
+            style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
+          ),
           if (op.notes != null && op.notes!.isNotEmpty) ...[
             const SizedBox(height: 4),
-            Text(op.notes!,
-                style: const TextStyle(color: AppColors.muted, fontSize: 12.5)),
+            Text(
+              op.notes!,
+              style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
+            ),
           ],
           if (_hasActions) ...[
             const SizedBox(height: 14),
@@ -334,19 +376,33 @@ class _OperationCard extends ConsumerWidget {
 
     // Secondary actions first (left), primary gradient CTA last (right).
     if (canPerform && op.isScheduled) {
-      widgets.add(_secondary(
+      widgets.add(
+        _secondary(
           'Начать',
-          () => _run(context, ref, (r) => r.startOperation(op.id),
-              'Операция начата')));
+          () => _run(
+            context,
+            ref,
+            (r) => r.startOperation(op.id),
+            'Операция начата',
+          ),
+        ),
+      );
     }
     if (canSchedule && op.isScheduled) {
       widgets.add(_secondary('Изменить', () => _schedule(context, ref)));
     }
     if (canCancel && op.isOpen) {
-      widgets.add(_secondary(
+      widgets.add(
+        _secondary(
           'Отменить',
-          () => _run(context, ref, (r) => r.cancelOperation(op.id),
-              'Операция отменена')));
+          () => _run(
+            context,
+            ref,
+            (r) => r.cancelOperation(op.id),
+            'Операция отменена',
+          ),
+        ),
+      );
     }
 
     // Primary CTA for the current state.
@@ -361,15 +417,15 @@ class _OperationCard extends ConsumerWidget {
   }
 
   Widget _primary(String label, VoidCallback onPressed) => SizedBox(
-        width: 150,
-        child: GradientButton(label: label, height: 40, onPressed: onPressed),
-      );
+    width: 150,
+    child: GradientButton(label: label, height: 40, onPressed: onPressed),
+  );
 
   Widget _secondary(String label, VoidCallback onPressed) => TextButton(
-        onPressed: onPressed,
-        style: TextButton.styleFrom(foregroundColor: AppColors.tealDark),
-        child: Text(label),
-      );
+    onPressed: onPressed,
+    style: TextButton.styleFrom(foregroundColor: AppColors.tealDark),
+    child: Text(label),
+  );
 
   Future<void> _run(
     BuildContext context,
@@ -398,24 +454,17 @@ class _OperationCard extends ConsumerWidget {
   }
 
   Future<void> _perform(BuildContext context, WidgetRef ref) async {
-    final ok = await showDialog<bool>(
+    final adHoc = await showDialog<List<({String productId, String quantity})>>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(op.typeName),
-        content: const Text('Списать расходники и отметить выполненной?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Выполнить')),
-        ],
-      ),
+      builder: (_) => _PerformDialog(op: op),
     );
-    if (ok != true || !context.mounted) return;
-    await _run(context, ref, (r) => r.performOperation(op.id),
-        'Операция выполнена, расходники списаны');
+    if (adHoc == null || !context.mounted) return; // отмена
+    await _run(
+      context,
+      ref,
+      (r) => r.performOperation(op.id, adHocConsumables: adHoc),
+      'Операция выполнена, расходники списаны',
+    );
   }
 
   Future<void> _complete(BuildContext context, WidgetRef ref) async {
@@ -427,16 +476,19 @@ class _OperationCard extends ConsumerWidget {
         content: TextField(
           controller: controller,
           maxLines: 3,
-          decoration:
-              const InputDecoration(labelText: 'Результат / заключение'),
+          decoration: const InputDecoration(
+            labelText: 'Результат / заключение',
+          ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Отмена')),
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Завершить')),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Завершить'),
+          ),
         ],
       ),
     );
@@ -451,10 +503,190 @@ class _OperationCard extends ConsumerWidget {
   }
 
   void _snack(BuildContext context, String message, {bool error = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: error ? AppColors.red : null,
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? AppColors.red : null,
+      ),
+    );
+  }
+}
+
+/// Диалог «Выполнить»: ресепшен/хирург добавляет фактически использованные
+/// (ad-hoc) расходники сверх шаблона типа операции. Возврат: список
+/// {productId, quantity} (пусто = только шаблон); null = отмена.
+class _PerformDialog extends ConsumerStatefulWidget {
+  const _PerformDialog({required this.op});
+
+  final Operation op;
+
+  @override
+  ConsumerState<_PerformDialog> createState() => _PerformDialogState();
+}
+
+class _PerformDialogState extends ConsumerState<_PerformDialog> {
+  final _search = TextEditingController();
+  String _query = '';
+  Timer? _debounce;
+  // Выбранные ad-hoc расходники: продукт → контроллер количества.
+  final Map<Product, TextEditingController> _adHoc = {};
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _search.dispose();
+    for (final c in _adHoc.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  // Строка ad-hoc валидна = количество положительное число.
+  bool _qtyValid(TextEditingController c) {
+    final v = double.tryParse(c.text.trim().replaceAll(',', '.'));
+    return v != null && v > 0;
+  }
+
+  bool get _allQtysValid => _adHoc.values.every(_qtyValid);
+
+  void _add(Product p) {
+    if (_adHoc.containsKey(p)) return;
+    setState(() {
+      _adHoc[p] = TextEditingController(text: '1');
+      _search.clear();
+      _query = '';
+    });
+  }
+
+  void _remove(Product p) {
+    setState(() => _adHoc.remove(p)?.dispose());
+  }
+
+  List<({String productId, String quantity})> _result() => [
+    for (final e in _adHoc.entries)
+      (productId: e.key.id, quantity: e.value.text.trim().replaceAll(',', '.')),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _query.trim();
+    final canSearch =
+        ref.watch(authControllerProvider).user?.can('inventory.read') ?? false;
+    final results = q.isEmpty
+        ? const AsyncValue<List<Product>>.data(<Product>[])
+        : ref.watch(productSearchProvider(q));
+    final errStyle = TextStyle(color: Theme.of(context).colorScheme.error);
+    return AlertDialog(
+      title: Text(widget.op.typeName),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Шаблонные расходники типа спишутся автоматически. Ниже — '
+                'дополнительные, фактически использованные.',
+              ),
+              const SizedBox(height: 12),
+              if (canSearch) ...[
+                TextField(
+                  controller: _search,
+                  decoration: const InputDecoration(
+                    labelText: 'Добавить расходник',
+                    prefixIcon: Icon(Icons.search),
+                    isDense: true,
+                  ),
+                  // Debounce: не дёргать GET на каждое нажатие.
+                  onChanged: (v) {
+                    _debounce?.cancel();
+                    _debounce = Timer(const Duration(milliseconds: 300), () {
+                      if (mounted) setState(() => _query = v);
+                    });
+                  },
+                ),
+                if (q.isNotEmpty)
+                  results.when(
+                    data: (items) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Инструменты — многоразовые активы, не списываются как
+                        // одноразовые расходники: прячем из пикера.
+                        for (final p
+                            in items
+                                .where((p) => p.productType != 'instrument')
+                                .take(8))
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(p.name),
+                            subtitle: Text('${p.sku} · ${p.typeLabel}'),
+                            trailing: const Icon(Icons.add),
+                            onTap: () => _add(p),
+                          ),
+                      ],
+                    ),
+                    loading: () => const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: LinearProgressIndicator(),
+                    ),
+                    error: (e, _) =>
+                        Text('Поиск недоступен: $e', style: errStyle),
+                  ),
+              ] else
+                Text(
+                  'Добавление расходников требует доступа к складу — '
+                  'спишутся только шаблонные.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              const SizedBox(height: 8),
+              for (final e in _adHoc.entries)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text('${e.key.name} (${e.key.unit})')),
+                      SizedBox(
+                        width: 84,
+                        child: TextField(
+                          controller: e.value,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          onChanged: (_) => setState(() {}),
+                          decoration: InputDecoration(
+                            labelText: 'Кол-во',
+                            isDense: true,
+                            errorText: _qtyValid(e.value) ? null : '> 0',
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Убрать',
+                        icon: const Icon(Icons.close),
+                        onPressed: () => _remove(e.key),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(null),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _allQtysValid
+              ? () => Navigator.of(context).pop(_result())
+              : null,
+          child: const Text('Выполнить'),
+        ),
+      ],
+    );
   }
 }
 
@@ -517,12 +749,19 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
     if (date == null) return;
     setState(() => _saving = true);
     // Local wall-clock -> UTC ISO so the server stores an absolute instant.
-    final dt =
-        DateTime(date.year, date.month, date.day, _time.hour, _time.minute);
+    final dt = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      _time.hour,
+      _time.minute,
+    );
     final price = _price.text.trim();
     final notes = _notes.text.trim();
     try {
-      await ref.read(clinicalRepositoryProvider).scheduleOperation(
+      await ref
+          .read(clinicalRepositoryProvider)
+          .scheduleOperation(
             id: widget.op.id,
             scheduledAt: dt.toUtc().toIso8601String(),
             price: price.isEmpty ? null : price,
@@ -532,10 +771,12 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e is ApiException ? e.message : '$e'),
-          backgroundColor: AppColors.red,
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e is ApiException ? e.message : '$e'),
+            backgroundColor: AppColors.red,
+          ),
+        );
       }
     }
   }
@@ -587,7 +828,9 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
               controller: _notes,
               maxLines: 2,
               decoration: const InputDecoration(
-                  isDense: true, labelText: 'Примечание (необязательно)'),
+                isDense: true,
+                labelText: 'Примечание (необязательно)',
+              ),
             ),
           ],
         ),
@@ -603,7 +846,8 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Сохранить'),
         ),
       ],

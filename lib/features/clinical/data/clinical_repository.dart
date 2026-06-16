@@ -8,7 +8,8 @@ import '../domain/operation_type.dart';
 import '../domain/treatment.dart';
 
 final clinicalRepositoryProvider = Provider<ClinicalRepository>(
-    (ref) => ClinicalRepository(ref.watch(dioProvider)));
+  (ref) => ClinicalRepository(ref.watch(dioProvider)),
+);
 
 /// One consumable-template line vs. usable stock in the branch.
 /// `required`/`available` are decimal strings (e.g. "2.000") — never doubles.
@@ -22,10 +23,7 @@ typedef ConsumableAvailability = ({
 
 /// Advisory availability verdict for an operation type in a branch.
 /// `ok` is true when every template line is coverable (empty template → true).
-typedef OperationAvailability = ({
-  bool ok,
-  List<ConsumableAvailability> items,
-});
+typedef OperationAvailability = ({bool ok, List<ConsumableAvailability> items});
 
 /// Operations + treatment prescriptions of the clinical loop.
 /// Decimals (price, quantity) are strings end-to-end — the server owns the math.
@@ -61,7 +59,9 @@ class ClinicalRepository {
   /// Advisory pre-check: can `branchId` cover the type's consumable template?
   /// Advisory only — performOperation still hard-checks stock atomically.
   Future<OperationAvailability> availability(
-      String opTypeId, String branchId) async {
+    String opTypeId,
+    String branchId,
+  ) async {
     try {
       final resp = await _dio.get(
         '/operation-types/$opTypeId/availability',
@@ -90,10 +90,10 @@ class ClinicalRepository {
   /// scheduled, in_progress, performed, completed, cancelled) and/or [branchId].
   Future<List<Operation>> operations({String? status, String? branchId}) async {
     try {
-      final resp = await _dio.get('/operations', queryParameters: {
-        'status': ?status,
-        'branch_id': ?branchId,
-      });
+      final resp = await _dio.get(
+        '/operations',
+        queryParameters: {'status': ?status, 'branch_id': ?branchId},
+      );
       return (resp.data as List<dynamic>)
           .map((e) => Operation.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -112,12 +112,15 @@ class ClinicalRepository {
     String? notes,
   }) async {
     try {
-      final resp = await _dio.post('/visits/$visitId/operations', data: {
-        'operation_type_id': operationTypeId,
-        'eye': eye,
-        'priority': priority,
-        'notes': ?notes,
-      });
+      final resp = await _dio.post(
+        '/visits/$visitId/operations',
+        data: {
+          'operation_type_id': operationTypeId,
+          'eye': eye,
+          'priority': priority,
+          'notes': ?notes,
+        },
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -134,12 +137,15 @@ class ClinicalRepository {
     String? notes,
   }) async {
     try {
-      final resp = await _dio.post('/operations/$id/schedule', data: {
-        'scheduled_at': scheduledAt,
-        'surgeon_id': ?surgeonId,
-        'price': ?price,
-        'notes': ?notes,
-      });
+      final resp = await _dio.post(
+        '/operations/$id/schedule',
+        data: {
+          'scheduled_at': scheduledAt,
+          'surgeon_id': ?surgeonId,
+          'price': ?price,
+          'notes': ?notes,
+        },
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -156,11 +162,23 @@ class ClinicalRepository {
     }
   }
 
-  /// Mark performed; the backend auto-writes-off the consumables and answers
-  /// 409 with the missing product in `detail` when stock is insufficient.
-  Future<Operation> performOperation(String id) async {
+  /// Mark performed; the backend writes off the type's TEMPLATE consumables plus
+  /// any [adHocConsumables] (extras actually used) via FEFO, atomically, and
+  /// answers 409 with the missing product in `detail` when stock is short.
+  Future<Operation> performOperation(
+    String id, {
+    List<({String productId, String quantity})> adHocConsumables = const [],
+  }) async {
     try {
-      final resp = await _dio.post('/operations/$id/perform');
+      final resp = await _dio.post(
+        '/operations/$id/perform',
+        data: {
+          'ad_hoc_consumables': [
+            for (final c in adHocConsumables)
+              {'product_id': c.productId, 'quantity': c.quantity},
+          ],
+        },
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -171,9 +189,10 @@ class ClinicalRepository {
   /// to the patient card.
   Future<Operation> completeOperation(String id, {String? result}) async {
     try {
-      final resp = await _dio.post('/operations/$id/complete', data: {
-        'result': ?result,
-      });
+      final resp = await _dio.post(
+        '/operations/$id/complete',
+        data: {'result': ?result},
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -211,13 +230,16 @@ class ClinicalRepository {
     String? instructions,
   }) async {
     try {
-      final resp = await _dio.post('/visits/$visitId/treatments', data: {
-        'kind': kind,
-        'name': name,
-        'product_id': ?productId,
-        'quantity': ?quantity,
-        'instructions': ?instructions,
-      });
+      final resp = await _dio.post(
+        '/visits/$visitId/treatments',
+        data: {
+          'kind': kind,
+          'name': name,
+          'product_id': ?productId,
+          'quantity': ?quantity,
+          'instructions': ?instructions,
+        },
+      );
       return Treatment.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -255,17 +277,24 @@ class ClinicalRepository {
 }
 
 final operationTypesProvider = FutureProvider.autoDispose<List<OperationType>>(
-    (ref) => ref.watch(clinicalRepositoryProvider).operationTypes());
+  (ref) => ref.watch(clinicalRepositoryProvider).operationTypes(),
+);
 
 final visitOperationsProvider = FutureProvider.autoDispose
-    .family<List<Operation>, String>((ref, visitId) =>
-        ref.watch(clinicalRepositoryProvider).visitOperations(visitId));
+    .family<List<Operation>, String>(
+      (ref, visitId) =>
+          ref.watch(clinicalRepositoryProvider).visitOperations(visitId),
+    );
 
 /// Operations-department worklist, filtered by status (null → all statuses).
 final operationsWorklistProvider = FutureProvider.autoDispose
-    .family<List<Operation>, String?>((ref, status) =>
-        ref.watch(clinicalRepositoryProvider).operations(status: status));
+    .family<List<Operation>, String?>(
+      (ref, status) =>
+          ref.watch(clinicalRepositoryProvider).operations(status: status),
+    );
 
 final visitTreatmentsProvider = FutureProvider.autoDispose
-    .family<List<Treatment>, String>((ref, visitId) =>
-        ref.watch(clinicalRepositoryProvider).visitTreatments(visitId));
+    .family<List<Treatment>, String>(
+      (ref, visitId) =>
+          ref.watch(clinicalRepositoryProvider).visitTreatments(visitId),
+    );

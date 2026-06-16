@@ -87,6 +87,21 @@ class OperationSchedule(BaseModel):
     notes: str | None = None
 
 
+class AdHocConsumable(BaseModel):
+    """One extra (non-template) product actually used during a perform — picked
+    from the warehouse by the operating team; written off via the same FEFO."""
+
+    product_id: UUID
+    quantity: Decimal = Field(gt=0)
+
+
+class PerformOperationRequest(BaseModel):
+    """Perform payload: consumables ACTUALLY used beyond the type's template.
+    Empty list = template only (backwards compatible)."""
+
+    ad_hoc_consumables: list[AdHocConsumable] = []
+
+
 class OperationComplete(BaseModel):
     """Outcome recorded on the patient card when the operation is wrapped up."""
 

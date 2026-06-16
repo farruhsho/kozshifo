@@ -141,7 +141,7 @@ def patient_timeline(
                     visit_id=op.visit_id, ref_id=op.id)
             if op.completed_at is not None:
                 add(op.completed_at, "operation_completed", f"Операция завершена: {name}",
-                    visit_id=op.visit_id, ref_id=op.id)
+                    detail=op.result, visit_id=op.visit_id, ref_id=op.id)
             if op.status == "cancelled":
                 add(op.updated_at, "operation_cancelled", f"Операция отменена: {name}",
                     visit_id=op.visit_id, ref_id=op.id)

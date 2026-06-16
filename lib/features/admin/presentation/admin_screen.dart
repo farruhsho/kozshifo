@@ -987,6 +987,8 @@ class _UserEditDialog extends ConsumerStatefulWidget {
 class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
   late final _percent =
       TextEditingController(text: widget.user.salaryPercent ?? '');
+  // Предзаполняем текущими ролями пользователя — снять/добавить можно тут же.
+  late final _selectedRoles = <String>{...widget.user.roles};
   bool _saving = false;
 
   @override
@@ -1016,6 +1018,7 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
     try {
       await ref.read(adminRepositoryProvider).updateUser(
             widget.user.id,
+            roleNames: _selectedRoles.toList(),
             salaryPercent: raw.isEmpty ? null : raw,
             // Пустое поле — явный сброс процентной оплаты (отправляем null).
             clearSalaryPercent: raw.isEmpty,
@@ -1032,31 +1035,68 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
   @override
   Widget build(BuildContext context) {
     final error = _percent.text.trim().isEmpty ? null : _validatePercent();
+    final roles = ref.watch(adminRolesProvider);
     return AlertDialog(
       title: Text(widget.user.fullName),
       content: SizedBox(
         width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.user.email,
-                style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _percent,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                labelText: 'Процент врача',
-                hintText: '0–100',
-                suffixText: '%',
-                helperText: 'Пусто — снять с процентной оплаты',
-                errorText: error,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.user.email,
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _percent,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(
+                  labelText: 'Процент врача',
+                  hintText: '0–100',
+                  suffixText: '%',
+                  helperText: 'Пусто — снять с процентной оплаты',
+                  errorText: error,
+                ),
+                onChanged: (_) => setState(() {}),
               ),
-              onChanged: (_) => setState(() {}),
-            ),
-          ],
+              const SizedBox(height: 16),
+              Text('Роли / доступ',
+                  style: Theme.of(context).textTheme.titleSmall),
+              roles.when(
+                data: (items) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final r in items)
+                      CheckboxListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: Text(r.name),
+                        subtitle: Text(
+                            r.description ?? 'прав: ${r.permissionCount}'),
+                        value: _selectedRoles.contains(r.name),
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _selectedRoles.add(r.name);
+                          } else {
+                            _selectedRoles.remove(r.name);
+                          }
+                        }),
+                      ),
+                  ],
+                ),
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                ),
+                error: (e, _) => Text('Роли недоступны: $e',
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [

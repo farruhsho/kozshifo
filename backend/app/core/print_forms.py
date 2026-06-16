@@ -211,7 +211,7 @@ def build_receipt_pdf(
     row("Визит:", visit.visit_no)
 
     if visit.priority and visit.priority > 0:
-        line("⚠ ЭКСТРЕННЫЙ ПРИЕМ", font=FONT_BOLD, size=9, center=True)
+        line("! ЭКСТРЕННЫЙ ПРИЕМ !", font=FONT_BOLD, size=9, center=True)
         if visit.priority_reason:
             line(f"Причина: {visit.priority_reason}", size=7.5, center=True)
     rule()
@@ -225,7 +225,7 @@ def build_receipt_pdf(
     row("Сумма:", _money(visit.total_amount))
     if visit.discount_value and Decimal(visit.discount_value) > 0:
         reason = f" ({visit.discount_reason})" if visit.discount_reason else ""
-        row("Скидка" + reason + ":", "− " + _money(visit.discount_value))
+        row("Скидка" + reason + ":", "- " + _money(visit.discount_value))
     row("ИТОГО:", _money(visit.payable), font=FONT_BOLD, size=9.5)
     row("Оплата (" + _METHOD_RU.get(payment.method, payment.method) + "):", _money(payment.amount))
     if Decimal(visit.balance) > 0:

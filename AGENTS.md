@@ -180,10 +180,19 @@ on every mutation · multi-branch**.
   + client `AuthUser` now carry `cabinet`. No migration (service routing reuses
   the existing `assigned_user_id`; the permission grant re-seeds idempotently).
   Tests: `test_queue_service_routing.py` (3) + queue personal-mode widget test.
-  **Next: Ф4** — operations calendar with the patient med card + reception-entered
-  consumables (incl. ad-hoc) at perform + visit/timeline rewrite on complete.
+- **Patient-journey Ф4a — ad-hoc consumables at perform: ✅ done** — at PERFORM,
+  reception/surgeon logs the consumables ACTUALLY used beyond the OperationType
+  template; backend `perform` gained an optional `PerformOperationRequest`
+  {`ad_hoc_consumables:[{product_id,quantity}]`} (omitted = template only — last
+  param so existing no-body callers keep working). Template + ad-hoc write off via
+  the same FEFO atomically; the pre-check aggregates demand **per product** so a
+  product in both lists reports the true cumulative 409. Timeline
+  `operation_completed` now carries the clinical result. Flutter: «Выполнить» opens
+  a debounced product picker (gated on `inventory.read`, instruments filtered out)
+  with validated quantities. **Next: Ф4b** — operations CALENDAR (scheduled ops ×
+  surgeon × time + patient med card) + bill/record the ad-hoc consumables on the visit.
 
-**Verified green:** backend `pytest` = 231 passed · Flutter `flutter test` = 159 passed
+**Verified green:** backend `pytest` = 233 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
 `alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф3b adds no
 schema change — routing reuses `assigned_user_id`, the new doctor permission and

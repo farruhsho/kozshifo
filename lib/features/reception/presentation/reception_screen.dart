@@ -515,6 +515,13 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             const SizedBox(width: 8),
             FilledButton.tonalIcon(
               onPressed: canRegister ? _registerNew : null,
+              // The app theme makes buttons full-width (minimumSize width =
+              // infinity). That is fine in a Column, but here the button is a
+              // non-flex sibling of an Expanded in a Row, so the flex measures it
+              // under UNBOUNDED width — an infinite min-width then throws
+              // «RenderBox was not laid out» every frame and freezes the screen.
+              // A finite min-width keeps it content-sized and laid out.
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
               icon: const Icon(Icons.person_add_alt_1),
               label: const Text('Новый'),
             ),
@@ -627,41 +634,129 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
 
   Widget _servicesSection(AsyncValue<List<Service>> services, bool canBill) {
     final locked = _visit != null;
+    // Category names for grouping (best-effort: if unavailable, one «Прочее» group).
+    final cats = ref.watch(serviceCategoriesProvider).valueOrNull ?? const [];
+    final nameById = {for (final c in cats) c.id: c.name};
     return _card('2. Услуги', [
       AsyncValueWidget<List<Service>>(
         value: services,
         onRetry: () => ref.invalidate(activeServicesProvider),
-        builder: (items) => Column(
-          children: [
-            for (final s in items)
-              ListTile(
-                dense: true,
-                title: Text(s.name),
-                subtitle: Text(s.code),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(formatMoney(s.price)),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      onPressed: (canBill && !locked)
-                          ? () => setState(
-                              () => _cart.update(
-                                s,
-                                (q) => q + 1,
-                                ifAbsent: () => 1,
-                              ),
-                            )
-                          : null,
+        builder: (items) {
+          // Group by category, preserving the catalog's order; services with no
+          // or unknown category fall under «Прочее», shown last.
+          final groups = <String, List<Service>>{};
+          for (final s in items) {
+            (groups[s.categoryId ?? ''] ??= <Service>[]).add(s);
+          }
+          final orderedKeys = <String>[
+            for (final c in cats) if (groups.containsKey(c.id)) c.id,
+            for (final k in groups.keys)
+              if (k.isNotEmpty && !nameById.containsKey(k)) k,
+            if (groups.containsKey('')) '',
+          ];
+          return LayoutBuilder(
+            builder: (ctx, c) {
+              // Responsive card grid: 2 columns when there's room, else 1.
+              // Fixed card width (no GridView/Expanded-in-Row) keeps the layout
+              // safe under the scroll view's unbounded height and the full-width
+              // button theme that previously froze this screen.
+              const gap = 10.0;
+              final cols = c.maxWidth >= 420 ? 2 : 1;
+              final cardW = (c.maxWidth - gap * (cols - 1)) / cols;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final key in orderedKeys) ...[
+                    _serviceCategoryHeader(
+                        key.isEmpty ? 'Прочее' : (nameById[key] ?? 'Прочее')),
+                    Wrap(
+                      spacing: gap,
+                      runSpacing: gap,
+                      children: [
+                        for (final s in groups[key]!)
+                          _serviceCard(s, canBill, locked, cardW),
+                      ],
                     ),
+                    const SizedBox(height: 6),
                   ],
-                ),
-              ),
-          ],
-        ),
+                ],
+              );
+            },
+          );
+        },
       ),
     ]);
+  }
+
+  Widget _serviceCategoryHeader(String label) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
+        child: Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      );
+
+  /// Service as a fixed-width card (prototype style): name + price + add. The
+  /// whole card is tappable to add to the cart; a plain Icon (not a themed
+  /// button) keeps it free of the full-width-button layout trap.
+  Widget _serviceCard(Service s, bool canBill, bool locked, double width) {
+    final cs = Theme.of(context).colorScheme;
+    final enabled = canBill && !locked;
+    return SizedBox(
+      width: width,
+      child: Material(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: enabled
+              ? () => setState(
+                  () => _cart.update(s, (q) => q + 1, ifAbsent: () => 1))
+              : null,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+            decoration: BoxDecoration(
+              border: Border.all(color: cs.outlineVariant),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(s.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 13.5)),
+                      const SizedBox(height: 3),
+                      Text(formatMoney(s.price),
+                          style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: cs.primary)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // add_circle_outline (not filled): also the affordance the
+                // reception/discount widget tests tap to add a service.
+                Icon(Icons.add_circle_outline,
+                    color: enabled
+                        ? cs.primary
+                        : cs.onSurfaceVariant.withValues(alpha: 0.4)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   /// Скидка установлена сервером (процент XOR сумма) — тогда вместо «Итого»

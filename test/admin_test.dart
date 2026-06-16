@@ -159,6 +159,22 @@ void main() {
       expect(body.containsKey('salary_percent'), isFalse);
       expect(body['is_active'], isFalse);
     });
+
+    // Переназначение ролей из диалога редактирования сотрудника.
+    test('sends role_names when roles reassigned', () async {
+      final (repo, last) = makeRepo();
+      await repo.updateUser('u-1', roleNames: const ['doctor', 'reception']);
+      final body = last().data as Map<String, dynamic>;
+      expect(body['role_names'], ['doctor', 'reception']);
+    });
+
+    test('omits role_names when roles untouched', () async {
+      final (repo, last) = makeRepo();
+      await repo.updateUser('u-1', salaryPercent: '15');
+      final body = last().data as Map<String, dynamic>;
+      // Null-aware spread не должен слать ключ, если роли не переданы.
+      expect(body.containsKey('role_names'), isFalse);
+    });
   });
 }
 

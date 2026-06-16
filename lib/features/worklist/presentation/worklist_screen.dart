@@ -259,10 +259,16 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
 
   Widget _row(Appointment a, String branchId) {
     final service = a.service ?? '';
+    final cabinet = a.cabinet?.trim() ?? '';
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
         children: [
+          // Ticket number (the queue talon / appointment number) — prototype
+          // shows it large & teal. Sourced from Appointment.appointmentNo
+          // (required field; there is no separate queue-ticket on the model).
+          _ticket(a.appointmentNo),
+          const SizedBox(width: 12),
           InitialsAvatar(_initials(a.patientName)),
           const SizedBox(width: 12),
           SizedBox(
@@ -285,9 +291,15 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         fontWeight: FontWeight.w700, fontSize: 14.5)),
-                if (service.isNotEmpty) ...[
+                if (service.isNotEmpty || cabinet.isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  Text(service,
+                  Text(
+                      [
+                        if (service.isNotEmpty) service,
+                        // Cabinet/room — only when present on the appointment
+                        // (Appointment.cabinet is nullable; never fabricated).
+                        if (cabinet.isNotEmpty) 'Каб. $cabinet',
+                      ].join('  ·  '),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -301,6 +313,26 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
           const SizedBox(width: 12),
           _rowActions(a, branchId),
         ],
+      ),
+    );
+  }
+
+  /// Prototype-style ticket chip: the appointment/queue number on a soft teal
+  /// pill, in the tabular Manrope figure reserved for "ticket numbers".
+  Widget _ticket(String no) {
+    return Container(
+      width: 64,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.tealBg,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        no,
+        textAlign: TextAlign.center,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: AppTypography.number(14, color: AppColors.tealDark),
       ),
     );
   }

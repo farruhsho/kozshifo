@@ -111,9 +111,13 @@ ALL_CODES: list[str] = [code for code, _, _ in PERMISSIONS]
 # Cashier / Warehouse below remain as optional narrower roles the director can
 # assign when a larger clinic splits these duties (RBAC is fully dynamic).
 ROLE_TEMPLATES: dict[str, list[str]] = {
-    # Owner god-account: every permission (the account is also is_superuser, so
-    # it bypasses checks entirely — the role just makes the access explicit).
+    # Superadmin — owner tier: every permission AND is_superuser at the user
+    # level (bypasses checks). Only an account WITH this role may see/manage other
+    # Superadmins (see _is_owner in users.py).
     "Superadmin": ALL_CODES,
+    # Director — full clinic admin: every permission and is_superuser too, so it
+    # has the same broad bypass as the owner EXCEPT it is not a Superadmin, so the
+    # owner-visibility rule hides/locks the Superadmin account from the Director.
     "Director": ALL_CODES,
     "Reception": [
         "patients.read", "patients.create", "patients.update",
@@ -127,7 +131,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "inventory.read", "inventory.manage", "inventory.write_off",
         # expenses (rashod)
         "expenses.read", "expenses.manage",
-        "services.read", "branches.read",
+        # services: front desk maintains the price list — add / edit (per ТЗ).
+        "services.read", "services.create", "services.update", "branches.read",
         "exams.read",
         # Operations dept (TZ Modul 6): reception schedules referred operations
         # (date/surgeon/price) — the act of billing them onto the visit.

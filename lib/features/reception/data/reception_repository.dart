@@ -30,6 +30,20 @@ class ReceptionRepository {
     }
   }
 
+  /// Service categories (id + name) — used to group the price list on the
+  /// reception screen (Консультации / Диагностика / Процедуры …).
+  Future<List<({String id, String name})>> serviceCategories() async {
+    try {
+      final resp = await _dio.get('/service-categories');
+      return [
+        for (final e in resp.data as List<dynamic>)
+          (id: (e as Map<String, dynamic>)['id'] as String, name: e['name'] as String),
+      ];
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   Future<ReceptionVisit> createVisit({
     required String patientId,
     required String branchId,
@@ -176,3 +190,9 @@ final patientSummaryProvider = FutureProvider.autoDispose
 
 final activeServicesProvider = FutureProvider.autoDispose<List<Service>>(
     (ref) => ref.watch(receptionRepositoryProvider).services());
+
+/// Categories (id + name) for grouping the reception price list. Best-effort:
+/// if it fails, the services screen falls back to a single «Прочее» group.
+final serviceCategoriesProvider =
+    FutureProvider.autoDispose<List<({String id, String name})>>(
+        (ref) => ref.watch(receptionRepositoryProvider).serviceCategories());

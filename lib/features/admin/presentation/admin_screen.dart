@@ -22,27 +22,154 @@ class AdminScreen extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Администрирование'),
-          bottom: const TabBar(tabs: [
-            Tab(text: 'Услуги и цены'),
-            Tab(text: 'Филиалы'),
-            Tab(text: 'Сотрудники'),
-          ]),
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Услуги и цены'),
+              Tab(text: 'Филиалы'),
+              Tab(text: 'Сотрудники'),
+            ],
+          ),
         ),
-        body: const TabBarView(children: [
-          _ServicesTab(),
-          _BranchesTab(),
-          _StaffTab(),
-        ]),
+        body: const TabBarView(
+          children: [_ServicesTab(), _BranchesTab(), _StaffTab()],
+        ),
       ),
     );
   }
 }
 
 void _showSnack(BuildContext context, String message, {bool error = false}) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-    content: Text(message),
-    backgroundColor: error ? Theme.of(context).colorScheme.error : null,
-  ));
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(message),
+      backgroundColor: error ? Theme.of(context).colorScheme.error : null,
+    ),
+  );
+}
+
+/// Подпись сотрудника в пикере услуги: роли + кабинет (что есть).
+String? _doctorSub(StaffUser u) {
+  final parts = <String>[
+    if (u.roles.isNotEmpty) u.roles.join(', '),
+    if (u.cabinet != null && u.cabinet!.trim().isNotEmpty) u.cabinet!.trim(),
+  ];
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
+/// Чекбокс-мультивыбор внутри диалога (тот же паттерн, что у ролей): список
+/// [options] с уже выбранными id в [selected]; тап переключает через [onToggle].
+/// Источник (услуги/сотрудники) разворачивают в `.when` на стороне вызова.
+class _MultiPick extends StatelessWidget {
+  const _MultiPick({
+    required this.title,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+    this.emptyHint,
+  });
+
+  final String title;
+  final List<({String id, String label, String? sub})> options;
+  // Мутируется на месте: тап по строке добавляет/убирает id и зовёт onChanged
+  // (родитель просто делает setState). Так у 4 диалогов нет своих тогглов.
+  final Set<String> selected;
+  final VoidCallback onChanged;
+  final String? emptyHint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: Theme.of(context).textTheme.titleSmall),
+        if (options.isEmpty && emptyHint != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              emptyHint!,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        for (final o in options)
+          CheckboxListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            title: Text(o.label),
+            subtitle: o.sub == null ? null : Text(o.sub!),
+            value: selected.contains(o.id),
+            onChanged: (v) {
+              if (v ?? false) {
+                selected.add(o.id);
+              } else {
+                selected.remove(o.id);
+              }
+              onChanged();
+            },
+          ),
+      ],
+    );
+  }
+}
+
+/// Async-список → чекбокс-мультивыбор. Показывает АКТИВНЫЕ элементы плюс любой
+/// уже выбранный, даже если он стал неактивным (помечая «(неактивна)») — чтобы
+/// устаревшую связь было видно и можно было снять. [prioritize]==true поднимает
+/// элемент вверх (например врача с кабинетом). Загрузка/ошибка — единые.
+Widget _asyncMultiPick<T>(
+  BuildContext context,
+  AsyncValue<List<T>> source, {
+  required String title,
+  required String emptyHint,
+  required String errorLabel,
+  required Set<String> selected,
+  required VoidCallback onChanged,
+  required String Function(T) id,
+  required String Function(T) label,
+  required bool Function(T) isActive,
+  String? Function(T)? sub,
+  bool Function(T)? prioritize,
+  String inactiveSuffix = '(неактивна)',
+}) {
+  return source.when(
+    data: (items) {
+      final visible = [
+        for (final x in items)
+          if (isActive(x) || selected.contains(id(x))) x,
+      ];
+      if (prioritize != null) {
+        visible.sort((a, b) {
+          final byPriority = (prioritize(a) ? 0 : 1).compareTo(
+            prioritize(b) ? 0 : 1,
+          );
+          return byPriority != 0 ? byPriority : label(a).compareTo(label(b));
+        });
+      }
+      return _MultiPick(
+        title: title,
+        emptyHint: emptyHint,
+        selected: selected,
+        onChanged: onChanged,
+        options: [
+          for (final x in visible)
+            (
+              id: id(x),
+              label: isActive(x) ? label(x) : '${label(x)} $inactiveSuffix',
+              sub: sub?.call(x),
+            ),
+        ],
+      );
+    },
+    loading: () => const Padding(
+      padding: EdgeInsets.symmetric(vertical: 8),
+      child: LinearProgressIndicator(),
+    ),
+    error: (e, _) => Text(
+      '$errorLabel: $e',
+      style: TextStyle(color: Theme.of(context).colorScheme.error),
+    ),
+  );
 }
 
 // ═══ Услуги и цены ═══════════════════════════════════════════════════════════
@@ -83,10 +210,12 @@ class _ServicesTab extends ConsumerWidget {
               // владелец должен мочь включить её обратно.
               final greyed = s.isActive ? null : TextStyle(color: disabled);
               return ListTile(
-                leading: Icon(Icons.medical_services_outlined,
-                    color: s.isActive
-                        ? Theme.of(context).colorScheme.primary
-                        : disabled),
+                leading: Icon(
+                  Icons.medical_services_outlined,
+                  color: s.isActive
+                      ? Theme.of(context).colorScheme.primary
+                      : disabled,
+                ),
                 title: Text(s.name, style: greyed),
                 subtitle: Text(s.code, style: greyed),
                 trailing: Row(
@@ -101,13 +230,13 @@ class _ServicesTab extends ConsumerWidget {
                       ),
                       const SizedBox(width: 8),
                     ],
-                    Text(formatMoney(s.price),
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: s.isActive ? null : disabled)),
+                    Text(
+                      formatMoney(s.price),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: s.isActive ? null : disabled,
+                      ),
+                    ),
                   ],
                 ),
                 onTap: canUpdate ? () => _openEdit(context, ref, s) : null,
@@ -131,7 +260,10 @@ class _ServicesTab extends ConsumerWidget {
   }
 
   Future<void> _openEdit(
-      BuildContext context, WidgetRef ref, Service service) async {
+    BuildContext context,
+    WidgetRef ref,
+    Service service,
+  ) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => _ServiceEditDialog(service: service),
@@ -156,6 +288,7 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
   final _name = TextEditingController();
   final _price = TextEditingController();
   String? _categoryId;
+  final _selectedDoctorIds = <String>{};
   bool _saving = false;
 
   @override
@@ -178,11 +311,14 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await ref.read(adminRepositoryProvider).createService(
+      await ref
+          .read(adminRepositoryProvider)
+          .createService(
             code: _code.text.trim(),
             name: _name.text.trim(),
             price: _normalizedPrice,
             categoryId: _categoryId,
+            doctorIds: _selectedDoctorIds.toList(),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -196,59 +332,87 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
   @override
   Widget build(BuildContext context) {
     final categories = ref.watch(adminCategoriesProvider);
+    final users = ref.watch(adminUsersProvider);
 
     return AlertDialog(
       title: const Text('Новая услуга'),
       content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _code,
-              decoration: const InputDecoration(
-                  labelText: 'Код (уникальный)', hintText: 'CONS-01'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Название'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _price,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Цена, сум'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            categories.when(
-              data: (items) => DropdownButtonFormField<String?>(
-                initialValue: _categoryId,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Категория'),
-                items: [
-                  const DropdownMenuItem<String?>(
-                      value: null, child: Text('Без категории')),
-                  for (final c in items)
-                    DropdownMenuItem<String?>(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: _code,
+                decoration: const InputDecoration(
+                  labelText: 'Код (уникальный)',
+                  hintText: 'CONS-01',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'Название'),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _price,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(labelText: 'Цена, сум'),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              categories.when(
+                data: (items) => DropdownButtonFormField<String?>(
+                  initialValue: _categoryId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Категория'),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Без категории'),
+                    ),
+                    for (final c in items)
+                      DropdownMenuItem<String?>(
                         value: c.id,
-                        child: Text(c.name, overflow: TextOverflow.ellipsis)),
-                ],
-                onChanged: (v) => setState(() => _categoryId = v),
+                        child: Text(c.name, overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: (v) => setState(() => _categoryId = v),
+                ),
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                ),
+                // Категория необязательна — при ошибке не блокируем создание.
+                error: (e, _) => Text(
+                  'Категории недоступны: $e',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
               ),
-              loading: () => const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: LinearProgressIndicator(),
+              const SizedBox(height: 16),
+              _asyncMultiPick<StaffUser>(
+                context,
+                users,
+                title: 'Принимающие врачи',
+                emptyHint: 'Нет сотрудников',
+                errorLabel: 'Сотрудники недоступны',
+                selected: _selectedDoctorIds,
+                onChanged: () => setState(() {}),
+                id: (u) => u.id,
+                label: (u) => u.fullName,
+                isActive: (u) => u.isActive,
+                sub: _doctorSub,
+                prioritize: (u) =>
+                    u.cabinet != null && u.cabinet!.trim().isNotEmpty,
               ),
-              // Категория необязательна — при ошибке загрузки не блокируем создание.
-              error: (e, _) => Text('Категории недоступны: $e',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       actions: [
@@ -262,7 +426,8 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Создать'),
         ),
       ],
@@ -283,6 +448,9 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
   late final _name = TextEditingController(text: widget.service.name);
   late final _price = TextEditingController(text: widget.service.price);
   late bool _isActive = widget.service.isActive;
+  late final _selectedDoctorIds = <String>{
+    for (final d in widget.service.doctors) d.id,
+  };
   bool _saving = false;
 
   @override
@@ -302,11 +470,14 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await ref.read(adminRepositoryProvider).updateService(
+      await ref
+          .read(adminRepositoryProvider)
+          .updateService(
             widget.service.id,
             name: _name.text.trim(),
             price: _normalizedPrice,
             isActive: _isActive,
+            doctorIds: _selectedDoctorIds.toList(),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -319,34 +490,55 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final users = ref.watch(adminUsersProvider);
     return AlertDialog(
       title: Text('Услуга ${widget.service.code}'),
       content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _name,
-              decoration: const InputDecoration(labelText: 'Название'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _price,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Цена, сум'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 4),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Активна'),
-              value: _isActive,
-              onChanged: (v) => setState(() => _isActive = v),
-            ),
-          ],
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'Название'),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _price,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(labelText: 'Цена, сум'),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Активна'),
+                value: _isActive,
+                onChanged: (v) => setState(() => _isActive = v),
+              ),
+              const SizedBox(height: 12),
+              _asyncMultiPick<StaffUser>(
+                context,
+                users,
+                title: 'Принимающие врачи',
+                emptyHint: 'Нет сотрудников',
+                errorLabel: 'Сотрудники недоступны',
+                selected: _selectedDoctorIds,
+                onChanged: () => setState(() {}),
+                id: (u) => u.id,
+                label: (u) => u.fullName,
+                isActive: (u) => u.isActive,
+                sub: _doctorSub,
+                prioritize: (u) =>
+                    u.cabinet != null && u.cabinet!.trim().isNotEmpty,
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -360,7 +552,8 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Сохранить'),
         ),
       ],
@@ -405,8 +598,10 @@ class _BranchesTab extends ConsumerWidget {
               final b = items[i];
               final greyed = b.isActive ? null : TextStyle(color: disabled);
               return ListTile(
-                leading: Icon(Icons.local_hospital_outlined,
-                    color: b.isActive ? primary : disabled),
+                leading: Icon(
+                  Icons.local_hospital_outlined,
+                  color: b.isActive ? primary : disabled,
+                ),
                 title: Text(b.name, style: greyed),
                 subtitle: Text(
                   [b.code, if (b.address != null) b.address!].join(' · '),
@@ -442,7 +637,10 @@ class _BranchesTab extends ConsumerWidget {
   }
 
   Future<void> _openEdit(
-      BuildContext context, WidgetRef ref, AdminBranch branch) async {
+    BuildContext context,
+    WidgetRef ref,
+    AdminBranch branch,
+  ) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => _BranchEditDialog(branch: branch),
@@ -484,11 +682,12 @@ class _BranchCreateDialogState extends ConsumerState<_BranchCreateDialog> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await ref.read(adminRepositoryProvider).createBranch(
+      await ref
+          .read(adminRepositoryProvider)
+          .createBranch(
             name: _name.text.trim(),
             code: _code.text.trim(),
-            address:
-                _address.text.trim().isEmpty ? null : _address.text.trim(),
+            address: _address.text.trim().isEmpty ? null : _address.text.trim(),
             phone: assembleUzPhone(_phone.text),
           );
       if (mounted) Navigator.of(context).pop(true);
@@ -518,14 +717,17 @@ class _BranchCreateDialogState extends ConsumerState<_BranchCreateDialog> {
             TextField(
               controller: _code,
               decoration: const InputDecoration(
-                  labelText: 'Код (уникальный)', hintText: 'TASH-02'),
+                labelText: 'Код (уникальный)',
+                hintText: 'TASH-02',
+              ),
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _address,
-              decoration:
-                  const InputDecoration(labelText: 'Адрес (необязательно)'),
+              decoration: const InputDecoration(
+                labelText: 'Адрес (необязательно)',
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -552,7 +754,8 @@ class _BranchCreateDialogState extends ConsumerState<_BranchCreateDialog> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Создать'),
         ),
       ],
@@ -571,10 +774,12 @@ class _BranchEditDialog extends ConsumerStatefulWidget {
 
 class _BranchEditDialogState extends ConsumerState<_BranchEditDialog> {
   late final _name = TextEditingController(text: widget.branch.name);
-  late final _address =
-      TextEditingController(text: widget.branch.address ?? '');
-  late final _phone =
-      TextEditingController(text: extractUzPhoneLocal(widget.branch.phone));
+  late final _address = TextEditingController(
+    text: widget.branch.address ?? '',
+  );
+  late final _phone = TextEditingController(
+    text: extractUzPhoneLocal(widget.branch.phone),
+  );
   late bool _isActive = widget.branch.isActive;
   bool _saving = false;
 
@@ -591,11 +796,12 @@ class _BranchEditDialogState extends ConsumerState<_BranchEditDialog> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await ref.read(adminRepositoryProvider).updateBranch(
+      await ref
+          .read(adminRepositoryProvider)
+          .updateBranch(
             widget.branch.id,
             name: _name.text.trim(),
-            address:
-                _address.text.trim().isEmpty ? null : _address.text.trim(),
+            address: _address.text.trim().isEmpty ? null : _address.text.trim(),
             phone: assembleUzPhone(_phone.text),
             isActive: _isActive,
           );
@@ -655,7 +861,8 @@ class _BranchEditDialogState extends ConsumerState<_BranchEditDialog> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Сохранить'),
         ),
       ],
@@ -709,9 +916,11 @@ class _StaffTab extends ConsumerWidget {
               return ListTile(
                 isThreeLine: u.roles.isNotEmpty || u.isSuperuser || hasPercent,
                 leading: CircleAvatar(
-                  child: Icon(u.isSuperuser
-                      ? Icons.shield_outlined
-                      : Icons.person_outline),
+                  child: Icon(
+                    u.isSuperuser
+                        ? Icons.shield_outlined
+                        : Icons.person_outline,
+                  ),
                 ),
                 title: Text(u.fullName, style: greyed),
                 subtitle: Column(
@@ -769,13 +978,21 @@ class _StaffTab extends ConsumerWidget {
   }
 
   Future<void> _toggleActive(
-      BuildContext context, WidgetRef ref, StaffUser u, bool value) async {
+    BuildContext context,
+    WidgetRef ref,
+    StaffUser u,
+    bool value,
+  ) async {
     try {
       await ref.read(adminRepositoryProvider).updateUser(u.id, isActive: value);
       ref.invalidate(adminUsersProvider);
       if (context.mounted) {
-        _showSnack(context,
-            value ? 'Доступ включён: ${u.fullName}' : 'Доступ отключён: ${u.fullName}');
+        _showSnack(
+          context,
+          value
+              ? 'Доступ включён: ${u.fullName}'
+              : 'Доступ отключён: ${u.fullName}',
+        );
       }
     } catch (e) {
       if (context.mounted) _showSnack(context, e.toString(), error: true);
@@ -794,7 +1011,10 @@ class _StaffTab extends ConsumerWidget {
   }
 
   Future<void> _openEdit(
-      BuildContext context, WidgetRef ref, StaffUser user) async {
+    BuildContext context,
+    WidgetRef ref,
+    StaffUser user,
+  ) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => _UserEditDialog(user: user),
@@ -818,7 +1038,9 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
   final _email = TextEditingController();
   final _fullName = TextEditingController();
   final _password = TextEditingController();
+  final _cabinet = TextEditingController();
   final _selectedRoles = <String>{};
+  final _selectedServiceIds = <String>{};
   String? _branchId;
   bool _saving = false;
 
@@ -827,6 +1049,7 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
     _email.dispose();
     _fullName.dispose();
     _password.dispose();
+    _cabinet.dispose();
     super.dispose();
   }
 
@@ -834,12 +1057,16 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
-      await ref.read(adminRepositoryProvider).createUser(
+      await ref
+          .read(adminRepositoryProvider)
+          .createUser(
             email: _email.text.trim(),
             fullName: _fullName.text.trim(),
             password: _password.text,
             roleNames: _selectedRoles.toList(),
             branchId: _branchId,
+            cabinet: _cabinet.text.trim().isEmpty ? null : _cabinet.text.trim(),
+            serviceIds: _selectedServiceIds.toList(),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -854,6 +1081,7 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
   Widget build(BuildContext context) {
     final roles = ref.watch(adminRolesProvider);
     final branches = ref.watch(adminBranchesProvider);
+    final services = ref.watch(adminServicesProvider);
 
     return AlertDialog(
       title: const Text('Новый сотрудник'),
@@ -892,10 +1120,10 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                   controller: _password,
                   obscureText: true,
                   decoration: const InputDecoration(
-                      labelText: 'Пароль (минимум 8 символов)'),
-                  validator: (v) => (v == null || v.length < 8)
-                      ? 'Минимум 8 символов'
-                      : null,
+                    labelText: 'Пароль (минимум 8 символов)',
+                  ),
+                  validator: (v) =>
+                      (v == null || v.length < 8) ? 'Минимум 8 символов' : null,
                 ),
                 const SizedBox(height: 12),
                 branches.when(
@@ -905,12 +1133,14 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                     decoration: const InputDecoration(labelText: 'Филиал'),
                     items: [
                       const DropdownMenuItem<String?>(
-                          value: null, child: Text('Без филиала')),
+                        value: null,
+                        child: Text('Без филиала'),
+                      ),
                       for (final b in items.where((b) => b.isActive))
                         DropdownMenuItem<String?>(
-                            value: b.id,
-                            child:
-                                Text(b.name, overflow: TextOverflow.ellipsis)),
+                          value: b.id,
+                          child: Text(b.name, overflow: TextOverflow.ellipsis),
+                        ),
                     ],
                     onChanged: (v) => setState(() => _branchId = v),
                   ),
@@ -918,9 +1148,20 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: LinearProgressIndicator(),
                   ),
-                  error: (e, _) => Text('Филиалы недоступны: $e',
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.error)),
+                  error: (e, _) => Text(
+                    'Филиалы недоступны: $e',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _cabinet,
+                  decoration: const InputDecoration(
+                    labelText: 'Кабинет (для врача)',
+                    hintText: 'Каб. 1',
+                  ),
                 ),
                 const SizedBox(height: 16),
                 Text('Роли', style: Theme.of(context).textTheme.titleSmall),
@@ -934,8 +1175,9 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                           contentPadding: EdgeInsets.zero,
                           controlAffinity: ListTileControlAffinity.leading,
                           title: Text(r.name),
-                          subtitle: Text(r.description ??
-                              'прав: ${r.permissionCount}'),
+                          subtitle: Text(
+                            r.description ?? 'прав: ${r.permissionCount}',
+                          ),
                           value: _selectedRoles.contains(r.name),
                           onChanged: (v) => setState(() {
                             if (v == true) {
@@ -951,9 +1193,26 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: LinearProgressIndicator(),
                   ),
-                  error: (e, _) => Text('Роли недоступны: $e',
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.error)),
+                  error: (e, _) => Text(
+                    'Роли недоступны: $e',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _asyncMultiPick<Service>(
+                  context,
+                  services,
+                  title: 'Услуги врача',
+                  emptyHint: 'Нет услуг',
+                  errorLabel: 'Услуги недоступны',
+                  selected: _selectedServiceIds,
+                  onChanged: () => setState(() {}),
+                  id: (s) => s.id,
+                  label: (s) => s.name,
+                  isActive: (s) => s.isActive,
+                  sub: (s) => '${s.code} · ${formatMoney(s.price)}',
                 ),
               ],
             ),
@@ -971,7 +1230,8 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Создать'),
         ),
       ],
@@ -979,8 +1239,9 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
   }
 }
 
-/// Редактирование сотрудника: процентная оплата врача («Процент врача», 0–100).
-/// Пустое поле = снять с процентной оплаты (бэкенду уходит salary_percent: null).
+/// Редактирование сотрудника: кабинет врача, услуги, которые он ведёт, роли и
+/// процентная оплата («Процент врача», 0–100). Пустой процент = снять с процента
+/// (salary_percent: null); пустой кабинет = очистить (cabinet: null).
 class _UserEditDialog extends ConsumerStatefulWidget {
   const _UserEditDialog({required this.user});
 
@@ -991,15 +1252,21 @@ class _UserEditDialog extends ConsumerStatefulWidget {
 }
 
 class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
-  late final _percent =
-      TextEditingController(text: widget.user.salaryPercent ?? '');
+  late final _percent = TextEditingController(
+    text: widget.user.salaryPercent ?? '',
+  );
+  late final _cabinet = TextEditingController(text: widget.user.cabinet ?? '');
   // Предзаполняем текущими ролями пользователя — снять/добавить можно тут же.
   late final _selectedRoles = <String>{...widget.user.roles};
+  late final _selectedServiceIds = <String>{
+    for (final s in widget.user.services) s.id,
+  };
   bool _saving = false;
 
   @override
   void dispose() {
     _percent.dispose();
+    _cabinet.dispose();
     super.dispose();
   }
 
@@ -1021,13 +1288,19 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
   Future<void> _save() async {
     setState(() => _saving = true);
     final raw = _normalizedPercent;
+    final cab = _cabinet.text.trim();
     try {
-      await ref.read(adminRepositoryProvider).updateUser(
+      await ref
+          .read(adminRepositoryProvider)
+          .updateUser(
             widget.user.id,
             roleNames: _selectedRoles.toList(),
             salaryPercent: raw.isEmpty ? null : raw,
             // Пустое поле — явный сброс процентной оплаты (отправляем null).
             clearSalaryPercent: raw.isEmpty,
+            cabinet: cab.isEmpty ? null : cab,
+            clearCabinet: cab.isEmpty,
+            serviceIds: _selectedServiceIds.toList(),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -1042,6 +1315,7 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
   Widget build(BuildContext context) {
     final error = _percent.text.trim().isEmpty ? null : _validatePercent();
     final roles = ref.watch(adminRolesProvider);
+    final services = ref.watch(adminServicesProvider);
     return AlertDialog(
       title: Text(widget.user.fullName),
       content: SizedBox(
@@ -1051,13 +1325,16 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(widget.user.email,
-                  style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                widget.user.email,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
               const SizedBox(height: 16),
               TextField(
                 controller: _percent,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: InputDecoration(
                   labelText: 'Процент врача',
                   hintText: '0–100',
@@ -1067,9 +1344,19 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                 ),
                 onChanged: (_) => setState(() {}),
               ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _cabinet,
+                decoration: const InputDecoration(
+                  labelText: 'Кабинет (для врача)',
+                  hintText: 'Каб. 1',
+                ),
+              ),
               const SizedBox(height: 16),
-              Text('Роли / доступ',
-                  style: Theme.of(context).textTheme.titleSmall),
+              Text(
+                'Роли / доступ',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
               roles.when(
                 data: (items) => Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1081,7 +1368,8 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                         controlAffinity: ListTileControlAffinity.leading,
                         title: Text(r.name),
                         subtitle: Text(
-                            r.description ?? 'прав: ${r.permissionCount}'),
+                          r.description ?? 'прав: ${r.permissionCount}',
+                        ),
                         value: _selectedRoles.contains(r.name),
                         onChanged: (v) => setState(() {
                           if (v == true) {
@@ -1097,9 +1385,24 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: LinearProgressIndicator(),
                 ),
-                error: (e, _) => Text('Роли недоступны: $e',
-                    style:
-                        TextStyle(color: Theme.of(context).colorScheme.error)),
+                error: (e, _) => Text(
+                  'Роли недоступны: $e',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _asyncMultiPick<Service>(
+                context,
+                services,
+                title: 'Услуги врача',
+                emptyHint: 'Нет услуг',
+                errorLabel: 'Услуги недоступны',
+                selected: _selectedServiceIds,
+                onChanged: () => setState(() {}),
+                id: (s) => s.id,
+                label: (s) => s.name,
+                isActive: (s) => s.isActive,
+                sub: (s) => '${s.code} · ${formatMoney(s.price)}',
               ),
             ],
           ),
@@ -1116,7 +1419,8 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
               ? const SizedBox(
                   height: 18,
                   width: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Сохранить'),
         ),
       ],

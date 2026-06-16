@@ -15,6 +15,9 @@ _Service _$ServiceFromJson(Map<String, dynamic> json) => _Service(
   description: json['description'] as String?,
   isActive: json['is_active'] as bool? ?? true,
   categoryId: json['category_id'] as String?,
+  doctors: json['doctors'] == null
+      ? const <ServiceDoctor>[]
+      : serviceDoctorsFromJson(json['doctors']),
 );
 
 Map<String, dynamic> _$ServiceToJson(_Service instance) => <String, dynamic>{
@@ -26,4 +29,5 @@ Map<String, dynamic> _$ServiceToJson(_Service instance) => <String, dynamic>{
   'description': instance.description,
   'is_active': instance.isActive,
   'category_id': instance.categoryId,
+  'doctors': serviceDoctorsToJson(instance.doctors),
 };

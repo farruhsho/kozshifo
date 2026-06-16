@@ -9,6 +9,7 @@ import 'package:kozshifo/features/admin/data/admin_repository.dart';
 import 'package:kozshifo/features/admin/domain/admin_branch.dart';
 import 'package:kozshifo/features/admin/domain/admin_role.dart';
 import 'package:kozshifo/features/admin/domain/staff_user.dart';
+import 'package:kozshifo/features/reception/domain/service.dart';
 
 void main() {
   const userJson = <String, dynamic>{
@@ -102,8 +103,18 @@ void main() {
       'description': 'Врач-офтальмолог',
       'is_system': true,
       'permissions': [
-        {'id': 'p-1', 'code': 'patients.read', 'module': 'patients', 'description': null},
-        {'id': 'p-2', 'code': 'exams.update', 'module': 'exams', 'description': null},
+        {
+          'id': 'p-1',
+          'code': 'patients.read',
+          'module': 'patients',
+          'description': null,
+        },
+        {
+          'id': 'p-2',
+          'code': 'exams.update',
+          'module': 'exams',
+          'description': null,
+        },
       ],
     });
     expect(r.name, 'doctor');
@@ -176,6 +187,194 @@ void main() {
       expect(body.containsKey('role_names'), isFalse);
     });
   });
+
+  // ─── Ф1: cabinet + doctor↔service M2M ───────────────────────────────────────
+  test('StaffUser parses cabinet and services', () {
+    final u = StaffUser.fromJson(const {
+      'id': 'u-1',
+      'email': 'd@kozshifo.uz',
+      'full_name': 'Доктор',
+      'cabinet': 'Каб. 1',
+      'services': [
+        {'id': 's-1', 'code': 'CONS-01', 'name': 'Консультация'},
+        {'id': 's-2', 'code': 'OCT', 'name': 'ОКТ'},
+      ],
+    });
+    expect(u.cabinet, 'Каб. 1');
+    expect(u.services.map((s) => s.id).toList(), ['s-1', 's-2']);
+    expect(u.services.first.code, 'CONS-01');
+    expect(u.services.first.name, 'Консультация');
+  });
+
+  test('StaffUser: cabinet null and services empty when absent', () {
+    final u = StaffUser.fromJson(const {
+      'id': 'u-9',
+      'email': 'x@kozshifo.uz',
+      'full_name': 'Без клиники',
+    });
+    expect(u.cabinet, isNull);
+    expect(u.services, isEmpty);
+  });
+
+  test('Service parses eligible doctors with cabinet', () {
+    final s = Service.fromJson(const {
+      'id': 's-1',
+      'code': 'CONS-01',
+      'name': 'Консультация',
+      'price': '150000.00',
+      'doctors': [
+        {'id': 'u-1', 'full_name': 'Доктор А', 'cabinet': 'Каб. 1'},
+        {'id': 'u-2', 'full_name': 'Доктор Б', 'cabinet': null},
+      ],
+    });
+    expect(s.doctors.length, 2);
+    expect(s.doctors.first.id, 'u-1');
+    expect(s.doctors.first.fullName, 'Доктор А');
+    expect(s.doctors.first.cabinet, 'Каб. 1');
+    expect(s.doctors[1].cabinet, isNull);
+  });
+
+  test('Service: doctors empty when absent', () {
+    final s = Service.fromJson(const {
+      'id': 's-2',
+      'code': 'X',
+      'name': 'Услуга',
+      'price': '0',
+    });
+    expect(s.doctors, isEmpty);
+  });
+
+  group('AdminRepository cabinet, services & doctors payloads', () {
+    (AdminRepository, RequestOptions Function()) makeUserRepo() {
+      RequestOptions? captured;
+      final dio = Dio(BaseOptions(baseUrl: 'http://test.local/api/v1'))
+        ..httpClientAdapter = _CapturingAdapter((options) {
+          captured = options;
+          return ResponseBody.fromString(
+            jsonEncode(const {
+              'id': 'u-1',
+              'email': 'd@kozshifo.uz',
+              'full_name': 'Доктор',
+            }),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+      return (AdminRepository(dio), () => captured!);
+    }
+
+    (AdminRepository, RequestOptions Function()) makeServiceRepo() {
+      RequestOptions? captured;
+      final dio = Dio(BaseOptions(baseUrl: 'http://test.local/api/v1'))
+        ..httpClientAdapter = _CapturingAdapter((options) {
+          captured = options;
+          return ResponseBody.fromString(
+            jsonEncode(const {
+              'id': 's-1',
+              'code': 'CONS-01',
+              'name': 'Консультация',
+              'price': '150000.00',
+            }),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+      return (AdminRepository(dio), () => captured!);
+    }
+
+    test('createUser sends cabinet and service_ids', () async {
+      final (repo, last) = makeUserRepo();
+      await repo.createUser(
+        email: 'd@kozshifo.uz',
+        fullName: 'Доктор',
+        password: 'password1',
+        roleNames: const ['doctor'],
+        cabinet: 'Каб. 1',
+        serviceIds: const ['s-1', 's-2'],
+      );
+      final body = last().data as Map<String, dynamic>;
+      expect(body['cabinet'], 'Каб. 1');
+      expect(body['service_ids'], ['s-1', 's-2']);
+    });
+
+    test('createUser omits cabinet/service_ids when not given', () async {
+      final (repo, last) = makeUserRepo();
+      await repo.createUser(
+        email: 'd@kozshifo.uz',
+        fullName: 'Доктор',
+        password: 'password1',
+        roleNames: const [],
+      );
+      final body = last().data as Map<String, dynamic>;
+      expect(body.containsKey('cabinet'), isFalse);
+      expect(body.containsKey('service_ids'), isFalse);
+    });
+
+    test(
+      'updateUser sends cabinet + service_ids; clear sends null cabinet',
+      () async {
+        final (repo, last) = makeUserRepo();
+        await repo.updateUser(
+          'u-1',
+          cabinet: 'Каб. 2',
+          serviceIds: const ['s-1'],
+        );
+        var body = last().data as Map<String, dynamic>;
+        expect(body['cabinet'], 'Каб. 2');
+        expect(body['service_ids'], ['s-1']);
+
+        await repo.updateUser('u-1', clearCabinet: true, serviceIds: const []);
+        body = last().data as Map<String, dynamic>;
+        expect(body.containsKey('cabinet'), isTrue);
+        expect(body['cabinet'], isNull);
+        expect(body['service_ids'], isEmpty);
+      },
+    );
+
+    test('updateUser omits cabinet/service_ids when untouched', () async {
+      final (repo, last) = makeUserRepo();
+      await repo.updateUser('u-1', salaryPercent: '10');
+      final body = last().data as Map<String, dynamic>;
+      expect(body.containsKey('cabinet'), isFalse);
+      expect(body.containsKey('service_ids'), isFalse);
+    });
+
+    test('createService sends doctor_ids', () async {
+      final (repo, last) = makeServiceRepo();
+      await repo.createService(
+        code: 'CONS-01',
+        name: 'Консультация',
+        price: '150000',
+        doctorIds: const ['u-1', 'u-2'],
+      );
+      final body = last().data as Map<String, dynamic>;
+      expect(body['doctor_ids'], ['u-1', 'u-2']);
+    });
+
+    test(
+      'updateService sends doctor_ids ([] clears); omits when untouched',
+      () async {
+        final (repo, last) = makeServiceRepo();
+        await repo.updateService('s-1', doctorIds: const ['u-1']);
+        var body = last().data as Map<String, dynamic>;
+        expect(body['doctor_ids'], ['u-1']);
+
+        await repo.updateService('s-1', doctorIds: const []);
+        body = last().data as Map<String, dynamic>;
+        expect(body.containsKey('doctor_ids'), isTrue);
+        expect(body['doctor_ids'], isEmpty);
+
+        await repo.updateService('s-1', name: 'Новое имя');
+        body = last().data as Map<String, dynamic>;
+        expect(body.containsKey('doctor_ids'), isFalse);
+        expect(body['name'], 'Новое имя');
+      },
+    );
+  });
 }
 
 /// Захватывает RequestOptions и возвращает заранее заданный ответ (без сети).
@@ -185,9 +384,11 @@ class _CapturingAdapter implements HttpClientAdapter {
   final ResponseBody Function(RequestOptions options) _handler;
 
   @override
-  Future<ResponseBody> fetch(RequestOptions options,
-          Stream<Uint8List>? requestStream, Future<void>? cancelFuture) async =>
-      _handler(options);
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async => _handler(options);
 
   @override
   void close({bool force = false}) {}

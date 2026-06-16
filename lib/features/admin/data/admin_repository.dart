@@ -13,7 +13,8 @@ import '../domain/staff_user.dart';
 typedef CategoryRef = ({String id, String name});
 
 final adminRepositoryProvider = Provider<AdminRepository>(
-    (ref) => AdminRepository(ref.watch(dioProvider)));
+  (ref) => AdminRepository(ref.watch(dioProvider)),
+);
 
 /// Owner Control Center: services & prices, branches, staff users.
 /// Money/price decimals are passed as strings — the server owns decimal math.
@@ -28,13 +29,14 @@ class AdminRepository {
   /// searchable pickers are tracked in AGENTS.md §7 leftovers).
   Future<List<Service>> services({String? q}) async {
     try {
-      final resp = await _dio.get('/services', queryParameters: {
-        'q': ?q,
-        'offset': 0,
-        'limit': 200,
-      });
-      return Page.fromJson(resp.data as Map<String, dynamic>, Service.fromJson)
-          .items;
+      final resp = await _dio.get(
+        '/services',
+        queryParameters: {'q': ?q, 'offset': 0, 'limit': 200},
+      );
+      return Page.fromJson(
+        resp.data as Map<String, dynamic>,
+        Service.fromJson,
+      ).items;
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -62,16 +64,21 @@ class AdminRepository {
     int? durationMinutes,
     String? description,
     String? categoryId,
+    List<String>? doctorIds,
   }) async {
     try {
-      final resp = await _dio.post('/services', data: {
-        'code': code,
-        'name': name,
-        'price': price,
-        'duration_minutes': ?durationMinutes,
-        'description': ?description,
-        'category_id': ?categoryId,
-      });
+      final resp = await _dio.post(
+        '/services',
+        data: {
+          'code': code,
+          'name': name,
+          'price': price,
+          'duration_minutes': ?durationMinutes,
+          'description': ?description,
+          'category_id': ?categoryId,
+          'doctor_ids': ?doctorIds,
+        },
+      );
       return Service.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -79,18 +86,25 @@ class AdminRepository {
   }
 
   /// PATCH with exclude-unset semantics: only the provided keys are sent.
+  /// [doctorIds] (when non-null) replaces the service's eligible-doctor list
+  /// wholesale; pass `[]` to clear it back to the open pool.
   Future<Service> updateService(
     String id, {
     String? name,
     String? price,
     bool? isActive,
+    List<String>? doctorIds,
   }) async {
     try {
-      final resp = await _dio.patch('/services/$id', data: {
+      final body = <String, dynamic>{
         'name': ?name,
         'price': ?price,
         'is_active': ?isActive,
-      });
+      };
+      if (doctorIds != null) {
+        body['doctor_ids'] = doctorIds;
+      }
+      final resp = await _dio.patch('/services/$id', data: body);
       return Service.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -117,12 +131,15 @@ class AdminRepository {
     String? phone,
   }) async {
     try {
-      final resp = await _dio.post('/branches', data: {
-        'name': name,
-        'code': code,
-        'address': ?address,
-        'phone': ?phone,
-      });
+      final resp = await _dio.post(
+        '/branches',
+        data: {
+          'name': name,
+          'code': code,
+          'address': ?address,
+          'phone': ?phone,
+        },
+      );
       return AdminBranch.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -138,12 +155,15 @@ class AdminRepository {
     bool? isActive,
   }) async {
     try {
-      final resp = await _dio.patch('/branches/$id', data: {
-        'name': ?name,
-        'address': ?address,
-        'phone': ?phone,
-        'is_active': ?isActive,
-      });
+      final resp = await _dio.patch(
+        '/branches/$id',
+        data: {
+          'name': ?name,
+          'address': ?address,
+          'phone': ?phone,
+          'is_active': ?isActive,
+        },
+      );
       return AdminBranch.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -154,13 +174,17 @@ class AdminRepository {
 
   Future<List<StaffUser>> users() async {
     try {
-      final resp = await _dio.get('/users', queryParameters: {
-        'offset': 0,
-        'limit': 200, // backend max page size for /users
-      });
+      final resp = await _dio.get(
+        '/users',
+        queryParameters: {
+          'offset': 0,
+          'limit': 200, // backend max page size for /users
+        },
+      );
       return Page.fromJson(
-              resp.data as Map<String, dynamic>, StaffUser.fromJson)
-          .items;
+        resp.data as Map<String, dynamic>,
+        StaffUser.fromJson,
+      ).items;
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -172,15 +196,22 @@ class AdminRepository {
     required String password,
     required List<String> roleNames,
     String? branchId,
+    String? cabinet,
+    List<String>? serviceIds,
   }) async {
     try {
-      final resp = await _dio.post('/users', data: {
-        'email': email,
-        'full_name': fullName,
-        'password': password,
-        'role_names': roleNames,
-        'branch_id': ?branchId,
-      });
+      final resp = await _dio.post(
+        '/users',
+        data: {
+          'email': email,
+          'full_name': fullName,
+          'password': password,
+          'role_names': roleNames,
+          'branch_id': ?branchId,
+          'cabinet': ?cabinet,
+          'service_ids': ?serviceIds,
+        },
+      );
       return StaffUser.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -200,6 +231,9 @@ class AdminRepository {
     List<String>? roleNames,
     String? salaryPercent,
     bool clearSalaryPercent = false,
+    String? cabinet,
+    bool clearCabinet = false,
+    List<String>? serviceIds,
   }) async {
     try {
       final body = <String, dynamic>{
@@ -212,6 +246,17 @@ class AdminRepository {
         body['salary_percent'] = null;
       } else if (salaryPercent != null) {
         body['salary_percent'] = salaryPercent;
+      }
+      // Same explicit-null clear path for the doctor's cabinet (empty field).
+      if (clearCabinet) {
+        body['cabinet'] = null;
+      } else if (cabinet != null) {
+        body['cabinet'] = cabinet;
+      }
+      // service_ids (when non-null) replaces the doctor's services wholesale;
+      // `[]` clears them. Omitted = unchanged.
+      if (serviceIds != null) {
+        body['service_ids'] = serviceIds;
       }
       final resp = await _dio.patch('/users/$id', data: body);
       return StaffUser.fromJson(resp.data as Map<String, dynamic>);
@@ -235,16 +280,21 @@ class AdminRepository {
 }
 
 final adminServicesProvider = FutureProvider.autoDispose<List<Service>>(
-    (ref) => ref.watch(adminRepositoryProvider).services());
+  (ref) => ref.watch(adminRepositoryProvider).services(),
+);
 
 final adminCategoriesProvider = FutureProvider.autoDispose<List<CategoryRef>>(
-    (ref) => ref.watch(adminRepositoryProvider).categories());
+  (ref) => ref.watch(adminRepositoryProvider).categories(),
+);
 
 final adminBranchesProvider = FutureProvider.autoDispose<List<AdminBranch>>(
-    (ref) => ref.watch(adminRepositoryProvider).branches());
+  (ref) => ref.watch(adminRepositoryProvider).branches(),
+);
 
 final adminUsersProvider = FutureProvider.autoDispose<List<StaffUser>>(
-    (ref) => ref.watch(adminRepositoryProvider).users());
+  (ref) => ref.watch(adminRepositoryProvider).users(),
+);
 
 final adminRolesProvider = FutureProvider.autoDispose<List<AdminRole>>(
-    (ref) => ref.watch(adminRepositoryProvider).roles());
+  (ref) => ref.watch(adminRepositoryProvider).roles(),
+);

@@ -5,7 +5,7 @@ from app.models.audit import AuditLog
 from app.models.branch import Branch
 from app.models.call import CallRecord
 from app.models.camera import Camera
-from app.models.catalog import Service, ServiceCategory
+from app.models.catalog import Service, ServiceCategory, service_doctors
 from app.models.finance import Expense
 from app.models.device import Device, DeviceResult
 from app.models.diagnosis import VisitDiagnosis
@@ -51,6 +51,7 @@ __all__ = [
     "QueueTicket",
     "Service",
     "ServiceCategory",
+    "service_doctors",
     "StockBatch",
     "StockMovement",
     "Supplier",

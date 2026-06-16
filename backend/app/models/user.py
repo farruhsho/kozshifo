@@ -35,6 +35,10 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     faceid_employee_no: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
     )
+    # The doctor's consulting room (e.g. "Каб. 1", "Офтальмолог"). When a doctor
+    # calls a queue ticket the patient is routed to THIS cabinet, so reception
+    # never picks a cabinet at payment time. NULL for non-clinical staff.
+    cabinet: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles, back_populates="users", lazy="selectin"
@@ -43,6 +47,12 @@ class User(UUIDPKMixin, TimestampMixin, Base):
         secondary=user_permissions, lazy="selectin"
     )
     branch: Mapped["Branch | None"] = relationship(lazy="joined")  # noqa: F821
+    # Services this doctor provides (M2M). A paid service's queue ticket is
+    # claimable by any of its eligible doctors; the cabinet then comes from the
+    # doctor (see `cabinet`). Empty = open pool.
+    services: Mapped[list["Service"]] = relationship(  # noqa: F821
+        secondary="service_doctors", back_populates="doctors", lazy="selectin"
+    )
 
     def effective_permission_codes(self) -> set[str]:
         """Union of all role permissions and directly granted permissions."""

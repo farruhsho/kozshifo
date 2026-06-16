@@ -12,6 +12,7 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.security import hash_password
+from app.models.catalog import Service
 from app.models.rbac import Role, user_roles
 from app.models.user import User
 from app.schemas.common import Page
@@ -27,6 +28,18 @@ def _resolve_roles(db: Session, names: list[str]) -> list[Role]:
     missing = set(names) - {r.name for r in found}
     if missing:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"Unknown role names: {sorted(missing)}")
+    return found
+
+
+def _resolve_services(db: Session, ids: list[UUID]) -> list[Service]:
+    """Resolve the services a doctor provides (validated)."""
+    if not ids:
+        return []
+    found = list(db.execute(select(Service).where(Service.id.in_(ids))).scalars().all())
+    missing = set(ids) - {s.id for s in found}
+    if missing:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Unknown service ids: {sorted(map(str, missing))}")
     return found
 
 
@@ -95,8 +108,10 @@ def create_user(
         phone=payload.phone,
         branch_id=payload.branch_id,
         is_superuser=payload.is_superuser,
+        cabinet=payload.cabinet,
     )
     user.roles = _resolve_roles(db, payload.role_names)
+    user.services = _resolve_services(db, payload.service_ids)
     db.add(user)
     db.flush()
     record_audit(db, action="create", entity_type="user", entity_id=user.id, actor_id=actor.id,
@@ -138,6 +153,8 @@ def update_user(
     )
     if "role_names" in data:
         user.roles = _resolve_roles(db, data.pop("role_names") or [])
+    if "service_ids" in data:
+        user.services = _resolve_services(db, data.pop("service_ids") or [])
     for field, value in data.items():
         setattr(user, field, value)
     record_audit(db, action="update", entity_type="user", entity_id=user.id, actor_id=actor.id,

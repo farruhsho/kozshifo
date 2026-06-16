@@ -12,6 +12,7 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.models.catalog import Service, ServiceCategory
+from app.models.user import User
 from app.schemas.catalog import (
     ServiceCategoryCreate,
     ServiceCategoryOut,
@@ -22,6 +23,18 @@ from app.schemas.catalog import (
 from app.schemas.common import Page
 
 router = APIRouter(tags=["Catalog"])
+
+
+def _resolve_doctors(db: Session, ids: list[UUID]) -> list[User]:
+    """Resolve a service's eligible-doctor ids (validated)."""
+    if not ids:
+        return []
+    found = list(db.execute(select(User).where(User.id.in_(ids))).scalars().all())
+    missing = set(ids) - {u.id for u in found}
+    if missing:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Unknown doctor ids: {sorted(map(str, missing))}")
+    return found
 
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -75,7 +88,10 @@ def create_service(
 ) -> Service:
     if db.execute(select(Service).where(Service.code == payload.code)).scalar_one_or_none():
         raise HTTPException(status.HTTP_409_CONFLICT, "Service code already exists")
-    service = Service(**payload.model_dump())
+    data = payload.model_dump()
+    doctor_ids = data.pop("doctor_ids", [])
+    service = Service(**data)
+    service.doctors = _resolve_doctors(db, doctor_ids)
     db.add(service)
     db.flush()
     record_audit(db, action="create", entity_type="service", entity_id=service.id, actor_id=actor.id,
@@ -95,7 +111,10 @@ def update_service(
     service = db.get(Service, service_id)
     if service is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Service not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "doctor_ids" in data:
+        service.doctors = _resolve_doctors(db, data.pop("doctor_ids") or [])
+    for field, value in data.items():
         setattr(service, field, value)
     record_audit(db, action="update", entity_type="service", entity_id=service.id, actor_id=actor.id,
                  summary=f"Updated service {service.code}")

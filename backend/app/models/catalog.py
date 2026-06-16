@@ -4,11 +4,20 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Uuid
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, Numeric, String, Table, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.base import TimestampMixin, UUIDPKMixin
+
+# Doctors eligible to provide a service (M2M). Empty for a service = open pool
+# (any doctor); the cabinet always comes from whichever doctor calls the ticket.
+service_doctors = Table(
+    "service_doctors",
+    Base.metadata,
+    Column("service_id", Uuid, ForeignKey("services.id", ondelete="CASCADE"), primary_key=True),
+    Column("user_id", Uuid, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class ServiceCategory(UUIDPKMixin, TimestampMixin, Base):
@@ -33,3 +42,8 @@ class Service(UUIDPKMixin, TimestampMixin, Base):
     )
 
     category: Mapped[ServiceCategory | None] = relationship(lazy="joined")
+    # Eligible doctors (M2M) — reception picks them on the service form; the
+    # queue routes a paid ticket to one of them, into that doctor's cabinet.
+    doctors: Mapped[list["User"]] = relationship(  # noqa: F821
+        "User", secondary=service_doctors, back_populates="services", lazy="selectin"
+    )

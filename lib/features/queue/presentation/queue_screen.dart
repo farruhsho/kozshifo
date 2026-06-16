@@ -501,12 +501,23 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                             dense: true,
                             leading: CircleAvatar(
                               radius: 22,
-                              child: Text(
-                                t.ticketNumber,
-                                style: TextStyle(
-                                  fontSize: 21,
-                                  fontWeight: FontWeight.w800,
-                                  color: accent,
+                              // Номер талона (D-001 … V-0999) масштабируется под
+                              // кружок: без FittedBox длинный номер переносился на
+                              // две строки и обрезался ободом аватара («V-0 / 03»).
+                              child: Padding(
+                                padding: const EdgeInsets.all(3),
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    t.ticketNumber,
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    style: TextStyle(
+                                      fontSize: 21,
+                                      fontWeight: FontWeight.w800,
+                                      color: accent,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),

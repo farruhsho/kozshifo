@@ -57,6 +57,33 @@ class _FakeQueueRepository extends QueueRepository {
       const <Specialist>[];
 }
 
+/// Returns one waiting doctor ticket immediately — for asserting how the
+/// ticket number renders inside the round avatar.
+class _OneTicketQueueRepository extends QueueRepository {
+  _OneTicketQueueRepository() : super(Dio());
+
+  @override
+  Future<List<QueueTicket>> list({
+    required String branchId,
+    String? track,
+    bool activeOnly = true,
+  }) async => const [
+    QueueTicket(
+      id: 't1',
+      ticketNumber: 'V-0003',
+      track: 'doctor',
+      patientId: 'p1',
+      branchId: 'br-1',
+      status: 'waiting',
+      createdAt: '2026-06-16T11:34:12',
+    ),
+  ];
+
+  @override
+  Future<List<Specialist>> specialists(String branchId) async =>
+      const <Specialist>[];
+}
+
 void main() {
   testWidgets(
     '5s auto-refresh skips ticks while a fetch is in flight and disposes '
@@ -91,6 +118,43 @@ void main() {
       // periodic timer, leaving no pending Timer (the classic hang/leak).
       repo.resolve();
       await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'long ticket number renders on one fitted line (no wrap/clip in the avatar)',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(_FakeAuthController.new),
+            queueRepositoryProvider.overrideWithValue(
+              _OneTicketQueueRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: QueueScreen()),
+        ),
+      );
+      // Let list()/specialists() resolve and the waiting tile build.
+      await tester.pump();
+      await tester.pump();
+
+      // Regression: "V-0003" used to wrap to two lines and get clipped by the
+      // 44px round avatar ("V-0 / 03"). It must now be one fitted line.
+      final number = tester.widget<Text>(find.text('V-0003'));
+      expect(number.maxLines, 1);
+      expect(number.softWrap, isFalse);
+      expect(
+        find.ancestor(
+          of: find.text('V-0003'),
+          matching: find.byType(FittedBox),
+        ),
+        findsOneWidget,
+      );
+
+      // Tear down so the screen's 5s periodic timer is cancelled (no pending
+      // Timer at test end).
       await tester.pumpWidget(const SizedBox());
     },
   );

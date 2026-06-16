@@ -43,6 +43,12 @@ class CallNextRequest(BaseModel):
     for_user_id: UUID | None = None
 
 
+class CallTicketRequest(BaseModel):
+    # Call ONE specific waiting ticket (out of order) into this room — the room
+    # is the calling staff's cabinet. None = leave the ticket's room unset.
+    room: str | None = None
+
+
 class AssignRequest(BaseModel):
     # Route a waiting ticket to a specific specialist; None clears it back to
     # the open pool.

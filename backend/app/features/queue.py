@@ -28,6 +28,7 @@ from app.models.visit import Visit
 from app.schemas.queue import (
     AssignRequest,
     CallNextRequest,
+    CallTicketRequest,
     QueueTicketOut,
     QueueTrack,
     SpecialistOut,
@@ -109,6 +110,23 @@ def list_specialists(
     ]
 
 
+def _mark_called_effects(db: Session, ticket: QueueTicket, room: str | None,
+                         actor: CurrentUser) -> None:
+    """Side-effects shared by call-next and the per-ticket call: the audit row
+    and the visit's «patient is now in the room» flow event. The guarded claim
+    UPDATE itself differs (loop-retry vs single 409) and stays at each call site.
+    """
+    db.expire(ticket)
+    record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+                 actor_id=actor.id, branch_id=ticket.branch_id,
+                 summary=f"Called {ticket.ticket_number} to {room}")
+    if ticket.visit_id is not None:
+        visit = db.get(Visit, ticket.visit_id)
+        if visit is not None:
+            advance_flow(db, visit,
+                         "diagnostic_called" if ticket.track == "diagnostic" else "doctor_called")
+
+
 @router.post("/call-next", response_model=QueueTicketOut)
 def call_next(
     payload: CallNextRequest,
@@ -150,15 +168,7 @@ def call_next(
             .execution_options(synchronize_session=False)
         )
         if claimed.rowcount == 1:
-            db.expire(ticket)
-            record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
-                         actor_id=actor.id, branch_id=ticket.branch_id,
-                         summary=f"Called {ticket.ticket_number} to {payload.room}")
-            if ticket.visit_id is not None:  # workflow engine: patient is now in the room
-                visit = db.get(Visit, ticket.visit_id)
-                if visit is not None:
-                    advance_flow(db, visit,
-                                 "diagnostic_called" if ticket.track == "diagnostic" else "doctor_called")
+            _mark_called_effects(db, ticket, payload.room, actor)
             db.commit()
             db.refresh(ticket)
             return ticket
@@ -300,6 +310,101 @@ def requeue_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 "Yesterday's ticket cannot be requeued — issue a new visit")
     return _transition(db, ticket_id, actor, "waiting", None)
+
+
+@router.post("/{ticket_id}/call", response_model=QueueTicketOut)
+def call_ticket(
+    ticket_id: UUID,
+    payload: CallTicketRequest,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))],
+) -> QueueTicket:
+    """Call ONE specific waiting ticket into a room — the operator picks who
+    comes next instead of taking the head of the line («Вызвать»). Guarded
+    UPDATE (status must still be waiting) so a concurrent call can't double-fire.
+    """
+    ticket = db.get(QueueTicket, ticket_id)
+    if ticket is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
+    claimed = db.execute(
+        sa_update(QueueTicket)
+        .where(QueueTicket.id == ticket.id, QueueTicket.status == "waiting")
+        .values(status="called", room=payload.room,
+                called_at=datetime.now(timezone.utc), called_by_id=actor.id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Ticket {ticket.ticket_number} is no longer waiting — refresh and retry")
+    _mark_called_effects(db, ticket, payload.room, actor)
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/{ticket_id}/recall", response_model=QueueTicketOut)
+def recall_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
+                  actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))]) -> QueueTicket:
+    """Re-announce an already-called ticket («Вызвать повторно») — the patient
+    didn't hear/show. Bumps called_at so the TV board fires the call-out again;
+    the status is unchanged (no state-machine move)."""
+    ticket = db.get(QueueTicket, ticket_id)
+    if ticket is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
+    claimed = db.execute(
+        sa_update(QueueTicket)
+        .where(QueueTicket.id == ticket.id, QueueTicket.status == "called")
+        .values(called_at=datetime.now(timezone.utc))
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Only a called ticket can be re-announced (ticket {ticket.ticket_number})")
+    db.expire(ticket)
+    record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+                 actor_id=actor.id, branch_id=ticket.branch_id,
+                 summary=f"Re-announced {ticket.ticket_number}")
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/{ticket_id}/leave", response_model=QueueTicketOut)
+def leave_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
+                 actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))]) -> QueueTicket:
+    """Return a called/serving ticket to the waiting line («Оставить») — wrong or
+    absent patient called; put them back in the queue. Clears the call fields so
+    the ticket is a clean waiting entry, and reverts the visit's «in the room»
+    flow claim (same effect as a no-show skip, but the ticket stays active)."""
+    ticket = db.get(QueueTicket, ticket_id)
+    if ticket is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
+    track, visit_id = ticket.track, ticket.visit_id
+    claimed = db.execute(
+        sa_update(QueueTicket)
+        .where(QueueTicket.id == ticket.id, QueueTicket.status.in_(_NOW_SERVING))
+        .values(status="waiting", room=None, called_at=None, called_by_id=None,
+                served_at=None, done_at=None)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Only a called ticket can be returned to waiting (ticket {ticket.ticket_number})")
+    db.expire(ticket)
+    record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+                 actor_id=actor.id, branch_id=ticket.branch_id,
+                 summary=f"Returned {ticket.ticket_number} to waiting")
+    if visit_id is not None:  # revert the "in the room" flow claim back to waiting
+        visit = db.get(Visit, visit_id)
+        if visit is not None:
+            advance_flow(db, visit,
+                         "diagnostic_skipped" if track == "diagnostic" else "doctor_skipped")
+    db.commit()
+    db.refresh(ticket)
+    return ticket
 
 
 @router.post("/{ticket_id}/assign", response_model=QueueTicketOut)

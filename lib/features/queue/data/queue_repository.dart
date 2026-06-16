@@ -10,8 +10,9 @@ import '../domain/queue_ticket.dart';
 /// list specialists without the identity-module `users.read` permission.
 typedef Specialist = ({String id, String fullName, List<String> roles});
 
-final queueRepositoryProvider =
-    Provider<QueueRepository>((ref) => QueueRepository(ref.watch(dioProvider)));
+final queueRepositoryProvider = Provider<QueueRepository>(
+  (ref) => QueueRepository(ref.watch(dioProvider)),
+);
 
 class QueueRepository {
   QueueRepository(this._dio);
@@ -20,14 +21,20 @@ class QueueRepository {
 
   /// [track]: `doctor` | `diagnostic`; null = обе дорожки одним запросом
   /// (экран очереди делит один список на две колонки на клиенте).
-  Future<List<QueueTicket>> list(
-      {required String branchId, String? track, bool activeOnly = true}) async {
+  Future<List<QueueTicket>> list({
+    required String branchId,
+    String? track,
+    bool activeOnly = true,
+  }) async {
     try {
-      final resp = await _dio.get('/queue', queryParameters: {
-        'branch_id': branchId,
-        'active_only': activeOnly,
-        'track': ?track,
-      });
+      final resp = await _dio.get(
+        '/queue',
+        queryParameters: {
+          'branch_id': branchId,
+          'active_only': activeOnly,
+          'track': ?track,
+        },
+      );
       return (resp.data as List<dynamic>)
           .map((e) => QueueTicket.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -39,18 +46,22 @@ class QueueRepository {
   /// [forUserId] (opt-in): claim the next ticket routed to that specialist OR
   /// still in the open pool. Omitted = unchanged behaviour (any waiting ticket
   /// of the track) — keeps the legacy «вызвать следующего» working as before.
-  Future<QueueTicket> callNext(
-      {required String branchId,
-      required String room,
-      String track = 'doctor',
-      String? forUserId}) async {
+  Future<QueueTicket> callNext({
+    required String branchId,
+    required String room,
+    String track = 'doctor',
+    String? forUserId,
+  }) async {
     try {
-      final resp = await _dio.post('/queue/call-next', data: {
-        'branch_id': branchId,
-        'room': room,
-        'track': track,
-        'for_user_id': ?forUserId,
-      });
+      final resp = await _dio.post(
+        '/queue/call-next',
+        data: {
+          'branch_id': branchId,
+          'room': room,
+          'track': track,
+          'for_user_id': ?forUserId,
+        },
+      );
       return QueueTicket.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -70,13 +81,40 @@ class QueueRepository {
   Future<QueueTicket> done(String ticketId) => _transition(ticketId, 'done');
   Future<QueueTicket> skip(String ticketId) => _transition(ticketId, 'skip');
 
+  /// «Вызвать повторно»: re-announce a called ticket (bumps called_at so the TV
+  /// board re-fires the call-out). Status unchanged.
+  Future<QueueTicket> recall(String ticketId) =>
+      _transition(ticketId, 'recall');
+
+  /// «Оставить»: return a called ticket to the waiting line (clears its room).
+  Future<QueueTicket> leave(String ticketId) => _transition(ticketId, 'leave');
+
+  /// «Вызвать»: call ONE specific waiting ticket into [room] (out of order).
+  /// [room] null = no cabinet set (the tile/TV show nothing, not a blank dash).
+  Future<QueueTicket> call(String ticketId, {String? room}) async {
+    try {
+      final resp = await _dio.post(
+        '/queue/$ticketId/call',
+        data: {'room': ?room},
+      );
+      return QueueTicket.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Route a waiting ticket to [assignedUserId]; pass null to clear it back to
   /// the open pool. Explicit JSON null is required to clear, so the body is
   /// built literally (the null-aware `?` map spread can't emit a null value).
+  ///
+  /// Kept for the upcoming Ф3 service routing — no client UI writes
+  /// assigned_user_id yet (the «Направить» dialog was removed in Ф3a).
   Future<QueueTicket> assign(String ticketId, {String? assignedUserId}) async {
     try {
-      final resp = await _dio.post('/queue/$ticketId/assign',
-          data: {'assigned_user_id': assignedUserId});
+      final resp = await _dio.post(
+        '/queue/$ticketId/assign',
+        data: {'assigned_user_id': assignedUserId},
+      );
       return QueueTicket.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -86,8 +124,10 @@ class QueueRepository {
   /// Active branch staff for the routing picker (guarded by queue.manage).
   Future<List<Specialist>> specialists(String branchId) async {
     try {
-      final resp = await _dio.get('/queue/specialists',
-          queryParameters: {'branch_id': branchId});
+      final resp = await _dio.get(
+        '/queue/specialists',
+        queryParameters: {'branch_id': branchId},
+      );
       return [
         for (final e in resp.data as List<dynamic>)
           (
@@ -103,9 +143,13 @@ class QueueRepository {
 }
 
 final queueListProvider = FutureProvider.autoDispose
-    .family<List<QueueTicket>, String>((ref, branchId) =>
-        ref.watch(queueRepositoryProvider).list(branchId: branchId));
+    .family<List<QueueTicket>, String>(
+      (ref, branchId) =>
+          ref.watch(queueRepositoryProvider).list(branchId: branchId),
+    );
 
 final queueSpecialistsProvider = FutureProvider.autoDispose
-    .family<List<Specialist>, String>((ref, branchId) =>
-        ref.watch(queueRepositoryProvider).specialists(branchId));
+    .family<List<Specialist>, String>(
+      (ref, branchId) =>
+          ref.watch(queueRepositoryProvider).specialists(branchId),
+    );

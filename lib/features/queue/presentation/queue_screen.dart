@@ -68,65 +68,14 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
   void _callNext(String branchId, String track) {
     final me = ref.read(authControllerProvider).user;
     _act(
-      () => ref.read(queueRepositoryProvider).callNext(
-        branchId: branchId,
-        room: _room.text.trim(),
-        track: track,
-        forUserId: _onlyMine ? me?.id : null,
-      ),
-    );
-  }
-
-  /// Диалог адресной маршрутизации ожидающего талона: выбрать специалиста или
-  /// снять маршрут (вернуть в общий пул). Список специалистов отдаётся под
-  /// правом queue.manage — отдельный users.read не нужен.
-  Future<void> _showRouteDialog(String branchId, QueueTicket t) async {
-    final List<Specialist> specialists;
-    try {
-      specialists =
-          await ref.read(queueRepositoryProvider).specialists(branchId);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('$e'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-      return;
-    }
-    if (!mounted) return;
-    final choice = await showDialog<_RouteChoice>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: Text('Направить талон ${t.ticketNumber}'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () =>
-                Navigator.pop(context, const _RouteChoice.clear()),
-            child: const Text('— Снять маршрут (общий пул)'),
-          ),
-          const Divider(),
-          for (final s in specialists)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, _RouteChoice.user(s.id)),
-              child: Text(
-                s.roles.isEmpty
-                    ? s.fullName
-                    : '${s.fullName}  ·  ${s.roles.join(', ')}',
-              ),
-            ),
-        ],
-      ),
-    );
-    if (choice == null) return; // отмена
-    await _act(
       () => ref
           .read(queueRepositoryProvider)
-          .assign(t.id, assignedUserId: choice.userId),
-      successMessage:
-          choice.userId == null ? 'Маршрут снят' : 'Талон направлен',
+          .callNext(
+            branchId: branchId,
+            room: _room.text.trim(),
+            track: track,
+            forUserId: _onlyMine ? me?.id : null,
+          ),
     );
   }
 
@@ -222,7 +171,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
 
     final tickets = ref.watch(queueListProvider(branchId));
     // Имена специалистов для резолва assigned_user_id на плитках (id → ФИО).
-    // valueOrNull: пока список грузится, плитки просто не показывают имя.
+    // Пока ни один UI не пишет assigned_user_id (диалог «Направить» убран в
+    // Ф3a) — оставлено под предстоящую маршрутизацию услуга→врач (Ф3b).
     final specialistNames = {
       for (final s
           in ref.watch(queueSpecialistsProvider(branchId)).valueOrNull ??
@@ -405,7 +355,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             'Ожидают (${waiting.length})',
             waiting,
             canManage,
-            (t) => _waitingActions(t, branchId),
+            (t) => _waitingActions(t),
             specialistNames,
           ),
         ),
@@ -434,12 +384,46 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             ),
       child: const Text('Готово'),
     ),
+    // «Вызвать повторно» (переозвучить на табло) и «Оставить» (вернуть в
+    // ожидание) — вторичные действия, в меню, чтобы плитка не переполнялась.
+    PopupMenuButton<String>(
+      tooltip: 'Ещё',
+      enabled: !_busy,
+      onSelected: (v) => _act(
+        () => v == 'recall'
+            ? ref.read(queueRepositoryProvider).recall(t.id)
+            : ref.read(queueRepositoryProvider).leave(t.id),
+        successMessage: v == 'recall'
+            ? 'Талон ${t.ticketNumber} вызван повторно'
+            : 'Талон ${t.ticketNumber} возвращён в ожидание',
+      ),
+      itemBuilder: (_) => [
+        // «Вызвать повторно» — только для вызванного: на приёме (serving)
+        // переозвучка бессмысленна (табло объявляет лишь called-талоны).
+        if (t.status == 'called')
+          const PopupMenuItem(value: 'recall', child: Text('Вызвать повторно')),
+        const PopupMenuItem(
+          value: 'leave',
+          child: Text('Оставить (в ожидание)'),
+        ),
+      ],
+    ),
   ];
 
-  List<Widget> _waitingActions(QueueTicket t, String branchId) => [
+  List<Widget> _waitingActions(QueueTicket t) => [
     TextButton(
-      onPressed: _busy ? null : () => _showRouteDialog(branchId, t),
-      child: const Text('Направить'),
+      onPressed: _busy
+          ? null
+          : () => _act(
+              () => ref
+                  .read(queueRepositoryProvider)
+                  .call(
+                    t.id,
+                    room: _room.text.trim().isEmpty ? null : _room.text.trim(),
+                  ),
+              successMessage: 'Талон ${t.ticketNumber} вызван',
+            ),
+      child: const Text('Вызвать'),
     ),
     TextButton(
       onPressed: _busy
@@ -548,12 +532,4 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
       ),
     );
   }
-}
-
-/// Результат диалога маршрутизации. `null` из showDialog = отмена;
-/// `_RouteChoice` с `userId == null` = снять маршрут (общий пул).
-class _RouteChoice {
-  const _RouteChoice.clear() : userId = null;
-  const _RouteChoice.user(this.userId);
-  final String? userId;
 }

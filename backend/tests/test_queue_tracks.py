@@ -298,3 +298,47 @@ def test_stale_yesterday_ticket_excluded_from_active_views(client, auth):
     board = client.get(f"{API}/queue/tv-board/{branch_id}").json()
     entries = [e for col in ("now", "waiting") for e in board["diagnostic"][col]]
     assert all(e["ticket_number"] != ticket_no for e in entries)
+
+
+def test_call_recall_leave_specific_ticket(client, auth):
+    """Ф3a queue actions: call a specific waiting ticket, re-announce it, and
+    return it to the waiting line."""
+    branch_id = _branch_id(client, auth)
+    visit, _ = _paid_visit(client, auth, branch_id, "ВызовКонкретный")
+    [d] = _visit_tickets(client, auth, branch_id, visit["id"])
+    assert d["status"] == "waiting"
+
+    # «Вызвать» THIS specific ticket (out of order) into a room.
+    called = client.post(f"{API}/queue/{d['id']}/call", headers=auth,
+                         json={"room": "Каб. 9"}).json()
+    assert called["status"] == "called"
+    assert called["room"] == "Каб. 9"
+    assert called["called_at"] is not None
+    first_called_at = called["called_at"]
+
+    # «Вызвать повторно»: re-announce a CALLED ticket — called_at re-stamped.
+    recalled = client.post(f"{API}/queue/{d['id']}/recall", headers=auth).json()
+    assert recalled["status"] == "called"
+    assert recalled["called_at"] >= first_called_at
+
+    # Once SERVING, recall is rejected: the TV announces only `called` tickets,
+    # so re-announcing a patient already in the chair is meaningless (and would
+    # hijack the board's headline slot).
+    assert client.post(f"{API}/queue/{d['id']}/serve", headers=auth).status_code == 200
+    assert client.post(f"{API}/queue/{d['id']}/recall", headers=auth).status_code == 409
+
+    # «Оставить»: a serving ticket goes back to waiting, call fields cleared.
+    left = client.post(f"{API}/queue/{d['id']}/leave", headers=auth)
+    assert left.status_code == 200, left.text
+    left = left.json()
+    assert left["status"] == "waiting"
+    assert left["room"] is None
+    assert left["called_at"] is None
+    assert left["called_by_id"] is None
+
+    # Recall/leave only apply to a CALLED ticket — a waiting one is 409.
+    assert client.post(f"{API}/queue/{d['id']}/recall", headers=auth).status_code == 409
+    assert client.post(f"{API}/queue/{d['id']}/leave", headers=auth).status_code == 409
+
+    # cleanup so later tests' call-next is unaffected
+    client.post(f"{API}/queue/{d['id']}/skip", headers=auth)

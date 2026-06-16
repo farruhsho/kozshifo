@@ -112,7 +112,19 @@ on every mutation · multi-branch**.
   `cameras.view` to Doctor, all to Director. Migration `a650ccc3e510`. The RMK-700
   serial / CAS-2000BER file adapters remain deferred (hardware path TBD).
 
-**Verified green:** backend `pytest` = 217 passed · Flutter `flutter test` = 139 passed
+- **Структурированная «История визитов»: ✅ done** — the doctor's patient card
+  (ПАЦИЕНТ column) now lists every visit as an expandable row: billed services,
+  Итого/Скидка/К оплате/Оплачено/Долг, flow status and an ЭКСТРЕННО badge, with
+  the form's current visit highlighted and «Открыть осмотр» to switch to it.
+  Pure frontend — reuses the existing `GET /visits?patient_id=` payload (no extra
+  request, no backend change); the client `VisitSummary` gained optional
+  money/items fields (defaulted, so the picker + const fixtures still parse).
+- **Queue auto-refresh hardened: ✅** — the live queue's 5s refresh now skips a
+  tick while the previous fetch is still in flight, so a slow backend can't
+  stack GETs or let a late response clobber a newer list (`queue_screen.dart`;
+  regression test `test/queue_screen_test.dart` also pins clean timer disposal).
+
+**Verified green:** backend `pytest` = 217 passed · Flutter `flutter test` = 147 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
 `alembic upgrade head` + `alembic check` = clean (head `a1c4e7f9d2b0`; this round
 added the operations TZ-Modul-6 referral flow).

@@ -40,7 +40,12 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     super.initState();
     _autoRefresh = Timer.periodic(const Duration(seconds: 5), (_) {
       final branchId = _branchId;
-      if (branchId != null) ref.invalidate(queueListProvider(branchId));
+      if (branchId == null) return;
+      // Не складывать запросы: пропускаем тик, пока предыдущая загрузка ещё в
+      // полёте (медленный бэкенд) — иначе периодические инвалидации копят GET-ы,
+      // а поздний ответ может затереть более свежий список.
+      if (ref.read(queueListProvider(branchId)).isLoading) return;
+      ref.invalidate(queueListProvider(branchId));
     });
     // Явный requestFocus вместо autofocus: оболочка (AppShell) уже держит
     // фокус, поэтому autofocus здесь игнорировался бы — а без фокуса внутри

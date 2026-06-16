@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/file_saver.dart';
 import '../../../core/utils/flow_labels.dart';
+import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../clinical/presentation/operations_section.dart';
@@ -484,6 +485,7 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
               // ПАЦИЕНТ: карточка + история осмотров + хронология.
               List<Widget> patientColumn() => [
                 PatientInfoCard(patientId: widget.patientId),
+                _visitHistory(items),
                 if (!_loadingExam) ...[_history(), _timeline()],
               ];
               // ДИАГНОСТИКА: приборы/сканы + структурные показания осмотра.
@@ -1198,6 +1200,150 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
         },
       ),
     ]);
+  }
+
+  /// Структурированная «История визитов»: по каждому визиту — состав услуг,
+  /// итог/скидка/оплачено/долг, статус потока и пометка ЭКСТРЕННО. Данные — из
+  /// того же `/visits`, что и пикер (см. [VisitSummary]); второго запроса нет.
+  /// Текущий визит формы 025-8 подсвечен; «Открыть осмотр» выбирает другой.
+  Widget _visitHistory(List<VisitSummary> items) {
+    final scheme = Theme.of(context).colorScheme;
+    return _section('Визиты (${items.length})', [
+      for (final v in items)
+        Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(
+                width: 3,
+                color: v.id == _visitId
+                    ? scheme.primary
+                    : v.status == 'cancelled'
+                        ? scheme.error
+                        : scheme.outlineVariant,
+              ),
+            ),
+          ),
+          child: ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            expandedCrossAxisAlignment: CrossAxisAlignment.start,
+            title: Row(
+              children: [
+                if (v.isEmergency)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Icon(
+                      Icons.priority_high,
+                      size: 16,
+                      color: scheme.error,
+                    ),
+                  ),
+                Expanded(
+                  child: Text(
+                    '${v.visitNo} · ${v.openedAt.split('T').first}',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: v.id == _visitId
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            subtitle: Text(
+              [
+                flowStatusLabel(v.flowStatus),
+                'Итого ${formatMoney(v.totalAmount)}',
+                if (v.hasDebt) 'долг ${formatMoney(v.balance)}',
+              ].join(' · '),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: v.hasDebt ? scheme.error : null,
+              ),
+            ),
+            children: [
+              if (v.items.isEmpty)
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Услуги не добавлены'),
+                )
+              else
+                for (final it in v.items)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            it.quantity > 1
+                                ? '${it.serviceName} ×${it.quantity}'
+                                : it.serviceName,
+                          ),
+                        ),
+                        Text(formatMoney(it.total)),
+                      ],
+                    ),
+                  ),
+              const Divider(height: 16),
+              _moneyRow('Итого', v.totalAmount),
+              if (v.hasDiscount)
+                _moneyRow('Скидка', v.discountValue, note: v.discountReason),
+              if (v.hasDiscount) _moneyRow('К оплате', v.payable),
+              _moneyRow('Оплачено', v.paidAmount),
+              _moneyRow('Долг', v.balance, danger: v.hasDebt),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: v.id == _visitId
+                    ? Chip(
+                        visualDensity: VisualDensity.compact,
+                        avatar: Icon(
+                          Icons.check,
+                          size: 16,
+                          color: scheme.primary,
+                        ),
+                        label: const Text('Выбран для осмотра'),
+                      )
+                    : OutlinedButton.icon(
+                        onPressed: () => _selectVisit(v.id),
+                        icon: const Icon(Icons.open_in_new, size: 16),
+                        label: const Text('Открыть осмотр'),
+                      ),
+              ),
+            ],
+          ),
+        ),
+    ]);
+  }
+
+  /// Строка денежной сводки визита (метка слева, сумма справа).
+  Widget _moneyRow(
+    String label,
+    String amount, {
+    bool danger = false,
+    String? note,
+  }) {
+    final style = danger
+        ? TextStyle(
+            color: Theme.of(context).colorScheme.error,
+            fontWeight: FontWeight.w600,
+          )
+        : null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              note == null || note.isEmpty ? label : '$label · $note',
+              style: style,
+            ),
+          ),
+          Text(formatMoney(amount), style: style),
+        ],
+      ),
+    );
   }
 
   Widget _history() {

@@ -44,6 +44,10 @@ const _visit = VisitSummary(
   status: 'open',
   openedAt: '2026-06-13T09:00:00Z',
   branchId: 'br-1',
+  totalAmount: '150000.00',
+  paidAmount: '100000.00',
+  balance: '50000.00',
+  items: [VisitItemSummary(serviceName: 'Консультация', total: '150000.00')],
 );
 
 /// Doctor with full clinical permissions; build() is synchronous → no network.
@@ -152,6 +156,11 @@ void main() {
       expect(find.text('36 лет'), findsOneWidget); // 1990-06-13 @ 2026-06-13
       expect(find.text('Мужской'), findsOneWidget);
       expect(find.text('Instagram'), findsOneWidget);
+
+      // ПАЦИЕНТ column: structured visit history with the visit's outstanding
+      // debt surfaced on the collapsed row.
+      expect(find.text('Визиты (1)'), findsOneWidget);
+      expect(find.textContaining('долг'), findsOneWidget);
 
       // ДИАГНОСТИКА column: structured exam readings are reachable.
       expect(find.text('Visus / рефракция'), findsOneWidget);

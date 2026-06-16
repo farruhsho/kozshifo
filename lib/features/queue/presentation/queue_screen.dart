@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/api_constants.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/url_opener.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
@@ -443,6 +444,16 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     ),
   ];
 
+  /// Цвет акцента талона из палитры «Clinic OS». Приоритетный (экстренный)
+  /// талон всегда красный, иначе цвет по статусу: ожидает → amber,
+  /// вызван/на приёме → teal-primary, завершён/пропущен → muted.
+  Color _accentColor(QueueTicket t) {
+    if (t.priority > 0) return AppColors.red;
+    if (t.isActive) return AppColors.accent;
+    if (t.isWaiting) return AppColors.amber;
+    return AppColors.muted; // done / skipped и прочие терминальные статусы
+  }
+
   Widget _panel(
     BuildContext context,
     String title,
@@ -469,32 +480,49 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                       itemCount: items.length,
                       itemBuilder: (context, i) {
                         final t = items[i];
-                        return ListTile(
-                          dense: true,
-                          leading: CircleAvatar(
-                            radius: 22,
-                            child: Text(
-                              t.ticketNumber,
-                              style: const TextStyle(fontSize: 11),
+                        final accent = _accentColor(t);
+                        // Левая цветная полоса-акцент по статусу талона:
+                        // ожидает → amber, вызван/на приёме → teal,
+                        // завершён/пропущен → muted, приоритет → red.
+                        // Реализована как Border(left: …), а не отдельным
+                        // flex-сиблингом — чтобы не ломать раскладку Row.
+                        return Container(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              left: BorderSide(color: accent, width: 4),
                             ),
                           ),
-                          title: Text(
-                            [
-                              t.statusLabel,
-                              if (t.room != null) t.room!,
-                              if (t.assignedUserId != null)
-                                '→ ${specialistNames[t.assignedUserId] ?? 'специалист'}',
-                            ].join(' · '),
+                          child: ListTile(
+                            dense: true,
+                            leading: CircleAvatar(
+                              radius: 22,
+                              child: Text(
+                                t.ticketNumber,
+                                style: TextStyle(
+                                  fontSize: 21,
+                                  fontWeight: FontWeight.w800,
+                                  color: accent,
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              [
+                                t.statusLabel,
+                                if (t.room != null) t.room!,
+                                if (t.assignedUserId != null)
+                                  '→ ${specialistNames[t.assignedUserId] ?? 'специалист'}',
+                              ].join(' · '),
+                            ),
+                            subtitle: Text(
+                              'создан ${t.createdAt.replaceFirst('T', ' ').split('.').first}',
+                            ),
+                            trailing: canManage
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: actions(t),
+                                  )
+                                : null,
                           ),
-                          subtitle: Text(
-                            'создан ${t.createdAt.replaceFirst('T', ' ').split('.').first}',
-                          ),
-                          trailing: canManage
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: actions(t),
-                                )
-                              : null,
                         );
                       },
                     ),

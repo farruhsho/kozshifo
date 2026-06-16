@@ -14,6 +14,7 @@ abstract class AuthUser with _$AuthUser {
     required String fullName,
     @Default(false) bool isSuperuser,
     String? branchId,
+    String? cabinet,
     @Default(<String>[]) List<String> permissions,
     @Default(<String>[]) List<String> roles,
   }) = _AuthUser;

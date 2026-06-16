@@ -163,14 +163,31 @@ on every mutation · multi-branch**.
   the TV re-announces; **called-only**, else it would hijack the board's headline
   slot), `/leave` («Оставить» — called/serving → waiting, clears the call fields
   + reverts the visit's flow claim). Flutter tiles: «Вызвать»/«Пропустить» on
-  waiting; «Принят»/«Готово» + a ⋮ menu (recall/leave) on called. **Next: Ф3b** —
-  separate doctor & diagnostician queue screens (auto-cabinet from the calling
-  doctor) + route a paid ticket to the service's eligible doctor into their cabinet.
+  waiting; «Принят»/«Готово» + a ⋮ menu (recall/leave) on called.
+- **Patient-journey Ф3b — service routing + personal queue workstations: ✅ done** —
+  when diagnostics complete and the system auto-issues the doctor (V-) ticket, it
+  now **routes by service**: if the visit's service maps to exactly one active
+  eligible doctor (`service_doctors`), the ticket is pre-assigned to them and
+  pre-filled with **their** `User.cabinet` (TV board shows the room at once);
+  several/zero eligible → open pool. `call-next`/`call` now **default the room to
+  the caller's own cabinet** (`CallNextRequest.room` made optional), so a doctor
+  needn't retype it. **Doctor role gained `queue.manage`** (runs their own queue).
+  Flutter: `QueueScreen` got a `personal` single-track mode — a new `/my-queue`
+  nav «Моя очередь» (gated `device_results.create`, placed before «Очередь» so a
+  diagnost lands there) renders one track derived from rights (`exams.write` →
+  doctor «Мой приём», else diagnost «Диагностика»), prefills the room from the
+  user's cabinet, and a doctor auto-pulls their routed tickets first. `/auth/me`
+  + client `AuthUser` now carry `cabinet`. No migration (service routing reuses
+  the existing `assigned_user_id`; the permission grant re-seeds idempotently).
+  Tests: `test_queue_service_routing.py` (3) + queue personal-mode widget test.
+  **Next: Ф4** — operations calendar with the patient med card + reception-entered
+  consumables (incl. ad-hoc) at perform + visit/timeline rewrite on complete.
 
-**Verified green:** backend `pytest` = 228 passed · Flutter `flutter test` = 158 passed
+**Verified green:** backend `pytest` = 231 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф2
-services-for-reception added a read endpoint only — no schema change).
+`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф3b adds no
+schema change — routing reuses `assigned_user_id`, the new doctor permission and
+the cabinet field re-seed/return idempotently).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

@@ -57,6 +57,42 @@ class _FakeQueueRepository extends QueueRepository {
       const <Specialist>[];
 }
 
+/// A doctor with a cabinet — for the personal «Мой приём» workstation.
+class _FakeDoctorAuthController extends AuthController {
+  @override
+  AuthState build() => const AuthState(
+    AuthStatus.authenticated,
+    AuthUser(
+      id: 'doc1',
+      email: 'vrach@kozshifo.uz',
+      fullName: 'Врач',
+      branchId: 'br-1',
+      cabinet: 'Каб. 7',
+      permissions: [
+        'queue.read',
+        'queue.manage',
+        'exams.write',
+        'device_results.create',
+      ],
+    ),
+  );
+}
+
+class _EmptyQueueRepository extends QueueRepository {
+  _EmptyQueueRepository() : super(Dio());
+
+  @override
+  Future<List<QueueTicket>> list({
+    required String branchId,
+    String? track,
+    bool activeOnly = true,
+  }) async => const <QueueTicket>[];
+
+  @override
+  Future<List<Specialist>> specialists(String branchId) async =>
+      const <Specialist>[];
+}
+
 /// Returns one waiting doctor ticket immediately — for asserting how the
 /// ticket number renders inside the round avatar.
 class _OneTicketQueueRepository extends QueueRepository {
@@ -155,6 +191,35 @@ void main() {
 
       // Tear down so the screen's 5s periodic timer is cancelled (no pending
       // Timer at test end).
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'personal doctor queue: single track «Мой приём», room prefilled from '
+    'cabinet, no «Только мои» chip',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(_FakeDoctorAuthController.new),
+            queueRepositoryProvider.overrideWithValue(_EmptyQueueRepository()),
+          ],
+          child: const MaterialApp(home: QueueScreen(personal: true)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // Title reflects the doctor workstation.
+      expect(find.text('Мой приём'), findsOneWidget);
+      // The call-room field is pre-filled from the doctor's cabinet.
+      expect(find.text('Каб. 7'), findsOneWidget);
+      // «Только мои» is hidden in personal mode (doctor always pulls their own).
+      expect(find.text('Только мои'), findsNothing);
+      // One track only → exactly one «Вызвать следующего» button.
+      expect(find.text('Вызвать следующего'), findsOneWidget);
+
       await tester.pumpWidget(const SizedBox());
     },
   );

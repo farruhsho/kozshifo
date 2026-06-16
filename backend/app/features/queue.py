@@ -21,6 +21,7 @@ from app.core.deps import CurrentUser, require_permission
 from app.core.flow import advance_flow
 from app.core.sequences import next_ticket_number
 from app.models.branch import Branch
+from app.models.catalog import service_doctors
 from app.models.patient import Patient
 from app.models.queue import QueueTicket
 from app.models.user import User
@@ -133,6 +134,9 @@ def call_next(
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))],
 ) -> QueueTicket:
+    # The room defaults to the caller's own cabinet (User.cabinet) when not given,
+    # so a doctor's «Моя очередь» auto-routes the patient to their room.
+    room = (payload.room or "").strip() or actor.cabinet
     # Guarded UPDATE (status must still be "waiting") so two operators clicking
     # concurrently can never be handed the same ticket; loser retries the next one.
     for _ in range(3):
@@ -161,14 +165,14 @@ def call_next(
             .where(QueueTicket.id == ticket.id, QueueTicket.status == "waiting")
             .values(
                 status="called",
-                room=payload.room,
+                room=room,
                 called_at=datetime.now(timezone.utc),
                 called_by_id=actor.id,
             )
             .execution_options(synchronize_session=False)
         )
         if claimed.rowcount == 1:
-            _mark_called_effects(db, ticket, payload.room, actor)
+            _mark_called_effects(db, ticket, room, actor)
             db.commit()
             db.refresh(ticket)
             return ticket
@@ -187,12 +191,43 @@ _ALLOWED_FROM: dict[str, tuple[str, ...]] = {
 }
 
 
+def _eligible_doctor_for_visit(db: Session, visit: Visit) -> User | None:
+    """The single doctor a paid visit should route to, else None (open pool).
+
+    Unions the eligible doctors (service_doctors M2M) across the visit's billed
+    services. Routes ONLY when exactly one active doctor qualifies — a clear
+    destination, so the V-ticket is pre-assigned to them and lands in THEIR
+    cabinet. Zero or several eligible doctors → open pool: the cabinet then comes
+    from whichever doctor calls the ticket.
+    """
+    service_ids = {it.service_id for it in visit.items if it.service_id is not None}
+    if not service_ids:
+        return None
+    doctors = (
+        db.execute(
+            select(User)
+            .join(service_doctors, User.id == service_doctors.c.user_id)
+            .where(
+                service_doctors.c.service_id.in_(service_ids),
+                User.is_active.is_(True),
+            )
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+    return doctors[0] if len(doctors) == 1 else None
+
+
 def _auto_advance_to_doctor(db: Session, ticket: QueueTicket, actor: CurrentUser) -> None:
     """Diagnostics finished -> automatically queue the patient for the doctor.
 
     Issues a waiting doctor-track (V-…) ticket for the same visit, unless the
-    visit already has an active doctor ticket. Runs inside the caller's
-    transaction so the transition and the new ticket commit atomically.
+    visit already has an active doctor ticket. When the visit's service maps to a
+    single eligible doctor, the ticket is pre-routed to them and pre-filled with
+    their cabinet (so the TV board already shows the room and call-next claims it
+    for that doctor). Runs inside the caller's transaction so the transition and
+    the new ticket commit atomically.
     """
     # A dead visit must not re-enter the flow: a refunded-then-cancelled or
     # already-closed visit gets no doctor ticket.
@@ -210,21 +245,24 @@ def _auto_advance_to_doctor(db: Session, ticket: QueueTicket, actor: CurrentUser
     ).first()
     if active_doctor is not None:
         return
+    doctor = _eligible_doctor_for_visit(db, visit)
     new_ticket = QueueTicket(
         ticket_number=next_ticket_number(db, ticket.branch_id, "doctor"),
         track="doctor",
         patient_id=ticket.patient_id,
         branch_id=ticket.branch_id,
         visit_id=ticket.visit_id,
-        room=None,
+        room=doctor.cabinet if doctor is not None else None,
+        assigned_user_id=doctor.id if doctor is not None else None,
         status="waiting",
     )
     db.add(new_ticket)
     db.flush()
+    routed = f" routed to {doctor.full_name}" if doctor is not None else ""
     record_audit(db, action="create", entity_type="queue_ticket", entity_id=new_ticket.id,
                  actor_id=actor.id, branch_id=ticket.branch_id,
                  summary=f"auto-advance to doctor queue: {new_ticket.ticket_number} "
-                         f"after {ticket.ticket_number} done")
+                         f"after {ticket.ticket_number} done{routed}")
 
 
 def _transition(db: Session, ticket_id: UUID, actor: CurrentUser, new_status: str, ts_field: str | None) -> QueueTicket:
@@ -326,10 +364,11 @@ def call_ticket(
     ticket = db.get(QueueTicket, ticket_id)
     if ticket is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
+    room = (payload.room or "").strip() or actor.cabinet
     claimed = db.execute(
         sa_update(QueueTicket)
         .where(QueueTicket.id == ticket.id, QueueTicket.status == "waiting")
-        .values(status="called", room=payload.room,
+        .values(status="called", room=room,
                 called_at=datetime.now(timezone.utc), called_by_id=actor.id)
         .execution_options(synchronize_session=False)
     )
@@ -337,7 +376,7 @@ def call_ticket(
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Ticket {ticket.ticket_number} is no longer waiting — refresh and retry")
-    _mark_called_effects(db, ticket, payload.room, actor)
+    _mark_called_effects(db, ticket, room, actor)
     db.commit()
     db.refresh(ticket)
     return ticket

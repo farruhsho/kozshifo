@@ -55,6 +55,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => const SchedulingScreen(),
           ),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
+          // Личное рабочее место очереди: одна дорожка (врач «Мой приём» /
+          // диагност «Диагностика»), кабинет из профиля. Дорожка выводится из
+          // прав внутри экрана (exams.write → врач, иначе диагност).
+          GoRoute(
+            path: '/my-queue',
+            builder: (_, _) => const QueueScreen(personal: true),
+          ),
           GoRoute(
             path: '/operations',
             builder: (_, _) => const OperationsScreen(),

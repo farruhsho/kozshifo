@@ -154,7 +154,10 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     ],
     "Doctor": [
         "patients.read", "visits.read", "visits.update",
-        "queue.read", "services.read",
+        # queue.manage: a doctor runs their OWN queue — calls the next patient
+        # into their cabinet, recalls, returns to waiting (the «Моя очередь·Приём»
+        # workstation). Reception keeps the full two-track board.
+        "queue.read", "queue.manage", "services.read",
         "exams.read", "exams.write",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",

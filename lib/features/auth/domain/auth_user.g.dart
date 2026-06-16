@@ -12,6 +12,7 @@ _AuthUser _$AuthUserFromJson(Map<String, dynamic> json) => _AuthUser(
   fullName: json['full_name'] as String,
   isSuperuser: json['is_superuser'] as bool? ?? false,
   branchId: json['branch_id'] as String?,
+  cabinet: json['cabinet'] as String?,
   permissions:
       (json['permissions'] as List<dynamic>?)
           ?.map((e) => e as String)
@@ -28,6 +29,7 @@ Map<String, dynamic> _$AuthUserToJson(_AuthUser instance) => <String, dynamic>{
   'full_name': instance.fullName,
   'is_superuser': instance.isSuperuser,
   'branch_id': instance.branchId,
+  'cabinet': instance.cabinet,
   'permissions': instance.permissions,
   'roles': instance.roles,
 };

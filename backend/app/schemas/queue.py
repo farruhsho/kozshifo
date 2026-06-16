@@ -33,7 +33,9 @@ class QueueTicketOut(BaseModel):
 
 
 class CallNextRequest(BaseModel):
-    room: str
+    # Blank/omitted → the backend falls back to the caller's own cabinet
+    # (User.cabinet), so a doctor's «Моя очередь» needn't repeat their room.
+    room: str | None = None
     branch_id: UUID
     track: QueueTrack = "doctor"
     # Adressed routing (opt-in). When set, call-next claims the next ticket that

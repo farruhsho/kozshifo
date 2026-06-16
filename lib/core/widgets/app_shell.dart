@@ -105,6 +105,17 @@ const kAppDestinations = <AppDestination>[
       'payroll.read',
     ],
   ),
+  // Личное рабочее место очереди — врач «Мой приём» (V), диагност «Диагностика»
+  // (D): одна дорожка, кабинет из профиля. Gate device_results.create отделяет
+  // клиническую пару (Врач+Диагност) от ресепшена; стоит ПЕРЕД «Очередь», чтобы
+  // диагност приземлялся сюда. Экран сам выводит дорожку из прав (exams.write).
+  AppDestination(
+    Icons.assignment_ind_outlined,
+    Icons.assignment_ind,
+    'Моя очередь',
+    '/my-queue',
+    permissions: ['device_results.create'],
+  ),
   AppDestination(
     Icons.confirmation_number_outlined,
     Icons.confirmation_number,

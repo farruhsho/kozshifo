@@ -18,21 +18,18 @@ class AdminScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 2,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Администрирование'),
           bottom: const TabBar(
             tabs: [
-              Tab(text: 'Услуги и цены'),
               Tab(text: 'Филиалы'),
               Tab(text: 'Сотрудники'),
             ],
           ),
         ),
-        body: const TabBarView(
-          children: [_ServicesTab(), _BranchesTab(), _StaffTab()],
-        ),
+        body: const TabBarView(children: [_BranchesTab(), _StaffTab()]),
       ),
     );
   }
@@ -47,8 +44,8 @@ void _showSnack(BuildContext context, String message, {bool error = false}) {
   );
 }
 
-/// Подпись сотрудника в пикере услуги: роли + кабинет (что есть).
-String? _doctorSub(StaffUser u) {
+/// Подпись врача в пикере услуги: роли + кабинет (что есть).
+String? _doctorSub(AssignableDoctor u) {
   final parts = <String>[
     if (u.roles.isNotEmpty) u.roles.join(', '),
     if (u.cabinet != null && u.cabinet!.trim().isNotEmpty) u.cabinet!.trim(),
@@ -174,8 +171,10 @@ Widget _asyncMultiPick<T>(
 
 // ═══ Услуги и цены ═══════════════════════════════════════════════════════════
 
-class _ServicesTab extends ConsumerWidget {
-  const _ServicesTab();
+/// Управление услугами и ценами. Отдельный экран `/services` (services.read) —
+/// доступен ресепшену (он добавляет услуги) и директору.
+class ServicesScreen extends ConsumerWidget {
+  const ServicesScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -186,6 +185,7 @@ class _ServicesTab extends ConsumerWidget {
     final disabled = Theme.of(context).disabledColor;
 
     return Scaffold(
+      appBar: AppBar(title: const Text('Услуги и цены')),
       floatingActionButton: canCreate
           ? FloatingActionButton.extended(
               onPressed: () => _openCreate(context, ref),
@@ -332,7 +332,7 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
   @override
   Widget build(BuildContext context) {
     final categories = ref.watch(adminCategoriesProvider);
-    final users = ref.watch(adminUsersProvider);
+    final doctors = ref.watch(assignableDoctorsProvider);
 
     return AlertDialog(
       title: const Text('Новая услуга'),
@@ -396,9 +396,9 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
                 ),
               ),
               const SizedBox(height: 16),
-              _asyncMultiPick<StaffUser>(
+              _asyncMultiPick<AssignableDoctor>(
                 context,
-                users,
+                doctors,
                 title: 'Принимающие врачи',
                 emptyHint: 'Нет сотрудников',
                 errorLabel: 'Сотрудники недоступны',
@@ -490,7 +490,7 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final users = ref.watch(adminUsersProvider);
+    final doctors = ref.watch(assignableDoctorsProvider);
     return AlertDialog(
       title: Text('Услуга ${widget.service.code}'),
       content: SizedBox(
@@ -522,9 +522,9 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
                 onChanged: (v) => setState(() => _isActive = v),
               ),
               const SizedBox(height: 12),
-              _asyncMultiPick<StaffUser>(
+              _asyncMultiPick<AssignableDoctor>(
                 context,
-                users,
+                doctors,
                 title: 'Принимающие врачи',
                 emptyHint: 'Нет сотрудников',
                 errorLabel: 'Сотрудники недоступны',

@@ -14,6 +14,7 @@ from app.core.deps import CurrentUser, require_permission
 from app.models.catalog import Service, ServiceCategory
 from app.models.user import User
 from app.schemas.catalog import (
+    AssignableDoctorOut,
     ServiceCategoryCreate,
     ServiceCategoryOut,
     ServiceCreate,
@@ -78,6 +79,31 @@ def list_services(
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = db.execute(stmt.order_by(Service.name).offset(offset).limit(limit)).scalars().all()
     return Page(items=[ServiceOut.model_validate(s) for s in rows], total=total, offset=offset, limit=limit)
+
+
+@router.get(
+    "/services/assignable-doctors",
+    response_model=list[AssignableDoctorOut],
+    dependencies=[Depends(require_permission("services.read"))],
+)
+def assignable_doctors(
+    db: Annotated[Session, Depends(get_db)],
+) -> list[AssignableDoctorOut]:
+    """Staff selectable as a service's eligible doctors — for the service-form
+    picker. Guarded by services.read (NOT users.read) so reception, who owns
+    service CRUD, can list them without identity-module access. Inactive staff
+    are included so an already-linked-but-deactivated doctor stays removable."""
+    rows = db.execute(select(User).order_by(User.full_name)).scalars().all()
+    return [
+        AssignableDoctorOut(
+            id=u.id,
+            full_name=u.full_name,
+            cabinet=u.cabinet,
+            is_active=u.is_active,
+            roles=[r.name for r in u.roles],
+        )
+        for u in rows
+    ]
 
 
 @router.post("/services", response_model=ServiceOut, status_code=status.HTTP_201_CREATED)

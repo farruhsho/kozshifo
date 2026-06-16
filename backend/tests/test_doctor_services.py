@@ -86,3 +86,38 @@ def test_unknown_service_id_is_rejected(client, auth):
         "service_ids": [str(uuid.uuid4())],
     })
     assert resp.status_code == 422, resp.text
+
+
+def test_assignable_doctors_listed_for_reception_without_users_read(client, auth):
+    """The service-form doctor picker must work for RECEPTION (services.read,
+    no users.read): GET /services/assignable-doctors is the dedicated source."""
+    branch_id = _branch_id(client, auth)
+    client.post(f"{API}/users", headers=auth, json={
+        "email": "doc.assignable@kozshifo.uz",
+        "full_name": "Доктор Списочный",
+        "password": "Doctor!2026",
+        "branch_id": branch_id,
+        "cabinet": "Каб. 7",
+    })
+    rec = client.post(f"{API}/users", headers=auth, json={
+        "email": "rec.assignable@kozshifo.uz",
+        "full_name": "Ресепшен Тест",
+        "password": "Reception!2026",
+        "branch_id": branch_id,
+        "role_names": ["Reception"],
+    })
+    assert rec.status_code == 201, rec.text
+    rec_token = client.post(f"{API}/auth/login", data={
+        "username": "rec.assignable@kozshifo.uz",
+        "password": "Reception!2026",
+    }).json()["access_token"]
+    rec_auth = {"Authorization": f"Bearer {rec_token}"}
+
+    # Reception CAN list assignable doctors...
+    resp = client.get(f"{API}/services/assignable-doctors", headers=rec_auth)
+    assert resp.status_code == 200, resp.text
+    mine = [r for r in resp.json() if r["full_name"] == "Доктор Списочный"]
+    assert mine and mine[0]["cabinet"] == "Каб. 7"
+    assert mine[0]["is_active"] is True
+    # ...even though reception genuinely lacks users.read.
+    assert client.get(f"{API}/users", headers=rec_auth).status_code == 403

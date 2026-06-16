@@ -41,16 +41,34 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) =>
             AppShell(location: state.matchedLocation, child: child),
         routes: [
-          GoRoute(path: '/dashboard', builder: (_, _) => const DashboardScreen()),
-          GoRoute(path: '/reception', builder: (_, _) => const ReceptionScreen()),
+          GoRoute(
+            path: '/dashboard',
+            builder: (_, _) => const DashboardScreen(),
+          ),
+          GoRoute(
+            path: '/reception',
+            builder: (_, _) => const ReceptionScreen(),
+          ),
           GoRoute(path: '/worklist', builder: (_, _) => const WorklistScreen()),
-          GoRoute(path: '/scheduling', builder: (_, _) => const SchedulingScreen()),
+          GoRoute(
+            path: '/scheduling',
+            builder: (_, _) => const SchedulingScreen(),
+          ),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
-          GoRoute(path: '/operations', builder: (_, _) => const OperationsScreen()),
-          GoRoute(path: '/analytics', builder: (_, _) => const AnalyticsScreen()),
+          GoRoute(
+            path: '/operations',
+            builder: (_, _) => const OperationsScreen(),
+          ),
+          GoRoute(
+            path: '/analytics',
+            builder: (_, _) => const AnalyticsScreen(),
+          ),
           GoRoute(path: '/optics', builder: (_, _) => const OpticsScreen()),
           GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),
-          GoRoute(path: '/notifications', builder: (_, _) => const NotificationsScreen()),
+          GoRoute(
+            path: '/notifications',
+            builder: (_, _) => const NotificationsScreen(),
+          ),
           GoRoute(path: '/patients', builder: (_, _) => const PatientsScreen()),
           GoRoute(
             path: '/patients/:id/card',
@@ -58,14 +76,22 @@ final routerProvider = Provider<GoRouter>((ref) {
                 PatientCardScreen(patientId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/finance', builder: (_, _) => const FinanceScreen()),
-          GoRoute(path: '/attendance', builder: (_, _) => const AttendanceScreen()),
+          GoRoute(
+            path: '/attendance',
+            builder: (_, _) => const AttendanceScreen(),
+          ),
           GoRoute(path: '/calls', builder: (_, _) => const CallsScreen()),
           GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
           GoRoute(path: '/cameras', builder: (_, _) => const CamerasScreen()),
-          GoRoute(path: '/inventory', builder: (_, _) => const InventoryScreen()),
           GoRoute(
-              path: '/access-control',
-              builder: (_, _) => const AccessControlScreen()),
+            path: '/inventory',
+            builder: (_, _) => const InventoryScreen(),
+          ),
+          GoRoute(
+            path: '/access-control',
+            builder: (_, _) => const AccessControlScreen(),
+          ),
+          GoRoute(path: '/services', builder: (_, _) => const ServicesScreen()),
           GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
         ],
       ),

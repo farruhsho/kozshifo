@@ -12,6 +12,17 @@ import '../domain/staff_user.dart';
 /// Service-category reference for the create-service dropdown.
 typedef CategoryRef = ({String id, String name});
 
+/// Staff member selectable as a service's eligible doctor (mirrors backend
+/// `AssignableDoctorOut`). Listed under services.read, so reception can fill the
+/// service form's doctor picker without identity-module (users.read) access.
+typedef AssignableDoctor = ({
+  String id,
+  String fullName,
+  String? cabinet,
+  bool isActive,
+  List<String> roles,
+});
+
 final adminRepositoryProvider = Provider<AdminRepository>(
   (ref) => AdminRepository(ref.watch(dioProvider)),
 );
@@ -37,6 +48,27 @@ class AdminRepository {
         resp.data as Map<String, dynamic>,
         Service.fromJson,
       ).items;
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Staff selectable as a service's eligible doctors (services.read — works for
+  /// reception, no users.read). Includes inactive staff so an already-linked but
+  /// deactivated doctor stays visible/removable when editing a service.
+  Future<List<AssignableDoctor>> assignableDoctors() async {
+    try {
+      final resp = await _dio.get('/services/assignable-doctors');
+      return [
+        for (final e in resp.data as List<dynamic>)
+          (
+            id: (e as Map<String, dynamic>)['id'] as String,
+            fullName: e['full_name'] as String,
+            cabinet: e['cabinet'] as String?,
+            isActive: e['is_active'] as bool,
+            roles: [for (final r in e['roles'] as List<dynamic>) r as String],
+          ),
+      ];
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -282,6 +314,11 @@ class AdminRepository {
 final adminServicesProvider = FutureProvider.autoDispose<List<Service>>(
   (ref) => ref.watch(adminRepositoryProvider).services(),
 );
+
+final assignableDoctorsProvider =
+    FutureProvider.autoDispose<List<AssignableDoctor>>(
+      (ref) => ref.watch(adminRepositoryProvider).assignableDoctors(),
+    );
 
 final adminCategoriesProvider = FutureProvider.autoDispose<List<CategoryRef>>(
   (ref) => ref.watch(adminRepositoryProvider).categories(),

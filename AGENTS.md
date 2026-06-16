@@ -146,11 +146,17 @@ on every mutation · multi-branch**.
   reception has services.* but not users.read (so /admin was unreachable). New
   backend `GET /services/assignable-doctors` (services.read) feeds the service
   form's doctor picker without users.read; `/admin` dropped its Services tab.
-  **Next: Ф3** — queue UX («Вызвать» / «Вызвать повторно» / «Оставить», TV
-  recall) + separate doctor & diagnostician queue screens; route a paid ticket
-  to the service's eligible doctor, into that doctor's cabinet.
+- **Patient-journey Ф3a — queue call/recall/leave actions: ✅ done** — removed the
+  «Направить» button; queue management now has `POST /queue/{id}/call` («Вызвать»
+  a specific waiting ticket), `/recall` («Вызвать повторно» — bumps called_at so
+  the TV re-announces; **called-only**, else it would hijack the board's headline
+  slot), `/leave` («Оставить» — called/serving → waiting, clears the call fields
+  + reverts the visit's flow claim). Flutter tiles: «Вызвать»/«Пропустить» on
+  waiting; «Принят»/«Готово» + a ⋮ menu (recall/leave) on called. **Next: Ф3b** —
+  separate doctor & diagnostician queue screens (auto-cabinet from the calling
+  doctor) + route a paid ticket to the service's eligible doctor into their cabinet.
 
-**Verified green:** backend `pytest` = 224 passed · Flutter `flutter test` = 158 passed
+**Verified green:** backend `pytest` = 225 passed · Flutter `flutter test` = 158 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
 `alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф2
 services-for-reception added a read endpoint only — no schema change).

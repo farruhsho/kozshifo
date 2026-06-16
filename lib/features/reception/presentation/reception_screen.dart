@@ -57,7 +57,10 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   @override
   void initState() {
     super.initState();
-    _autosaveTimer = Timer.periodic(const Duration(seconds: 3), (_) => _autosave());
+    _autosaveTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _autosave(),
+    );
     _loadRestorable();
     // Land with the cursor in the patient search box. An explicit post-frame
     // request reliably wins even if an ancestor Focus (AppShell) already holds
@@ -121,7 +124,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       final patient = await ref
           .read(patientsRepositoryProvider)
           .getById(draft['patientId'] as String);
-      final services = ref.read(activeServicesProvider).valueOrNull ??
+      final services =
+          ref.read(activeServicesProvider).valueOrNull ??
           await ref.read(receptionRepositoryProvider).services();
       final byId = {for (final s in services) s.id: s};
       final cart = <Service, int>{};
@@ -295,9 +299,15 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     if (_emergency) {
       setState(() => _busy = true);
       try {
-        await ref.read(receptionRepositoryProvider)
+        await ref
+            .read(receptionRepositoryProvider)
             .setEmergency(visitId: visit.id, emergency: false);
-        if (mounted) setState(() { _emergency = false; _emergencyReason = null; });
+        if (mounted) {
+          setState(() {
+            _emergency = false;
+            _emergencyReason = null;
+          });
+        }
       } catch (e) {
         if (mounted) _snack('$e', error: true);
       } finally {
@@ -312,10 +322,18 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     if (reason == null || reason.trim().isEmpty) return;
     setState(() => _busy = true);
     try {
-      await ref.read(receptionRepositoryProvider)
-          .setEmergency(visitId: visit.id, emergency: true, reason: reason.trim());
+      await ref
+          .read(receptionRepositoryProvider)
+          .setEmergency(
+            visitId: visit.id,
+            emergency: true,
+            reason: reason.trim(),
+          );
       if (mounted) {
-        setState(() { _emergency = true; _emergencyReason = reason.trim(); });
+        setState(() {
+          _emergency = true;
+          _emergencyReason = reason.trim();
+        });
         _snack('Отмечено как ЭКСТРЕННЫЙ приём');
       }
     } catch (e) {
@@ -328,7 +346,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   /// Downloads + opens the receipt PDF (browser then prints it).
   Future<void> _printReceipt(String paymentId, String receiptNo) async {
     try {
-      final bytes = await ref.read(receptionRepositoryProvider).receiptPdf(paymentId);
+      final bytes = await ref
+          .read(receptionRepositoryProvider)
+          .receiptPdf(paymentId);
       await saveBytes(bytes, 'receipt-$receiptNo.pdf', 'application/pdf');
     } catch (e) {
       if (mounted) _snack('$e', error: true);
@@ -337,7 +357,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
 
   // Hotkey actions (Ctrl+Enter context-aware: open visit → take payment).
   void _hotNewPatient() {
-    final canRegister = ref.read(authControllerProvider).user?.can('patients.create') ?? false;
+    final canRegister =
+        ref.read(authControllerProvider).user?.can('patients.create') ?? false;
     if (canRegister && _patient == null && !_busy) _registerNew();
   }
 
@@ -409,10 +430,14 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     // Ctrl+P печать чека · Ctrl+Enter сохранить визит / принять оплату.
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.keyN, control: true): _hotNewPatient,
-        const SingleActivator(LogicalKeyboardKey.keyF, control: true): _searchFocus.requestFocus,
-        const SingleActivator(LogicalKeyboardKey.keyP, control: true): _hotPrintReceipt,
-        const SingleActivator(LogicalKeyboardKey.enter, control: true): _hotPrimary,
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true):
+            _hotNewPatient,
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            _searchFocus.requestFocus,
+        const SingleActivator(LogicalKeyboardKey.keyP, control: true):
+            _hotPrintReceipt,
+        const SingleActivator(LogicalKeyboardKey.enter, control: true):
+            _hotPrimary,
       },
       // NB: this wrapper Focus must NOT autofocus — it would steal initial
       // focus from the patient search field below (whose own autofocus then
@@ -468,7 +493,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             child: Text(
               'Найден незавершённый приём (услуг: ${items.length}). Восстановить?',
               style: TextStyle(
-                  color: cs.onTertiaryContainer, fontWeight: FontWeight.w600),
+                color: cs.onTertiaryContainer,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           TextButton(
@@ -581,11 +608,16 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         final cs = Theme.of(context).colorScheme;
         final chips = <Widget>[
           _miniChip(Icons.event_repeat, 'Визитов: ${s.visitCount}'),
-          if (s.isRepeat) _miniChip(Icons.verified_user, 'Повторный', color: cs.primary),
-          if (s.lastVisitAt != null) _miniChip(Icons.history, 'Был: ${s.lastVisitAt}'),
+          if (s.isRepeat)
+            _miniChip(Icons.verified_user, 'Повторный', color: cs.primary),
+          if (s.lastVisitAt != null)
+            _miniChip(Icons.history, 'Был: ${s.lastVisitAt}'),
           if (s.hasDebt)
-            _miniChip(Icons.account_balance_wallet,
-                'Долг: ${formatMoney(s.totalDebt)}', color: cs.error),
+            _miniChip(
+              Icons.account_balance_wallet,
+              'Долг: ${formatMoney(s.totalDebt)}',
+              color: cs.error,
+            ),
         ];
         return Container(
           margin: const EdgeInsets.only(top: 4),
@@ -600,12 +632,16 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
               Wrap(spacing: 8, runSpacing: 8, children: chips),
               if (s.lastDiagnosis != null) ...[
                 const SizedBox(height: 8),
-                Text('Посл. диагноз: ${s.lastDiagnosis}',
-                    style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  'Посл. диагноз: ${s.lastDiagnosis}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
               if (s.lastOperation != null)
-                Text('Посл. операция: ${s.lastOperation}',
-                    style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  'Посл. операция: ${s.lastOperation}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
             ],
           ),
         );
@@ -620,7 +656,14 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       children: [
         Icon(icon, size: 15, color: c),
         const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 12.5, color: c, fontWeight: FontWeight.w600)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12.5,
+            color: c,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ],
     );
   }
@@ -642,7 +685,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             (groups[s.categoryId ?? ''] ??= <Service>[]).add(s);
           }
           final orderedKeys = <String>[
-            for (final c in cats) if (groups.containsKey(c.id)) c.id,
+            for (final c in cats)
+              if (groups.containsKey(c.id)) c.id,
             for (final k in groups.keys)
               if (k.isNotEmpty && !nameById.containsKey(k)) k,
             if (groups.containsKey('')) '',
@@ -661,7 +705,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                 children: [
                   for (final key in orderedKeys) ...[
                     _serviceCategoryHeader(
-                        key.isEmpty ? 'Прочее' : (nameById[key] ?? 'Прочее')),
+                      key.isEmpty ? 'Прочее' : (nameById[key] ?? 'Прочее'),
+                    ),
                     Wrap(
                       spacing: gap,
                       runSpacing: gap,
@@ -682,17 +727,17 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   }
 
   Widget _serviceCategoryHeader(String label) => Padding(
-        padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
-        child: Text(
-          label.toUpperCase(),
-          style: TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.8,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
-      );
+    padding: const EdgeInsets.fromLTRB(4, 10, 4, 2),
+    child: Text(
+      label.toUpperCase(),
+      style: TextStyle(
+        fontSize: 11.5,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.8,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+    ),
+  );
 
   /// Service as a fixed-width card (prototype style): name + price + add. The
   /// whole card is tappable to add to the cart; a plain Icon (not a themed
@@ -709,7 +754,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           borderRadius: BorderRadius.circular(12),
           onTap: enabled
               ? () => setState(
-                  () => _cart.update(s, (q) => q + 1, ifAbsent: () => 1))
+                  () => _cart.update(s, (q) => q + 1, ifAbsent: () => 1),
+                )
               : null,
           child: Container(
             padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
@@ -723,27 +769,36 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(s.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600, fontSize: 13.5)),
+                      Text(
+                        s.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13.5,
+                        ),
+                      ),
                       const SizedBox(height: 3),
-                      Text(formatMoney(s.price),
-                          style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                              color: cs.primary)),
+                      Text(
+                        formatMoney(s.price),
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          color: cs.primary,
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 6),
                 // add_circle_outline (not filled): also the affordance the
                 // reception/discount widget tests tap to add a service.
-                Icon(Icons.add_circle_outline,
-                    color: enabled
-                        ? cs.primary
-                        : cs.onSurfaceVariant.withValues(alpha: 0.4)),
+                Icon(
+                  Icons.add_circle_outline,
+                  color: enabled
+                      ? cs.primary
+                      : cs.onSurfaceVariant.withValues(alpha: 0.4),
+                ),
               ],
             ),
           ),
@@ -769,7 +824,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         const SizedBox(width: 8),
         // Flexible + right-align: a long «−15 000 сум (Пенсионер)» wraps instead
         // of overflowing the narrow right column.
-        Expanded(child: Text(value, style: style, textAlign: TextAlign.right)),
+        Expanded(
+          child: Text(value, style: style, textAlign: TextAlign.right),
+        ),
       ],
     );
   }
@@ -863,15 +920,19 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             ),
             child: Row(
               children: [
-                Icon(Icons.warning_amber_rounded,
-                    color: Theme.of(context).colorScheme.error, size: 20),
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: Theme.of(context).colorScheme.error,
+                  size: 20,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     'ЭКСТРЕННЫЙ ПРИЕМ${_emergencyReason == null ? '' : ' · $_emergencyReason'}',
                     style: TextStyle(
-                        color: Theme.of(context).colorScheme.onErrorContainer,
-                        fontWeight: FontWeight.bold),
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -910,11 +971,14 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         // «ЭКСТРЕННО» — приоритет в очереди + красная метка на талоне/ТВ/чеке.
         OutlinedButton.icon(
           onPressed: (canDiscount && !_busy) ? _toggleEmergency : null,
-          icon: Icon(_emergency ? Icons.cancel : Icons.warning_amber_rounded,
-              color: _emergency ? null : Theme.of(context).colorScheme.error),
+          icon: Icon(
+            _emergency ? Icons.cancel : Icons.warning_amber_rounded,
+            color: _emergency ? null : Theme.of(context).colorScheme.error,
+          ),
           style: OutlinedButton.styleFrom(
-            foregroundColor:
-                _emergency ? null : Theme.of(context).colorScheme.error,
+            foregroundColor: _emergency
+                ? null
+                : Theme.of(context).colorScheme.error,
           ),
           label: Text(_emergency ? 'Снять экстренность' : 'ЭКСТРЕННО'),
         ),
@@ -973,7 +1037,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () => _printReceipt(r.payment.id, r.payment.receiptNo),
+                  onPressed: () =>
+                      _printReceipt(r.payment.id, r.payment.receiptNo),
                   icon: const Icon(Icons.print),
                   label: const Text('Печать чека'),
                 ),
@@ -1010,7 +1075,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   }
 }
 
-/// Диалог оплаты: сумма (по умолчанию — остаток), способ, кабинет для талона.
+/// Диалог оплаты: только сумма (по умолчанию — остаток) и способ. Кабинет НЕ
+/// указывается — талон получает кабинет от врача, который его вызовет.
 class _PaymentDialog extends ConsumerStatefulWidget {
   const _PaymentDialog({required this.visit});
 
@@ -1024,7 +1090,6 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
   late final TextEditingController _amount = TextEditingController(
     text: widget.visit.balance,
   );
-  final _room = TextEditingController(text: 'Каб. 1');
   String _method = 'cash';
   bool _paying = false;
   String? _error;
@@ -1032,7 +1097,6 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
   @override
   void dispose() {
     _amount.dispose();
-    _room.dispose();
     super.dispose();
   }
 
@@ -1049,7 +1113,6 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
             // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
             amount: _amount.text.trim().replaceAll(',', '.'),
             method: _method,
-            room: _room.text.trim().isEmpty ? null : _room.text.trim(),
           );
       if (mounted) Navigator.of(context).pop(result);
     } catch (e) {
@@ -1082,13 +1145,6 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
               DropdownMenuItem(value: 'transfer', child: Text('Перечисление')),
             ],
             onChanged: (v) => setState(() => _method = v ?? 'cash'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _room,
-            decoration: const InputDecoration(
-              labelText: 'Кабинет (для талона очереди)',
-            ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
@@ -1159,18 +1215,23 @@ class _EmergencyReasonDialogState extends State<_EmergencyReasonDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Пациент получит приоритет в очереди, красную метку на табло и в чеке.',
-                style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              'Пациент получит приоритет в очереди, красную метку на табло и в чеке.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
               initialValue: _reason,
               decoration: const InputDecoration(
-                  labelText: 'Причина (обязательно)', isDense: true),
+                labelText: 'Причина (обязательно)',
+                isDense: true,
+              ),
               items: [
                 for (final r in _emergencyReasons)
                   DropdownMenuItem(value: r, child: Text(r)),
               ],
-              onChanged: (v) => setState(() => _reason = v ?? _emergencyReasons.first),
+              onChanged: (v) =>
+                  setState(() => _reason = v ?? _emergencyReasons.first),
             ),
             if (_reason == 'Другое') ...[
               const SizedBox(height: 12),
@@ -1178,7 +1239,9 @@ class _EmergencyReasonDialogState extends State<_EmergencyReasonDialog> {
                 controller: _custom,
                 autofocus: true,
                 decoration: const InputDecoration(
-                    labelText: 'Причина (свой вариант)', isDense: true),
+                  labelText: 'Причина (свой вариант)',
+                  isDense: true,
+                ),
                 onChanged: (_) => setState(() {}),
               ),
             ],
@@ -1191,9 +1254,12 @@ class _EmergencyReasonDialogState extends State<_EmergencyReasonDialog> {
           child: const Text('Отмена'),
         ),
         FilledButton(
-          onPressed: _value.isEmpty ? null : () => Navigator.of(context).pop(_value),
+          onPressed: _value.isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_value),
           style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
           child: const Text('Отметить экстренным'),
         ),
       ],
@@ -1256,8 +1322,7 @@ class _DiscountDialogState extends ConsumerState<_DiscountDialog> {
     super.dispose();
   }
 
-  bool get _alreadyPaid =>
-      (double.tryParse(widget.visit.paidAmount) ?? 0) > 0;
+  bool get _alreadyPaid => (double.tryParse(widget.visit.paidAmount) ?? 0) > 0;
 
   Future<void> _apply() async {
     // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
@@ -1341,8 +1406,7 @@ class _DiscountDialogState extends ConsumerState<_DiscountDialog> {
                 ButtonSegment(value: false, label: Text('Сумма')),
               ],
               selected: {_byPercent},
-              onSelectionChanged: (s) =>
-                  setState(() => _byPercent = s.first),
+              onSelectionChanged: (s) => setState(() => _byPercent = s.first),
             ),
             const SizedBox(height: 12),
             TextField(

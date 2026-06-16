@@ -138,13 +138,22 @@ on every mutation · multi-branch**.
   `/services` accepts `doctor_ids`; migration `d3a7c1f4b920`. Flutter `/admin`:
   «Кабинет» + «Услуги врача» on the staff create/edit dialogs, «Принимающие врачи»
   on the service create/edit dialogs (one `_asyncMultiPick` helper; an inactive
-  but still-linked item stays visible/removable). **Next: Ф2** — reception payment
-  widget (method + sum, no cabinet) → print ticket+чек → queue.
+  but still-linked item stays visible/removable).
+- **Patient-journey Ф2 — reception payment & services: ✅ done** — the reception
+  **payment dialog dropped its cabinet field** (amount + method only; the ticket
+  gets its room from the doctor who calls it). **«Услуги добавляет рецепшен»**:
+  service management is now its own screen `/services` + «Услуги» nav, because
+  reception has services.* but not users.read (so /admin was unreachable). New
+  backend `GET /services/assignable-doctors` (services.read) feeds the service
+  form's doctor picker without users.read; `/admin` dropped its Services tab.
+  **Next: Ф3** — queue UX («Вызвать» / «Вызвать повторно» / «Оставить», TV
+  recall) + separate doctor & diagnostician queue screens; route a paid ticket
+  to the service's eligible doctor, into that doctor's cabinet.
 
-**Verified green:** backend `pytest` = 223 passed · Flutter `flutter test` = 158 passed
+**Verified green:** backend `pytest` = 224 passed · Flutter `flutter test` = 158 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; this round
-added the doctor cabinet + doctor↔service M2M for service-based queue routing).
+`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф2
+services-for-reception added a read endpoint only — no schema change).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

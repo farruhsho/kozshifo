@@ -515,13 +515,6 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             const SizedBox(width: 8),
             FilledButton.tonalIcon(
               onPressed: canRegister ? _registerNew : null,
-              // The app theme makes buttons full-width (minimumSize width =
-              // infinity). That is fine in a Column, but here the button is a
-              // non-flex sibling of an Expanded in a Row, so the flex measures it
-              // under UNBOUNDED width — an infinite min-width then throws
-              // «RenderBox was not laid out» every frame and freezes the screen.
-              // A finite min-width keeps it content-sized and laid out.
-              style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
               icon: const Icon(Icons.person_add_alt_1),
               label: const Text('Новый'),
             ),

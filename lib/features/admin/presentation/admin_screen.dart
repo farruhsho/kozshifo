@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/formatters.dart';
+import '../../../core/utils/input_formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../reception/domain/service.dart';
@@ -488,7 +489,7 @@ class _BranchCreateDialogState extends ConsumerState<_BranchCreateDialog> {
             code: _code.text.trim(),
             address:
                 _address.text.trim().isEmpty ? null : _address.text.trim(),
-            phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+            phone: assembleUzPhone(_phone.text),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -530,8 +531,12 @@ class _BranchCreateDialogState extends ConsumerState<_BranchCreateDialog> {
             TextField(
               controller: _phone,
               keyboardType: TextInputType.phone,
-              decoration:
-                  const InputDecoration(labelText: 'Телефон (необязательно)'),
+              inputFormatters: uzPhoneLocal,
+              decoration: const InputDecoration(
+                labelText: 'Телефон (необязательно)',
+                prefixText: '+998 ',
+                hintText: '90 123 45 67',
+              ),
             ),
           ],
         ),
@@ -568,7 +573,8 @@ class _BranchEditDialogState extends ConsumerState<_BranchEditDialog> {
   late final _name = TextEditingController(text: widget.branch.name);
   late final _address =
       TextEditingController(text: widget.branch.address ?? '');
-  late final _phone = TextEditingController(text: widget.branch.phone ?? '');
+  late final _phone =
+      TextEditingController(text: extractUzPhoneLocal(widget.branch.phone));
   late bool _isActive = widget.branch.isActive;
   bool _saving = false;
 
@@ -590,7 +596,7 @@ class _BranchEditDialogState extends ConsumerState<_BranchEditDialog> {
             name: _name.text.trim(),
             address:
                 _address.text.trim().isEmpty ? null : _address.text.trim(),
-            phone: _phone.text.trim().isEmpty ? null : _phone.text.trim(),
+            phone: assembleUzPhone(_phone.text),
             isActive: _isActive,
           );
       if (mounted) Navigator.of(context).pop(true);

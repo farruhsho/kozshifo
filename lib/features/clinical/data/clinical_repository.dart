@@ -88,11 +88,19 @@ class ClinicalRepository {
 
   /// Operations-department worklist (TZ Modul 6). Filter by [status] (referred,
   /// scheduled, in_progress, performed, completed, cancelled) and/or [branchId].
-  Future<List<Operation>> operations({String? status, String? branchId}) async {
+  Future<List<Operation>> operations({
+    String? status,
+    String? branchId,
+    int limit = 100,
+  }) async {
     try {
       final resp = await _dio.get(
         '/operations',
-        queryParameters: {'status': ?status, 'branch_id': ?branchId},
+        queryParameters: {
+          'status': ?status,
+          'branch_id': ?branchId,
+          'limit': limit,
+        },
       );
       return (resp.data as List<dynamic>)
           .map((e) => Operation.fromJson(e as Map<String, dynamic>))
@@ -292,6 +300,15 @@ final operationsWorklistProvider = FutureProvider.autoDispose
       (ref, status) =>
           ref.watch(clinicalRepositoryProvider).operations(status: status),
     );
+
+/// All SCHEDULED operations (limit 500) — the operations CALENDAR filters these
+/// by day client-side. Separate from the worklist provider so the «Список» tab
+/// keeps its 100-cap (no 500-card Column) while the calendar gets a long runway.
+final scheduledOperationsProvider = FutureProvider.autoDispose<List<Operation>>(
+  (ref) => ref
+      .watch(clinicalRepositoryProvider)
+      .operations(status: 'scheduled', limit: 500),
+);
 
 final visitTreatmentsProvider = FutureProvider.autoDispose
     .family<List<Treatment>, String>(

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/network/api_exception.dart';
@@ -40,11 +41,15 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   ];
 
   String? _status = 'referred';
+  // Календарь операций: режим + выбранный день (фильтр scheduled по дате).
+  bool _calendar = false;
+  DateTime _calDay = DateTime.now();
 
   void _reload() {
     for (final t in _tabs) {
       ref.invalidate(operationsWorklistProvider(t.$2));
     }
+    ref.invalidate(scheduledOperationsProvider);
   }
 
   @override
@@ -74,51 +79,239 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _hero(operations.asData?.value.length),
+              _hero(_calendar ? null : operations.asData?.value.length),
               const SizedBox(height: 16),
-              _filterChips(),
+              _modeToggle(),
               const SizedBox(height: 16),
-              operations.when(
-                loading: () => const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 48),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-                error: (e, _) => AppCard(
-                  child: Center(
-                    child: Text(
-                      e is ApiException ? e.message : '$e',
-                      style: const TextStyle(color: AppColors.red),
+              if (_calendar)
+                _calendarView()
+              else ...[
+                _filterChips(),
+                const SizedBox(height: 16),
+                operations.when(
+                  loading: () => const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 48),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                  error: (e, _) => AppCard(
+                    child: Center(
+                      child: Text(
+                        e is ApiException ? e.message : '$e',
+                        style: const TextStyle(color: AppColors.red),
+                      ),
                     ),
                   ),
-                ),
-                data: (items) {
-                  if (items.isEmpty) {
-                    return const AppCard(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 28),
-                        child: Center(child: Text('Операций нет')),
-                      ),
+                  data: (items) {
+                    if (items.isEmpty) {
+                      return const AppCard(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 28),
+                          child: Center(child: Text('Операций нет')),
+                        ),
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final op in items)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _OperationCard(
+                              op: op,
+                              canSchedule: canSchedule,
+                              canPerform: canPerform,
+                              canCancel: canCancel,
+                              onChanged: _reload,
+                            ),
+                          ),
+                      ],
                     );
-                  }
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  },
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _modeToggle() {
+    return Wrap(
+      spacing: 8,
+      children: [
+        _FilterChip(
+          label: 'Список',
+          selected: !_calendar,
+          onTap: () => setState(() => _calendar = false),
+        ),
+        _FilterChip(
+          label: 'Календарь',
+          selected: _calendar,
+          onTap: () => setState(() => _calendar = true),
+        ),
+      ],
+    );
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// Календарь-агенда: запланированные операции выбранного дня, по времени.
+  Widget _calendarView() {
+    final scheduled = ref.watch(scheduledOperationsProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            IconButton.outlined(
+              onPressed: () => setState(
+                () => _calDay = _calDay.subtract(const Duration(days: 1)),
+              ),
+              icon: const Icon(Icons.chevron_left),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: () => setState(() => _calDay = DateTime.now()),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.tealBg,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  DateFormat('dd.MM.yyyy').format(_calDay),
+                  style: const TextStyle(
+                    color: AppColors.tealDark,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.outlined(
+              onPressed: () => setState(
+                () => _calDay = _calDay.add(const Duration(days: 1)),
+              ),
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        scheduled.when(
+          loading: () => const Padding(
+            padding: EdgeInsets.symmetric(vertical: 48),
+            child: Center(child: CircularProgressIndicator()),
+          ),
+          error: (e, _) => AppCard(
+            child: Center(
+              child: Text(
+                e is ApiException ? e.message : '$e',
+                style: const TextStyle(color: AppColors.red),
+              ),
+            ),
+          ),
+          data: (items) {
+            final ops = [
+              for (final o in items)
+                if (o.scheduledAtLocal != null)
+                  (op: o, at: o.scheduledAtLocal!),
+            ]..removeWhere((e) => !_sameDay(e.at, _calDay));
+            ops.sort((a, b) => a.at.compareTo(b.at));
+            if (ops.isEmpty) {
+              return const AppCard(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Center(child: Text('На этот день операций нет')),
+                ),
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [for (final e in ops) _calCard(e.op, e.at)],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _calCard(Operation op, DateTime at) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => context.go('/patients/${op.patientId}/card'),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 52,
+                  child: Text(
+                    DateFormat('HH:mm').format(at),
+                    style: AppTypography.number(16, color: AppColors.tealDark),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      for (final op in items)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _OperationCard(
-                            op: op,
-                            canSchedule: canSchedule,
-                            canPerform: canPerform,
-                            canCancel: canCancel,
-                            onChanged: _reload,
+                      Text(
+                        op.patientName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${op.typeName} · ${op.eyeLabel}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.sub,
+                          fontSize: 13,
+                        ),
+                      ),
+                      if (op.surgeonName != null)
+                        Text(
+                          'Хирург: ${op.surgeonName}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.sub,
+                            fontSize: 12.5,
                           ),
                         ),
                     ],
-                  );
-                },
-              ),
-            ],
+                  ),
+                ),
+                if (op.isUrgent)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 6),
+                    child: Icon(
+                      Icons.priority_high,
+                      color: AppColors.red,
+                      size: 20,
+                    ),
+                  ),
+                const Icon(Icons.chevron_right, color: AppColors.muted),
+              ],
+            ),
           ),
         ),
       ),

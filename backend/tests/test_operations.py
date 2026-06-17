@@ -469,6 +469,37 @@ def test_operations_worklist(client, auth):
                                    params={"status": "scheduled"}).json()]
 
 
+def test_operations_scheduled_window(client, auth):
+    """The calendar agenda windows the worklist by scheduled_at: a half-open
+    [from, to) UTC interval includes ops scheduled that day and excludes ops on
+    other days as well as bare (un-scheduled) referrals."""
+    branch_id = _branch_id(client, auth)
+    visit = _new_visit(client, auth, branch_id, "window")
+    ivi = _operation_type(client, auth, "IVI")
+    scheduled = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                            json={"operation_type_id": ivi["id"]}).json()
+    assert _schedule(client, auth, scheduled["id"]).status_code == 200  # 2026-07-01 09:00Z
+    # A second referral left un-scheduled — has no scheduled_at, so a windowed
+    # query must never surface it.
+    bare = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                       json={"operation_type_id": ivi["id"]}).json()
+
+    def _ids(frm, to):
+        resp = client.get(f"{API}/operations", headers=auth,
+                          params={"scheduled_from": frm, "scheduled_to": to})
+        assert resp.status_code == 200, resp.text
+        return [o["id"] for o in resp.json()]
+
+    # The day that contains 09:00Z → included; the bare referral → excluded.
+    same_day = _ids("2026-07-01T00:00:00+00:00", "2026-07-02T00:00:00+00:00")
+    assert scheduled["id"] in same_day
+    assert bare["id"] not in same_day
+    # The previous window is exclusive of its upper bound (09:00Z is not < 00:00Z).
+    assert scheduled["id"] not in _ids("2026-06-30T00:00:00+00:00", "2026-07-01T00:00:00+00:00")
+    # A later day does not contain it either.
+    assert scheduled["id"] not in _ids("2026-07-02T00:00:00+00:00", "2026-07-03T00:00:00+00:00")
+
+
 def test_operations_report_by_surgeon(client, auth):
     """Period report counts performed operations and breaks revenue down by surgeon."""
     branch_id = _branch_id(client, auth)

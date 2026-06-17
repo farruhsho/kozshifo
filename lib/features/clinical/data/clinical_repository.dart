@@ -88,9 +88,14 @@ class ClinicalRepository {
 
   /// Operations-department worklist (TZ Modul 6). Filter by [status] (referred,
   /// scheduled, in_progress, performed, completed, cancelled) and/or [branchId].
+  /// [scheduledFrom]/[scheduledTo] window by `scheduled_at` (half-open [from,to))
+  /// — sent as absolute UTC instants so the calendar pulls a single day instead
+  /// of relying on the 500-row cap.
   Future<List<Operation>> operations({
     String? status,
     String? branchId,
+    DateTime? scheduledFrom,
+    DateTime? scheduledTo,
     int limit = 100,
   }) async {
     try {
@@ -99,6 +104,8 @@ class ClinicalRepository {
         queryParameters: {
           'status': ?status,
           'branch_id': ?branchId,
+          'scheduled_from': ?scheduledFrom?.toUtc().toIso8601String(),
+          'scheduled_to': ?scheduledTo?.toUtc().toIso8601String(),
           'limit': limit,
         },
       );
@@ -301,14 +308,25 @@ final operationsWorklistProvider = FutureProvider.autoDispose
           ref.watch(clinicalRepositoryProvider).operations(status: status),
     );
 
-/// All SCHEDULED operations (limit 500) — the operations CALENDAR filters these
-/// by day client-side. Separate from the worklist provider so the «Список» tab
-/// keeps its 100-cap (no 500-card Column) while the calendar gets a long runway.
-final scheduledOperationsProvider = FutureProvider.autoDispose<List<Operation>>(
-  (ref) => ref
-      .watch(clinicalRepositoryProvider)
-      .operations(status: 'scheduled', limit: 500),
-);
+/// SCHEDULED operations of one local day, keyed by that day — the operations
+/// CALENDAR agenda. The day's [00:00, next-00:00) local bounds go to the server
+/// as UTC instants, so each day is a scoped fetch (no global 500-row cap, no
+/// missing days on busy branches). autoDispose caches recently-viewed days, so
+/// prev/next stays snappy after first load. Pass a date-only `DateTime` (local
+/// midnight) as the key so equal calendar days share one provider instance.
+final scheduledOperationsProvider = FutureProvider.autoDispose
+    .family<List<Operation>, DateTime>((ref, day) {
+      final from = DateTime(day.year, day.month, day.day);
+      final to = from.add(const Duration(days: 1));
+      return ref
+          .watch(clinicalRepositoryProvider)
+          .operations(
+            status: 'scheduled',
+            scheduledFrom: from,
+            scheduledTo: to,
+            limit: 500,
+          );
+    });
 
 final visitTreatmentsProvider = FutureProvider.autoDispose
     .family<List<Treatment>, String>(

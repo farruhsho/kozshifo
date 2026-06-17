@@ -198,11 +198,19 @@ def list_operations(
     status_filter: str | None = Query(None, alias="status"),
     branch_id: UUID | None = None,
     surgeon_id: UUID | None = None,
+    scheduled_from: datetime | None = None,
+    scheduled_to: datetime | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[Operation]:
     """The Operations-department worklist: referrals waiting to be scheduled,
-    scheduled/in-progress surgeries, and (filtered) history. Branch-scoped."""
+    scheduled/in-progress surgeries, and (filtered) history. Branch-scoped.
+
+    `scheduled_from`/`scheduled_to` window the result by `scheduled_at` (a
+    half-open [from, to) interval of absolute UTC instants — the calendar passes
+    the selected local day's UTC bounds). This lets the agenda fetch just one
+    day instead of pulling every scheduled op and capping at 500 client-side;
+    rows with no `scheduled_at` (bare referrals) drop out of a windowed query."""
     stmt = select(Operation).join(Visit, Operation.visit_id == Visit.id)
     # Branch isolation mirrors visits.list_visits: a single-branch user only
     # sees their branch; the director (superuser) sees all.
@@ -214,6 +222,13 @@ def list_operations(
         stmt = stmt.where(Operation.status == status_filter)
     if surgeon_id is not None:
         stmt = stmt.where(Operation.surgeon_id == surgeon_id)
+    # Mirror operation_report's raw-datetime comparison: scheduled_at is stored
+    # UTC (client sends `.toUtc()`), so an absolute-instant window is correct on
+    # both Postgres (aware) and SQLite (naive UTC wall-clock).
+    if scheduled_from is not None:
+        stmt = stmt.where(Operation.scheduled_at >= scheduled_from)
+    if scheduled_to is not None:
+        stmt = stmt.where(Operation.scheduled_at < scheduled_to)
     # Urgent first, then by referral time (oldest waiting at the top).
     stmt = stmt.order_by(
         (Operation.priority == "urgent").desc(), Operation.created_at.asc()

@@ -159,7 +159,11 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
 
   /// Календарь-агенда: запланированные операции выбранного дня, по времени.
   Widget _calendarView() {
-    final scheduled = ref.watch(scheduledOperationsProvider);
+    // Нормализуем до даты (локальная полночь): ключ семейства — один и тот же
+    // для всех пересборок одного календарного дня, иначе каждый кадр плодил бы
+    // новый провайдер и сетевой запрос.
+    final day = DateTime(_calDay.year, _calDay.month, _calDay.day);
+    final scheduled = ref.watch(scheduledOperationsProvider(day));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -217,6 +221,8 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
             ),
           ),
           data: (items) {
+            // Сервер уже отдал ровно этот день (окно scheduled_from/_to). Фильтр
+            // _sameDay — страхующий no-op на случай расхождения границ.
             final ops = [
               for (final o in items)
                 if (o.scheduledAtLocal != null)

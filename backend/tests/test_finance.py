@@ -471,6 +471,32 @@ def test_visits_owing_filter(client, auth):
     assert paid["id"] not in ids
 
 
+def test_visits_opened_window(client, auth):
+    """opened_from/opened_to window the visit list by opened_at (half-open UTC):
+    the visit-history screen narrows a patient's visits by date."""
+    branch_id = client.get(f"{API}/branches", headers=auth).json()[0]["id"]
+    patient = client.post(f"{API}/patients", headers=auth,
+                          json={"first_name": "Окно", "last_name": "Визитов",
+                                "branch_id": branch_id}).json()
+    svc = client.get(f"{API}/services", headers=auth).json()["items"][0]["id"]
+    visit = client.post(f"{API}/visits", headers=auth,
+                        json={"patient_id": patient["id"], "branch_id": branch_id,
+                              "items": [{"service_id": svc, "quantity": 1}]}).json()
+
+    def _ids(frm, to):
+        resp = client.get(f"{API}/visits", headers=auth,
+                          params={"patient_id": patient["id"],
+                                  "opened_from": frm, "opened_to": to})
+        assert resp.status_code == 200, resp.text
+        return {v["id"] for v in resp.json()["items"]}
+
+    # opened_at is "now" → a wide window includes it; a past window and a future
+    # window both exclude it.
+    assert visit["id"] in _ids("2000-01-01T00:00:00+00:00", "2100-01-01T00:00:00+00:00")
+    assert visit["id"] not in _ids("2000-01-01T00:00:00+00:00", "2001-01-01T00:00:00+00:00")
+    assert visit["id"] not in _ids("2099-01-01T00:00:00+00:00", "2100-01-01T00:00:00+00:00")
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # CSV exports
 # ════════════════════════════════════════════════════════════════════════════

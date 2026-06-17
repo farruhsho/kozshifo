@@ -68,6 +68,8 @@ def list_visits(
     branch_id: UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
     owing: bool = Query(False, description="Only visits that still owe money (payable > paid)"),
+    opened_from: datetime | None = None,
+    opened_to: datetime | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ) -> Page[VisitOut]:
@@ -78,6 +80,14 @@ def list_visits(
         stmt = stmt.where(Visit.branch_id == branch_id)
     if status_filter:
         stmt = stmt.where(Visit.status == status_filter)
+    # opened_at date-window (half-open [from, to) of absolute UTC instants — the
+    # visit-history screen passes the selected local day bounds as UTC). opened_at
+    # is UTCDateTime (aware UTC on both Postgres and SQLite), so the comparison is
+    # consistent across backends.
+    if opened_from is not None:
+        stmt = stmt.where(Visit.opened_at >= opened_from)
+    if opened_to is not None:
+        stmt = stmt.where(Visit.opened_at < opened_to)
     # Branch isolation: a single-branch user (e.g. a cashier) only ever sees
     # their own branch's visits; the director (superuser) sees all branches.
     if not actor.is_superuser and actor.branch_id is not None:

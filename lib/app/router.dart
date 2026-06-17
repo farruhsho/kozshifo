@@ -21,6 +21,7 @@ import '../features/lab/presentation/lab_screen.dart';
 import '../features/notifications/presentation/notifications_screen.dart';
 import '../features/operations/presentation/operations_screen.dart';
 import '../features/optics/presentation/optics_screen.dart';
+import '../features/patients/presentation/patient_visits_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
@@ -81,6 +82,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/patients/:id/card',
             builder: (_, state) =>
                 PatientCardScreen(patientId: state.pathParameters['id']!),
+          ),
+          // Standalone visit history (Ф5). Under the /patients prefix, so the
+          // redirect guard inherits the Пациенты destination's patients.read gate.
+          GoRoute(
+            path: '/patients/:id/visits',
+            builder: (_, state) =>
+                PatientVisitsScreen(patientId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/finance', builder: (_, _) => const FinanceScreen()),
           GoRoute(

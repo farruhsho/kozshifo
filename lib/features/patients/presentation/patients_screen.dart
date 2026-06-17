@@ -39,8 +39,9 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
   @override
   Widget build(BuildContext context) {
     final patients = ref.watch(patientsListProvider);
-    final canCreate =
-        ref.watch(authControllerProvider).user?.can('patients.create') ?? false;
+    final user = ref.watch(authControllerProvider).user;
+    final canCreate = user?.can('patients.create') ?? false;
+    final canViewVisits = user?.can('visits.read') ?? false;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Пациенты')),
@@ -77,7 +78,8 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
             child: AsyncValueWidget<Page<Patient>>(
               value: patients,
               onRetry: () => ref.invalidate(patientsListProvider),
-              builder: (page) => _PatientList(page: page),
+              builder: (page) =>
+                  _PatientList(page: page, canViewVisits: canViewVisits),
             ),
           ),
         ],
@@ -95,9 +97,10 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
 }
 
 class _PatientList extends StatelessWidget {
-  const _PatientList({required this.page});
+  const _PatientList({required this.page, required this.canViewVisits});
 
   final Page<Patient> page;
+  final bool canViewVisits;
 
   @override
   Widget build(BuildContext context) {
@@ -128,10 +131,22 @@ class _PatientList extends StatelessWidget {
                 subtitle: Text(
                   [p.mrn, if (p.phone != null) p.phone!].join('  ·  '),
                 ),
-                trailing: TextButton.icon(
-                  onPressed: () => context.go('/patients/${p.id}/card'),
-                  icon: const Icon(Icons.medical_information_outlined),
-                  label: const Text('Карта'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (canViewVisits)
+                      IconButton(
+                        tooltip: 'История визитов',
+                        icon: const Icon(Icons.history),
+                        onPressed: () =>
+                            context.go('/patients/${p.id}/visits'),
+                      ),
+                    TextButton.icon(
+                      onPressed: () => context.go('/patients/${p.id}/card'),
+                      icon: const Icon(Icons.medical_information_outlined),
+                      label: const Text('Карта'),
+                    ),
+                  ],
                 ),
                 onTap: () => context.go('/patients/${p.id}/card'),
               );

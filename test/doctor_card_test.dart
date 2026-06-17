@@ -78,8 +78,13 @@ class _FakeDoctorRepository extends DoctorRepository {
   _FakeDoctorRepository() : super(Dio());
 
   @override
-  Future<List<VisitSummary>> visitsForPatient(String patientId) async =>
-      const [_visit];
+  Future<List<VisitSummary>> visitsForPatient(
+    String patientId, {
+    DateTime? openedFrom,
+    DateTime? openedTo,
+    String? status,
+    bool owing = false,
+  }) async => const [_visit];
 
   @override
   Future<EyeExam?> examForVisit(String visitId) async => null;

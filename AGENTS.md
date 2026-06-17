@@ -209,14 +209,27 @@ on every mutation · multi-branch**.
   `ref_id`, template/ad-hoc split by the shared `ADHOC_REASON_SUFFIX` constant in
   `models.operation`). **Not billed** — operations are already billed at the
   operation price; consumables are clinic COGS, so this records/surfaces them (no
-  cost shown → no finance leak; gated by `operations.read`). **Next:** **Ф5** patient
-  visit-history screen + date/param search; **Ф6** накладная PDF (signature areas) +
-  Excel/PDF export choice + director operations-analytics UI.
+  cost shown → no finance leak; gated by `operations.read`).
+- **Patient-journey Ф5 — standalone visit-history screen: ✅ done** — a dedicated
+  `/patients/:id/visits` screen (`PatientVisitsScreen`) lists ALL of a patient's
+  visits with a filter bar: date range, status chips, «С долгом» (debt-only). It is
+  reception/registrar-friendly — distinct from the doctor's exam card — reached from
+  the patients list via an «История визитов» action (gated `visits.read`); the route
+  is a deep route under the `/patients` prefix so the redirect guard inherits
+  `patients.read`. Backend: GET `/visits` gained `opened_from`/`opened_to` (half-open
+  `[from,to)` UTC window on `opened_at`, which is `UTCDateTime` → aware on both DBs),
+  mirroring the `/operations` date-window. Flutter: `visitsForPatient` gained optional
+  `{openedFrom,openedTo,status,owing}`; a new `patientVisitsFilteredProvider` keyed on
+  a `VisitHistoryQuery` record powers the screen, leaving the doctor card's unfiltered
+  `patientVisitsProvider` untouched; the screen reuses `VisitSummary` (money/items/debt
+  getters) and taps through to the med card. **Next:** **Ф6** накладная PDF (signature
+  areas) + Excel/PDF export choice + director operations-analytics UI.
 
-**Verified green:** backend `pytest` = 235 passed · Flutter `flutter test` = 159 passed
+**Verified green:** backend `pytest` = 236 passed · Flutter `flutter test` = 160 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
 `alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф4 leftovers
-add no schema change — the window filter and the timeline enrichment are query-only).
+and Ф5 add no schema change — the window filters and the timeline enrichment are
+query-only).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

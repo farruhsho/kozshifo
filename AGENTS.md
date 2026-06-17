@@ -189,8 +189,17 @@ on every mutation · multi-branch**.
   product in both lists reports the true cumulative 409. Timeline
   `operation_completed` now carries the clinical result. Flutter: «Выполнить» opens
   a debounced product picker (gated on `inventory.read`, instruments filtered out)
-  with validated quantities. **Next: Ф4b** — operations CALENDAR (scheduled ops ×
-  surgeon × time + patient med card) + bill/record the ad-hoc consumables on the visit.
+  with validated quantities.
+- **Patient-journey Ф4b — operations calendar (agenda): ✅ done** — the Operations
+  screen gained a «Список / Календарь» toggle; the calendar shows the selected day's
+  SCHEDULED operations (date nav) each tapping through to the patient card.
+  Frontend-only; `Operation.scheduledAtLocal` force-reads naive SQLite datetimes as
+  UTC (correct day on dev + prod); a dedicated `scheduledOperationsProvider` fetches
+  at the 500 cap. **Next:** Ф4 leftovers — a proper backend `scheduled_from/_to`
+  date-window on `/operations` (removes the 500-row cap) + record/bill the ad-hoc
+  consumables on the visit (today they live only in the StockMovement ledger). Then
+  **Ф5** patient visit-history screen + date/param search; **Ф6** накладная PDF
+  (signature areas) + Excel/PDF export choice + director operations-analytics UI.
 
 **Verified green:** backend `pytest` = 233 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·

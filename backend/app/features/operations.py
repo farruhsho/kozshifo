@@ -24,7 +24,12 @@ from app.core.stock import InsufficientStockError, on_hand, write_off_fefo
 from app.features.visits import _make_item, _recompute_total
 from app.models.catalog import Service
 from app.models.inventory import Product
-from app.models.operation import Operation, OperationType, OperationTypeConsumable
+from app.models.operation import (
+    ADHOC_REASON_SUFFIX,
+    Operation,
+    OperationType,
+    OperationTypeConsumable,
+)
 from app.models.user import User
 from app.models.visit import Visit, VisitItem
 from app.schemas.operation import (
@@ -398,7 +403,7 @@ def perform_operation(
         for c in op_type.consumables
     ]
     lines += [
-        (a.product_id, a.quantity, f"Операция {op_type.name} — доп. расходник")
+        (a.product_id, a.quantity, f"Операция {op_type.name}{ADHOC_REASON_SUFFIX}")
         for a in ad_hoc
     ]
 

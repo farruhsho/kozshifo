@@ -21,6 +21,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 from app.models.base import TimestampMixin, UUIDPKMixin
 
+# Suffix appended to the FEFO write-off `reason` for consumables the operating
+# team used BEYOND the type's template (ad-hoc). The single source of truth so
+# the perform endpoint (which writes it) and the patient timeline (which reads
+# it back to label ad-hoc usage) never drift apart.
+ADHOC_REASON_SUFFIX = " — доп. расходник"
+
 
 class OperationType(UUIDPKMixin, TimestampMixin, Base):
     """Catalog template for a surgery: priced via the linked Service."""

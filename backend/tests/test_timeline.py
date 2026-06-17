@@ -107,6 +107,61 @@ def test_timeline_assembles_full_journey_sorted_desc(client, auth):
         assert e["visit_id"] == journey["visit"]["id"]
 
 
+def test_timeline_performed_event_lists_consumables(client, auth):
+    """The 'operation_performed' event carries the consumables actually written
+    off (template + ad-hoc), so the patient's surgical record shows what was
+    really used — split by the shared ad-hoc reason marker."""
+    branch_id = client.get(f"{API}/branches", headers=auth).json()[0]["id"]
+    patient = client.post(
+        f"{API}/patients", headers=auth,
+        json={"first_name": "Расход", "last_name": "Никовый",
+              "phone": "+998901119988", "branch_id": branch_id},
+    ).json()
+    visit = client.post(
+        f"{API}/visits", headers=auth,
+        json={"patient_id": patient["id"], "branch_id": branch_id, "items": []},
+    ).json()
+
+    def _product(sku: str) -> dict:
+        items = client.get(f"{API}/inventory/products", headers=auth,
+                           params={"q": sku}).json()["items"]
+        return next(p for p in items if p["sku"] == sku)
+
+    # Stock for the whole PHACO template + one extra SYR-1 for the ad-hoc line.
+    template = {"IOL-001": "1", "VISC-001": "1", "KNIFE-275": "1",
+                "SYR-1": "3", "GLOVES-ST": "3"}
+    receipt = client.post(
+        f"{API}/inventory/receipts", headers=auth,
+        json={"branch_id": branch_id,
+              "items": [{"product_id": _product(sku)["id"], "quantity": qty}
+                        for sku, qty in template.items()]},
+    )
+    assert receipt.status_code == 201, receipt.text
+
+    op_types = client.get(f"{API}/operation-types", headers=auth).json()
+    phaco = next(t for t in op_types if t["code"] == "PHACO")
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"], "eye": "od"}).json()
+    assert client.post(f"{API}/operations/{op['id']}/schedule", headers=auth,
+                       json={"scheduled_at": "2026-07-05T10:00:00+00:00"}).status_code == 200
+    performed = client.post(
+        f"{API}/operations/{op['id']}/perform", headers=auth,
+        json={"ad_hoc_consumables": [{"product_id": _product("SYR-1")["id"],
+                                      "quantity": "1"}]},
+    )
+    assert performed.status_code == 200, performed.text
+
+    events = client.get(f"{API}/patients/{patient['id']}/timeline",
+                        headers=auth).json()["events"]
+    perf = next(e for e in events if e["kind"] == "operation_performed")
+    detail = perf["detail"]
+    assert detail, "performed event must list the consumables"
+    assert " · доп.:" in detail   # template list precedes the ad-hoc marker
+    assert detail.count("×") >= 2  # quantities shown for several lines
+    # Whole-number quantities are trimmed (no trailing .000).
+    assert ".000" not in detail
+
+
 def test_timeline_respects_limit(client, auth):
     journey = _build_journey(client, auth)
     resp = client.get(

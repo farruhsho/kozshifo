@@ -194,18 +194,29 @@ on every mutation · multi-branch**.
   screen gained a «Список / Календарь» toggle; the calendar shows the selected day's
   SCHEDULED operations (date nav) each tapping through to the patient card.
   Frontend-only; `Operation.scheduledAtLocal` force-reads naive SQLite datetimes as
-  UTC (correct day on dev + prod); a dedicated `scheduledOperationsProvider` fetches
-  at the 500 cap. **Next:** Ф4 leftovers — a proper backend `scheduled_from/_to`
-  date-window on `/operations` (removes the 500-row cap) + record/bill the ad-hoc
-  consumables on the visit (today they live only in the StockMovement ledger). Then
-  **Ф5** patient visit-history screen + date/param search; **Ф6** накладная PDF
-  (signature areas) + Excel/PDF export choice + director operations-analytics UI.
+  UTC (correct day on dev + prod); a dedicated `scheduledOperationsProvider` fetched
+  at the 500 cap.
+- **Patient-journey Ф4 leftovers: ✅ done** — (1) **backend date-window**: GET
+  `/operations` gained `scheduled_from`/`scheduled_to` (half-open `[from,to)` UTC
+  window on `scheduled_at`, mirrors `operation_report`'s raw-datetime compare; bare
+  referrals drop out). `scheduledOperationsProvider` became a `.family` keyed on the
+  local day, sending that day's `[00:00,next-00:00)` bounds as UTC instants — the
+  calendar now fetches **one day** instead of relying on the 500-row cap; client
+  `_sameDay` stays as a belt-and-suspenders guard. (2) **consumables in history**:
+  the consumables actually written off at perform (template + ad-hoc) now ride on the
+  patient timeline's `operation_performed` event detail (`"ИОЛ ×1 … · доп.: Шприц
+  ×1"`), built by `timeline._operation_consumables` (one bulk ledger query keyed by
+  `ref_id`, template/ad-hoc split by the shared `ADHOC_REASON_SUFFIX` constant in
+  `models.operation`). **Not billed** — operations are already billed at the
+  operation price; consumables are clinic COGS, so this records/surfaces them (no
+  cost shown → no finance leak; gated by `operations.read`). **Next:** **Ф5** patient
+  visit-history screen + date/param search; **Ф6** накладная PDF (signature areas) +
+  Excel/PDF export choice + director operations-analytics UI.
 
-**Verified green:** backend `pytest` = 233 passed · Flutter `flutter test` = 159 passed
+**Verified green:** backend `pytest` = 235 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф3b adds no
-schema change — routing reuses `assigned_user_id`, the new doctor permission and
-the cabinet field re-seed/return idempotently).
+`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф4 leftovers
+add no schema change — the window filter and the timeline enrichment are query-only).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

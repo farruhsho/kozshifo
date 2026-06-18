@@ -318,11 +318,21 @@ on every mutation · multi-branch**.
   an «Открыть карту» button into the full med-card. Calling a patient immediately surfaces their data.
   Narrow screens keep the original single-pane queue. No backend change; 1 widget test. **Phase 3 of the
   overhaul is fully done** (3a per-doctor numbers, 3b diagnostic-by-service, 3c load-balancing + «принят»
-  history, 3d treatment track, 3e «Приём» screen). **Next: Phase 4** — diagnostician records a conclusion
-  (from allowed diagnoses) + attaches the УЗИ PDF; doctor writes treatment (N days) OR refers to operation
-  choosing the surgeon (incl. is_external_surgeon Tashkent surgeons).
+  history, 3d treatment track, 3e «Приём» screen).
 
-**Verified green:** backend `pytest` = 249 passed · Flutter `flutter test` = 160 passed
+- **Patient-flow overhaul — Phase 4a doctor refers to operation with surgeon: ✅ done** — the referral
+  `POST /visits/{id}/operations` now accepts an optional `surgeon_id` (validated; set on the operation),
+  so the doctor picks the surgeon when sending the patient to surgery (reception can still change it at
+  schedule). New `GET /operations/surgeons` (operations.read) lists active staff eligible to operate —
+  `operations.perform` OR `is_external_surgeon` (visiting Tashkent surgeons, flagged). Flutter:
+  `clinical_repository.surgeons()` + `surgeonsProvider`; the referral dialog (`OperationsSection`) got a
+  «Хирург» dropdown (external ones labelled «· приезжий»), optional. No migration (surgeon_id already on
+  Operation); 2 tests. **Remaining Phase 4:** the diagnostician records a conclusion from their allowed
+  diagnoses (`user_diagnoses`) in «Приём» (the УЗИ-PDF attach already works there); optionally structure
+  «лечение N дней» on `Treatment`. **Then Phase 5** (operations schedule board + flexible cost + day P&L +
+  HIV PDF gate) and **Phase 6** (warehouse replenishment + fl_chart dashboard charts).
+
+**Verified green:** backend `pytest` = 251 passed · Flutter `flutter test` = 160 passed
 · `flutter analyze` = no issues ·
 `alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
 Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,

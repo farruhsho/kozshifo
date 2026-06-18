@@ -300,17 +300,24 @@ on every mutation · multi-branch**.
   («Принят: ФИО · Диагностика/Приём врача · каб») from called tickets (gated `queue.read`). Query-only,
   no migration; 2 tests + reworked routing test. **«Вызванных не гонять повторно»** is already satisfied
   by the state machine (called/serving tickets aren't `waiting`, so call-next never re-pulls them; payment
-  dedupes active tickets). **Remaining Phase 3 (next):** the **«Приём» screen** (a card-centric workspace:
-  waiting list + «Вызвать следующего» + inline patient card — enhance `/my-queue` `QueueScreen(personal)`
-  or new `lib/features/intake/`), and the **TREATMENT track** (track="treatment", prefix «Л», 3rd TV
-  section; reception saves the patient card + issues a treatment ticket; flexible per-day/10-day/deferred/
-  partial payment on the existing Visit+Payment balance model).
+  dedupes active tickets).
 
-**Verified green:** backend `pytest` = 246 passed · Flutter `flutter test` = 159 passed
+- **Patient-flow overhaul — Phase 3d treatment queue track: ✅ done** — a third queue track «Лечение»
+  (track="treatment", prefix «Л») for a patient here for a course of treatment. `POST /queue/treatment-ticket`
+  (queue.manage) issues a Л-… ticket for a patient (+ optional visit/room/assignee), deliberately NOT gated
+  on payment — лечение is paid per-day / prepaid / deferred / partial via the visit's normal balance.
+  Flow-engine guard: treatment tickets never drive the diagnostic→doctor visit flow and never auto-advance
+  to a doctor ticket. The public TV board (`tv-board` endpoint + the standalone `tv_board.html`) is now a
+  **3-column** layout (Врач / Диагностика / Лечение, purple section, voice+chime wired). No migration;
+  3 tests. A reception «Талон на лечение» button completes the front-desk side. **Remaining Phase 3:** the
+  card-centric **«Приём» screen** (waiting list + «Вызвать следующего» + inline patient card — enhance
+  `/my-queue` `QueueScreen(personal)` or a new `lib/features/intake/`).
+
+**Verified green:** backend `pytest` = 249 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues ·
 `alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
 Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,
-Phase 3a per-doctor numbering is query-only, Phase 3b adds `services.is_diagnostic`, Phase 3c query-only).
+Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

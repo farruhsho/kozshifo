@@ -347,6 +347,35 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
   }
 
+  /// «Талон на лечение» — queues the selected patient onto the TV board's
+  /// «Лечение» track for a course of treatment (no room — the backend mints it).
+  Future<void> _issueTreatmentTicket() async {
+    final patient = _patient;
+    if (patient == null) return;
+    // Same branch resolution as the visit flow: operator's branch first,
+    // patient's home branch as fallback.
+    final branchId =
+        ref.read(authControllerProvider).user?.branchId ?? patient.branchId;
+    if (branchId == null) {
+      _snack('У пользователя не задан филиал', error: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final number = await ref
+          .read(receptionRepositoryProvider)
+          .issueTreatmentTicket(
+            patientId: patient.id,
+            branchId: branchId,
+          );
+      if (mounted) _snack('Талон на лечение: $number');
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// Fetches the receipt PDF and opens the browser print dialog (чек + талон).
   Future<void> _printReceipt(String paymentId, String receiptNo) async {
     try {
@@ -417,13 +446,14 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         (user?.can('payments.create') ?? false);
     final canRegister = user?.can('patients.create') ?? false;
     final canDiscount = user?.can('visits.update') ?? false;
+    final canQueue = user?.can('queue.manage') ?? false;
     final services = ref.watch(activeServicesProvider);
     final wide = MediaQuery.sizeOf(context).width >= 1000;
 
     final left = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _patientSection(canRegister),
+        _patientSection(canRegister, canQueue),
         const SizedBox(height: 12),
         _servicesSection(services, canBill),
       ],
@@ -516,7 +546,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     );
   }
 
-  Widget _patientSection(bool canRegister) {
+  Widget _patientSection(bool canRegister, bool canQueue) {
     return _card('1. Пациент', [
       if (_patient == null) ...[
         Row(
@@ -595,6 +625,19 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
               : null,
         ),
         _historyPanel(_patient!.id),
+        if (canQueue) ...[
+          const SizedBox(height: 8),
+          // «Талон на лечение» — ставит пациента в очередь на лечение (трек
+          // «Лечение» на ТВ-табло), независимо от визита/оплаты.
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : _issueTreatmentTicket,
+              icon: const Icon(Icons.healing_outlined),
+              label: const Text('Талон на лечение'),
+            ),
+          ),
+        ],
       ],
     ]);
   }

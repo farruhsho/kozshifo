@@ -11,6 +11,7 @@ import '../../../core/utils/url_opener.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../attachments/presentation/attachments_section.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../diagnoses/presentation/diagnostic_conclusion_card.dart';
 import '../../doctor/presentation/patient_info_card.dart';
 import '../data/queue_repository.dart';
 import '../domain/queue_ticket.dart';
@@ -467,6 +468,10 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             PatientInfoCard(patientId: patientId),
             if (canSeeFiles)
               AttachmentsSection(patientId: patientId, visitId: visitId),
+            if ((ref.watch(authControllerProvider).user?.can('diagnoses.record') ??
+                    false) &&
+                visitId != null)
+              DiagnosticConclusionCard(patientId: patientId, visitId: visitId),
           ],
         ),
       ),

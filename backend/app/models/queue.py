@@ -53,6 +53,18 @@ class QueueTicket(UUIDPKMixin, TimestampMixin, Base):
     )
 
     patient: Mapped["Patient"] = relationship(lazy="joined")  # noqa: F821
+
+    # Authenticated-only convenience for staff-facing lists (doctor worklist /
+    # queue screen). The PUBLIC TV board never uses these — it builds its own
+    # privacy-safe label (see queue._patient_label). Behind queue.read these are
+    # safe to expose: the same caller already holds patients.read.
+    @property
+    def patient_name(self) -> str:
+        return self.patient.full_name if self.patient is not None else ""
+
+    @property
+    def patient_mrn(self) -> str | None:
+        return self.patient.mrn if self.patient is not None else None
     # Two FKs now point at users (called_by + assigned_user); foreign_keys is
     # required so SQLAlchemy can disambiguate each relationship's join.
     called_by: Mapped["User | None"] = relationship(  # noqa: F821

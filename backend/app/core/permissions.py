@@ -149,7 +149,12 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     ],
     "Doctor": [
         "patients.read", "visits.read", "visits.update",
-        "queue.read", "services.read",
+        # queue.manage: TZ §3.3/§7.1.6 — the doctor calls the next patient
+        # («Вызвать следующего») from their own V-track worklist and presses
+        # «Yakunlandi» (done) to close the appointment, which hands the visit to
+        # the cashier. Without it walk-in patients (auto-queued after diagnostics,
+        # they have no calendar appointment) could never be served from Приём.
+        "queue.read", "queue.manage", "services.read",
         "exams.read", "exams.write",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",

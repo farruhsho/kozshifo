@@ -283,18 +283,34 @@ on every mutation · multi-branch**.
   order (`queue._doctor_for_visit`): `visit.doctor_id` (reception's choice) → `patient.primary_doctor_id`
   (returning patient's лечащий) → the service's single eligible doctor → open pool («V»); the resolved
   doctor also pre-fills cabinet+assignment. No-doctor visits still mint V-001 (existing queue tests green).
-  No migration; 3 tests. **Remaining Phase 3 (next):** (a) diagnostic queue routing BY SERVICE — needs an
-  `is_diagnostic` marker on Service: mint one diagnostic ticket per diagnostic service, a diagnostician
-  serves only their `service_doctors`, and the doctor V-ticket issues only when ALL diagnostic tickets are
-  done; (b) load-balancing (cap≈10 least-loaded doctor for unassigned patients); (c) the «Приём» screen
-  (list + «Вызвать следующего» + inline patient card + «принят ФИО, время» timeline source from served
-  tickets); (d) the TREATMENT track (Л-, 3rd TV section, flexible per-day/10-day/deferred/partial payment).
+  No migration; 3 tests.
 
-**Verified green:** backend `pytest` = 243 passed · Flutter `flutter test` = 159 passed
+- **Patient-flow overhaul — Phase 3b diagnostic queue-by-service: ✅ done** — `Service.is_diagnostic`
+  flag (migration `e8c2a4f9b73d`; ServiceCreate/Update/Out carry it; seed marks ARM/TONO/BIO/OCT
+  diagnostic, CONS stays doctor-track; Flutter admin service dialogs got a «Диагностическая услуга»
+  switch). On payment the diagnostic ticket is tagged with the visit's first `is_diagnostic` service
+  (NULL = open to any diagnostician). `call-next` on the diagnostic track filters waiting tickets to the
+  caller's assigned services (`service_doctors`) OR untagged — a caller with no services
+  (reception/director) stays unrestricted. So a УЗИ-диагност pulls only УЗИ work. 1 test.
+- **Patient-flow overhaul — Phase 3c load-balancing + «принят» history: ✅ done** — when several doctors
+  are eligible for a paid visit, `queue._eligible_doctor_for_visit` now routes the doctor-track ticket to
+  the **least-loaded** doctor (`_least_loaded_doctor`: fewest waiting doctor tickets today, ties by name)
+  instead of the open pool, so the 2nd doctor doesn't sit idle. Zero eligible = open pool (call-next fills
+  caller cabinet, kept as its own test); one eligible unchanged. Timeline gained a `seen` event
+  («Принят: ФИО · Диагностика/Приём врача · каб») from called tickets (gated `queue.read`). Query-only,
+  no migration; 2 tests + reworked routing test. **«Вызванных не гонять повторно»** is already satisfied
+  by the state machine (called/serving tickets aren't `waiting`, so call-next never re-pulls them; payment
+  dedupes active tickets). **Remaining Phase 3 (next):** the **«Приём» screen** (a card-centric workspace:
+  waiting list + «Вызвать следующего» + inline patient card — enhance `/my-queue` `QueueScreen(personal)`
+  or new `lib/features/intake/`), and the **TREATMENT track** (track="treatment", prefix «Л», 3rd TV
+  section; reception saves the patient card + issues a treatment ticket; flexible per-day/10-day/deferred/
+  partial payment on the existing Visit+Payment balance model).
+
+**Verified green:** backend `pytest` = 246 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues ·
-`alembic upgrade head` = clean (head `d5b1f3a86c47`; Phase 0 drops optics/cameras,
+`alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
 Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,
-Phase 3a is query-only — no schema change).
+Phase 3a per-doctor numbering is query-only, Phase 3b adds `services.is_diagnostic`, Phase 3c query-only).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

@@ -347,14 +347,26 @@ on every mutation · multi-branch**.
   from the stock ledger, joined StockMovement→StockBatch) − that day's operation expenses (finance
   `Expense` category «Операции») = profit; branch-scoped. `OperationDaySummary` DTO; 2 tests; no migration.
   Flutter: `operationDayPnlProvider` + a «P&L дня» card in the operations calendar day-view
-  (Выручка/Себестоимость/Расходы/Прибыль). **Remaining Phase 5 (UI-heavy):** the operations **schedule
-  board redesign** — drop the time column, add a right-side **referred pool** (status=referred), reception
-  places N patients/day + **detach/replace** (force-majeure); expose the **price override** at schedule
-  (flexible cost — backend already supports it via OperationSchedule.price); **HIV-analysis gate** (attach
-  kind=hiv PDF to the operation via Phase 1 attachments; warn if missing before the op day). **Then Phase 6**
-  (warehouse replenishment + fl_chart dashboard charts).
+  (Выручка/Себестоимость/Расходы/Прибыль).
 
-**Verified green:** backend `pytest` = 256 passed · Flutter `flutter test` = 160 passed
+- **Patient-flow overhaul — Phase 5b/5c schedule board: ✅ done (Phase 5 COMPLETE)** — (5b) `POST
+  /operations/{id}/unschedule` (operations.schedule) detaches a scheduled op back to the referred pool
+  (de-bills unless paid → refund first); status → referred, scheduled_at/price/visit_item cleared, surgeon
+  kept; 3 tests. (5c, Flutter) the operations **calendar** is now a day-scheduling board: the time column
+  is DROPPED; wide screens show a 2-pane Row (the day's scheduled ops | a «Направлены на операцию» pool
+  from `GET /operations?status=referred`); «Поставить на dd.MM» schedules a pool op onto the selected day
+  with an optional surgeon + price override (flexible cost); «Открепить» unschedules; a soft cap badge
+  «N / 15 на день» warns (never blocks). The HIV-analysis attach already works via Phase 1 (kind=hiv +
+  operation_id; shows in the timeline) — a missing-analysis badge would be optional polish.
+- **Patient-flow overhaul — Phase 6 warehouse + dashboard charts: ✅ done** — (6a) `GET
+  /inventory/reorder-suggestions?branch_id=` (inventory.read): active products at/below min_stock with a
+  suggested restock qty (up to 2× min), most-deficient first; 1 test. (6b) `GET /dashboard/revenue-trend
+  ?days=N` (dashboard.view) + an **fl_chart** «Выручка (14 дней)» LineChart on the dashboard (the first
+  chart; fl_chart ^1.2.0 added); 2 tests. (6c, Flutter) a «К заказу» inventory tab lists the suggestions
+  and turns them into a one-click goods-in via the (generalized, prefill-aware) receipt dialog. **The
+  patient-flow & operations overhaul is COMPLETE — Phases 0–6 + region analytics all shipped.**
+
+**Verified green:** backend `pytest` = 262 passed · Flutter `flutter test` = 160 passed
 · `flutter analyze` = no issues ·
 `alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
 Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,

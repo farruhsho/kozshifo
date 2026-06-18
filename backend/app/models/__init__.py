@@ -4,7 +4,7 @@ from app.models.attachment import Attachment
 from app.models.attendance import AttendanceEvent
 from app.models.audit import AuditLog
 from app.models.branch import Branch
-from app.models.call import CallRecord
+from app.models.call import CallDevice, CallRecord
 from app.models.catalog import Service, ServiceCategory, service_doctors
 from app.models.finance import Expense
 from app.models.device import Device, DeviceResult
@@ -29,6 +29,7 @@ __all__ = [
     "AttendanceEvent",
     "AuditLog",
     "Branch",
+    "CallDevice",
     "CallRecord",
     "Device",
     "DeviceResult",

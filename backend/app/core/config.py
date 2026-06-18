@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     hikvision_allowed_ips: list[str] = []
     # Workday start "HH:MM" (clinic local time) — first punch-in after this is "late".
     work_day_start: str = "09:00"
+    # Workday end "HH:MM" (clinic local time). Bounds the "reception phone offline"
+    # call-monitoring alert to working hours — a phone is expected to be off at
+    # night, so a stale heartbeat then is normal, not an alert.
+    work_day_end: str = "20:00"
+
+    # Call monitoring — a reception-phone agent is "offline" if its last heartbeat
+    # is older than this many minutes (during working hours). The agent beats
+    # ~every 60s, so this tolerates a few missed beats before alarming.
+    call_device_offline_minutes: int = 5
 
     # Cloud object storage (Firebase Storage / GCS) for staff face photos —
     # optional. Local uploads on Cloud Run / Railway are ephemeral, so when a

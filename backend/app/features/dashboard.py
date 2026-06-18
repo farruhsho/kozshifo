@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.dates import (
     business_today,
@@ -33,6 +34,7 @@ from app.core.dates import (
 )
 from app.core.deps import require_permission
 from app.core.notify import notify
+from app.models.call import CallDevice, CallRecord
 from app.models.inventory import Product, StockBatch
 from app.models.notification import Notification
 from app.models.operation import Operation
@@ -420,6 +422,23 @@ _CANCEL_RATE = Decimal("0.20")             # cancelled share of the window's vis
 _CANCEL_MIN = 3                            # …but only with at least this many cancellations (no 1-of-2 noise)
 _REVENUE_DROP_RATIO = Decimal("0.60")      # this month's daily average below 60% of last month's = drop
 _INSIGHT_DEBOUNCE = timedelta(hours=24)    # at most one notification per critical insight code per 24h
+_MISSED_CALLS_TODAY = 5                     # missed incoming calls today beyond this = front-desk not answering
+
+
+def _within_work_hours(local_now: datetime) -> bool:
+    """True if the clinic is open now (work_day_start ≤ local time < work_day_end).
+
+    Bounds the "reception phone offline" alert to working hours — a phone is
+    expected to be off at night, so a stale heartbeat then is normal.
+    """
+    try:
+        sh, sm = (int(x) for x in settings.work_day_start.split(":"))
+        eh, em = (int(x) for x in settings.work_day_end.split(":"))
+    except (ValueError, AttributeError):
+        return True  # misconfigured window → don't suppress the alert
+    minutes = local_now.hour * 60 + local_now.minute
+    return sh * 60 + sm <= minutes < eh * 60 + em
+
 
 _SEVERITY_RANK = {"critical": 0, "warning": 1, "info": 2}
 
@@ -631,6 +650,44 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
                 detail=f"Средняя дневная выручка этого месяца ниже прошлого на {drop:.0%} "
                        f"({this_avg:.0f} против {prev_avg:.0f} в день)",
                 value=f"-{drop:.0%}",
+            ))
+
+    # ── missed_calls (warning): too many unanswered incoming calls TODAY —
+    #    the front desk is letting patient calls ring out.
+    missed_today = db.execute(
+        select(func.count()).select_from(CallRecord)
+        .where(CallRecord.started_at >= day, CallRecord.status == "missed",
+               CallRecord.direction == "in")
+    ).scalar_one()
+    if missed_today >= _MISSED_CALLS_TODAY:
+        found.append(InsightOut(
+            code="missed_calls", severity="warning",
+            title="Пропущенные звонки",
+            detail=f"Сегодня пропущено {missed_today} входящих звонков — "
+                   "ресепшен не отвечает вовремя, проверьте загрузку",
+            value=str(missed_today),
+        ))
+
+    # ── call_device_offline (critical): a reception phone stopped reporting
+    #    DURING working hours — calls are being lost invisibly (dead battery /
+    #    app killed). Suppressed off-hours (a phone is meant to be off at night).
+    if _within_work_hours(now.astimezone()):
+        offline_cutoff = now - timedelta(minutes=settings.call_device_offline_minutes)
+        offline = db.execute(
+            select(CallDevice.label).where(
+                CallDevice.is_active.is_(True),
+                or_(CallDevice.last_seen_at.is_(None), CallDevice.last_seen_at < offline_cutoff),
+            ).order_by(CallDevice.label)
+        ).scalars().all()
+        if offline:
+            names = ", ".join(offline[:5])
+            extra = len(offline) - min(len(offline), 5)
+            detail = f"Не на связи: {names}" + (f" и ещё {extra}" if extra > 0 else "")
+            found.append(InsightOut(
+                code="call_device_offline", severity="critical",
+                title="Телефон ресепшена офлайн",
+                detail=detail + " — звонки могут теряться, проверьте телефон",
+                value=str(len(offline)),
             ))
 
     # Critical first, info last; stable sort keeps the rule order within a tier.

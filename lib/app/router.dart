@@ -10,6 +10,7 @@ import '../features/attendance/presentation/attendance_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_user.dart';
 import '../features/auth/presentation/login_screen.dart';
+import '../features/calls/presentation/call_devices_screen.dart';
 import '../features/calls/presentation/calls_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
 import '../features/devices/presentation/devices_screen.dart';
@@ -93,6 +94,9 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => const AttendanceScreen(),
           ),
           GoRoute(path: '/calls', builder: (_, _) => const CallsScreen()),
+          GoRoute(
+              path: '/calls/devices',
+              builder: (_, _) => const CallDevicesScreen()),
           GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
           GoRoute(
             path: '/inventory',

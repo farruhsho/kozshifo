@@ -1,0 +1,4 @@
+<resources>
+    <!-- Framework Material theme — no AppCompat/Material dependency needed. -->
+    <style name="AppTheme" parent="@android:style/Theme.Material.Light.DarkActionBar" />
+</resources>

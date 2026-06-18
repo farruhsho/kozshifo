@@ -4,16 +4,113 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/network/page.dart';
+import '../domain/call_device.dart';
 import '../domain/call_record.dart';
+import '../domain/calls_summary.dart';
 
 final callsRepositoryProvider =
     Provider<CallsRepository>((ref) => CallsRepository(ref.watch(dioProvider)));
 
-/// Журнал IP-телефонии — read-only: записи создаёт webhook АТС.
+/// Журнал + мониторинг звонков. Записи приходят с агентов на телефонах ресепшена
+/// (или webhook АТС); экран директора показывает их и KPI ответов/пропусков.
 class CallsRepository {
   CallsRepository(this._dio);
 
   final Dio _dio;
+
+  /// KPI за период (по умолчанию — сегодня): отвечено / пропущено / среднее
+  /// время ответа, разбивка по телефонам и по часам, офлайн-телефоны.
+  Future<CallsSummary> summary({DateTime? dateFrom, DateTime? dateTo}) async {
+    try {
+      final resp = await _dio.get('/calls/summary', queryParameters: {
+        if (dateFrom != null) 'date_from': _ymd(dateFrom),
+        if (dateTo != null) 'date_to': _ymd(dateTo),
+      });
+      return CallsSummary.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Зарегистрированные телефоны ресепшена (для директора, право calls.manage).
+  Future<List<CallDevice>> listDevices() async {
+    try {
+      final resp = await _dio.get('/calls/devices');
+      return (resp.data as List<dynamic>)
+          .map((e) => CallDevice.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Регистрирует телефон; ключ возвращается ОДИН раз (хранится только хэш).
+  Future<CreatedDevice> createDevice({
+    required String label,
+    String? phoneNumber,
+    String? branchId,
+  }) async {
+    try {
+      final resp = await _dio.post('/calls/devices', data: {
+        'label': label,
+        if (phoneNumber != null && phoneNumber.isNotEmpty)
+          'phone_number': phoneNumber,
+        if (branchId != null) 'branch_id': branchId,
+      });
+      return CreatedDevice.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Редактирует телефон (название / активность). Возвращает обновлённую запись.
+  Future<CallDevice> updateDevice(
+    String id, {
+    String? label,
+    bool? isActive,
+  }) async {
+    try {
+      final resp = await _dio.patch('/calls/devices/$id', data: {
+        if (label != null) 'label': label,
+        if (isActive != null) 'is_active': isActive,
+      });
+      return CallDevice.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Выдаёт новый ключ (старый сразу перестаёт работать).
+  Future<CreatedDevice> rotateKey(String id) async {
+    try {
+      final resp = await _dio.post('/calls/devices/$id/rotate-key');
+      return CreatedDevice.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Филиалы как (id, name) — для выпадающего списка при привязке телефона.
+  /// Лёгкий запрос: отдельной branches-фичи на фронте нет.
+  Future<List<({String id, String name})>> branchOptions() async {
+    try {
+      final resp = await _dio.get('/branches');
+      return (resp.data as List<dynamic>)
+          .map((e) => (
+                id: (e as Map<String, dynamic>)['id'] as String,
+                name: e['name'] as String,
+              ))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// `YYYY-MM-DD` из локальной даты (бэкенд summary принимает date-only).
+  static String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
   /// Список звонков, новые сверху. `q` — фрагмент номера или имя пациента;
   /// [dateFrom]/[dateTo] — границы по `started_at` (включительно).
@@ -65,6 +162,25 @@ class CallsDateFilter {
 
 /// Поисковая строка (дебаунс делает экран).
 final callsSearchProvider = StateProvider.autoDispose<String>((ref) => '');
+
+/// KPI-сводка за выбранный период (тот же диапазон, что и журнал).
+/// Экран дёргает refresh раз в ~60с — мониторинг «почти в реальном времени».
+final callsSummaryProvider = FutureProvider.autoDispose<CallsSummary>((ref) {
+  final range = ref.watch(callsDateRangeProvider);
+  return ref.watch(callsRepositoryProvider).summary(
+        dateFrom: range?.from,
+        dateTo: range?.to,
+      );
+});
+
+/// Список зарегистрированных телефонов ресепшена (экран управления).
+final callDevicesProvider = FutureProvider.autoDispose<List<CallDevice>>(
+    (ref) => ref.watch(callsRepositoryProvider).listDevices());
+
+/// Филиалы (id → name) для привязки телефона.
+final branchOptionsProvider =
+    FutureProvider.autoDispose<List<({String id, String name})>>(
+        (ref) => ref.watch(callsRepositoryProvider).branchOptions());
 
 /// Диапазон дат; `null` = «Все». По умолчанию — сегодня.
 final callsDateRangeProvider = StateProvider.autoDispose<CallsDateFilter?>(

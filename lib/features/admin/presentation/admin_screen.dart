@@ -291,6 +291,7 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
   final _name = TextEditingController();
   final _price = TextEditingController();
   String? _categoryId;
+  bool _isDiagnostic = false;
   final _selectedDoctorIds = <String>{};
   bool _saving = false;
 
@@ -322,6 +323,7 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
             price: _normalizedPrice,
             categoryId: _categoryId,
             doctorIds: _selectedDoctorIds.toList(),
+            isDiagnostic: _isDiagnostic,
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -398,6 +400,13 @@ class _ServiceCreateDialogState extends ConsumerState<_ServiceCreateDialog> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Диагностическая услуга (УЗИ, биометрия…)'),
+                value: _isDiagnostic,
+                onChanged: (v) => setState(() => _isDiagnostic = v),
+              ),
               const SizedBox(height: 16),
               _asyncMultiPick<AssignableDoctor>(
                 context,
@@ -451,6 +460,7 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
   late final _name = TextEditingController(text: widget.service.name);
   late final _price = TextEditingController(text: widget.service.price);
   late bool _isActive = widget.service.isActive;
+  late bool _isDiagnostic = widget.service.isDiagnostic;
   late final _selectedDoctorIds = <String>{
     for (final d in widget.service.doctors) d.id,
   };
@@ -481,6 +491,7 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
             price: _normalizedPrice,
             isActive: _isActive,
             doctorIds: _selectedDoctorIds.toList(),
+            isDiagnostic: _isDiagnostic,
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -523,6 +534,12 @@ class _ServiceEditDialogState extends ConsumerState<_ServiceEditDialog> {
                 title: const Text('Активна'),
                 value: _isActive,
                 onChanged: (v) => setState(() => _isActive = v),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Диагностическая услуга (УЗИ, биометрия…)'),
+                value: _isDiagnostic,
+                onChanged: (v) => setState(() => _isDiagnostic = v),
               ),
               const SizedBox(height: 12),
               _asyncMultiPick<AssignableDoctor>(

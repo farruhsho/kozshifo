@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
@@ -204,19 +204,42 @@ _ALLOWED_FROM: dict[str, tuple[str, ...]] = {
 }
 
 
+def _least_loaded_doctor(db: Session, branch_id: UUID, doctors: list[User]) -> User:
+    """The eligible doctor with the fewest WAITING doctor-track tickets today —
+    the load-balancer that keeps a second doctor from sitting idle while the
+    first one's line grows (the owner's «11-й пациент идёт ко 2-му врачу»). Ties
+    break by name so the choice is deterministic."""
+    ids = [d.id for d in doctors]
+    counts = {d.id: 0 for d in doctors}
+    rows = db.execute(
+        select(QueueTicket.assigned_user_id, func.count())
+        .where(
+            QueueTicket.branch_id == branch_id,
+            QueueTicket.track == "doctor",
+            QueueTicket.status == "waiting",
+            QueueTicket.assigned_user_id.in_(ids),
+            QueueTicket.created_at >= _today_start(),
+        )
+        .group_by(QueueTicket.assigned_user_id)
+    ).all()
+    for uid, count in rows:
+        counts[uid] = count
+    return sorted(doctors, key=lambda d: (counts[d.id], d.full_name))[0]
+
+
 def _eligible_doctor_for_visit(db: Session, visit: Visit) -> User | None:
-    """The single doctor a paid visit should route to, else None (open pool).
+    """The doctor a paid visit's billed services route to, else None (open pool).
 
     Unions the eligible doctors (service_doctors M2M) across the visit's billed
-    services. Routes ONLY when exactly one active doctor qualifies — a clear
-    destination, so the V-ticket is pre-assigned to them and lands in THEIR
-    cabinet. Zero or several eligible doctors → open pool: the cabinet then comes
-    from whichever doctor calls the ticket.
+    services. One eligible doctor → that doctor (pre-assigned + their cabinet).
+    Several eligible doctors → LOAD-BALANCE to the least-loaded one so no doctor
+    sits idle. Zero eligible doctors → open pool: the cabinet then comes from
+    whichever doctor calls the ticket.
     """
     service_ids = {it.service_id for it in visit.items if it.service_id is not None}
     if not service_ids:
         return None
-    doctors = (
+    doctors = list(
         db.execute(
             select(User)
             .join(service_doctors, User.id == service_doctors.c.user_id)
@@ -229,7 +252,11 @@ def _eligible_doctor_for_visit(db: Session, visit: Visit) -> User | None:
         .scalars()
         .all()
     )
-    return doctors[0] if len(doctors) == 1 else None
+    if not doctors:
+        return None
+    if len(doctors) == 1:
+        return doctors[0]
+    return _least_loaded_doctor(db, visit.branch_id, doctors)
 
 
 def _doctor_prefix(doctor: User | None) -> str:

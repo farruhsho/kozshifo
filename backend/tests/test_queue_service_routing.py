@@ -84,32 +84,46 @@ def test_single_eligible_doctor_autoroutes_v_ticket_into_cabinet(client, auth):
     client.post(f"{API}/queue/{v['id']}/skip", headers=auth)  # cleanup
 
 
-def test_multiple_doctors_open_pool_and_call_next_uses_caller_cabinet(client, auth):
+def test_no_eligible_doctor_open_pool_and_call_next_uses_caller_cabinet(client, auth):
     branch_id = _branch_id(client, auth)
-    doc_b = _make_doctor(client, auth, branch_id, "duo-b", "Каб. 8")
-    doc_c = _make_doctor(client, auth, branch_id, "duo-c", "Каб. 9")
-    svc = _make_service(client, auth, "RT-DUO", [doc_b, doc_c])
-    v = _doctor_ticket_for(client, auth, branch_id, svc, "Двое")
-    # Several eligible doctors -> open pool, no pre-filled room.
+    svc = _make_service(client, auth, "RT-OPEN", [])  # no eligible doctors -> open pool
+    _make_doctor(client, auth, branch_id, "open", "Каб. 8")
+    v = _doctor_ticket_for(client, auth, branch_id, svc, "Открытый")
+    # No eligible doctor -> open pool, no pre-filled room.
     assert v["assigned_user_id"] is None
     assert v["room"] is None
 
-    # Park other waiting doctor tickets so B deterministically claims this one.
+    # Park other waiting doctor tickets so our doctor deterministically claims it.
     vrows = client.get(f"{API}/queue", headers=auth,
                        params={"branch_id": branch_id, "track": "doctor"}).json()
     for t in vrows:
         if t["status"] == "waiting" and t["id"] != v["id"]:
             client.post(f"{API}/queue/{t['id']}/skip", headers=auth)
 
-    # Doctor B calls next WITHOUT a room -> the backend fills it from B's cabinet.
-    b_auth = _login(client, "svc.duo-b@kozshifo.uz")
-    resp = client.post(f"{API}/queue/call-next", headers=b_auth,
-                       json={"branch_id": branch_id, "track": "doctor", "for_user_id": doc_b})
+    # Calling WITHOUT a room -> the backend fills it from the caller's cabinet.
+    c_auth = _login(client, "svc.open@kozshifo.uz")
+    resp = client.post(f"{API}/queue/call-next", headers=c_auth,
+                       json={"branch_id": branch_id, "track": "doctor"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["id"] == v["id"]
     assert resp.json()["room"] == "Каб. 8"
 
     client.post(f"{API}/queue/{v['id']}/skip", headers=auth)  # cleanup
+
+
+def test_multiple_doctors_load_balance_to_least_loaded(client, auth):
+    branch_id = _branch_id(client, auth)
+    doc_b = _make_doctor(client, auth, branch_id, "bal-b", "Каб. 8")
+    doc_c = _make_doctor(client, auth, branch_id, "bal-c", "Каб. 9")
+    svc = _make_service(client, auth, "RT-BAL", [doc_b, doc_c])
+    # Both doctors start at 0 waiting -> tie broken by name (bal-b < bal-c).
+    v1 = _doctor_ticket_for(client, auth, branch_id, svc, "Баланс1")
+    assert v1["assigned_user_id"] == doc_b
+    # doc_b now has 1 waiting, doc_c has 0 -> the next patient balances to doc_c.
+    v2 = _doctor_ticket_for(client, auth, branch_id, svc, "Баланс2")
+    assert v2["assigned_user_id"] == doc_c
+    for v in (v1, v2):
+        client.post(f"{API}/queue/{v['id']}/skip", headers=auth)  # cleanup
 
 
 def test_doctor_role_now_has_queue_manage(client, auth):

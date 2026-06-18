@@ -141,6 +141,7 @@ class AdminRepository {
     String? description,
     String? categoryId,
     List<String>? doctorIds,
+    bool isDiagnostic = false,
   }) async {
     try {
       final resp = await _dio.post(
@@ -153,6 +154,7 @@ class AdminRepository {
           'description': ?description,
           'category_id': ?categoryId,
           'doctor_ids': ?doctorIds,
+          'is_diagnostic': isDiagnostic,
         },
       );
       return Service.fromJson(resp.data as Map<String, dynamic>);
@@ -170,12 +172,14 @@ class AdminRepository {
     String? price,
     bool? isActive,
     List<String>? doctorIds,
+    bool? isDiagnostic,
   }) async {
     try {
       final body = <String, dynamic>{
         'name': ?name,
         'price': ?price,
         'is_active': ?isActive,
+        'is_diagnostic': ?isDiagnostic,
       };
       if (doctorIds != null) {
         body['doctor_ids'] = doctorIds;

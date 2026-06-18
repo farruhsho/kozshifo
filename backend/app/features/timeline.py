@@ -27,6 +27,7 @@ from app.models.inventory import Product, StockMovement
 from app.models.operation import ADHOC_REASON_SUFFIX, Operation, Treatment
 from app.models.patient import Patient
 from app.models.payment import Payment
+from app.models.queue import QueueTicket
 from app.models.visit import Visit
 from app.schemas.timeline import TimelineEvent, TimelineOut
 
@@ -181,6 +182,28 @@ def patient_timeline(
         for a in attachments:
             add(a.created_at, "attachment", f"Файл: {_kind_label.get(a.kind, 'Документ')}",
                 detail=a.original_name, visit_id=a.visit_id, ref_id=a.id)
+
+    # Encounters: who called the patient in and when (queue tickets that were
+    # actually called) — surfaces «принят: ФИО, время» on the history, so the card
+    # shows that diagnost/doctor X received the patient at HH:MM.
+    if allowed("queue.read"):
+        _track_label = {"diagnostic": "Диагностика", "doctor": "Приём врача",
+                        "treatment": "Лечение"}
+        seen_tickets = db.execute(
+            select(QueueTicket).where(
+                QueueTicket.patient_id == patient_id,
+                QueueTicket.called_by_id.is_not(None),
+            )
+        ).scalars().all()
+        for t in seen_tickets:
+            ts = t.served_at or t.called_at
+            if ts is None:
+                continue
+            who = t.called_by.full_name if t.called_by is not None else "—"
+            label = _track_label.get(t.track, t.track)
+            detail = f"{label} · {t.room}" if t.room else label
+            add(ts, "seen", f"Принят: {who}", detail=detail,
+                visit_id=t.visit_id, ref_id=t.id)
 
     # Operations (TZ Modul 6): referral always; scheduling, performance,
     # completion and cancellation surface as extra timeline events.

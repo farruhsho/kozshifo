@@ -15,6 +15,7 @@ abstract class Service with _$Service {
     int? durationMinutes,
     String? description,
     @Default(true) bool isActive,
+    @Default(false) bool isDiagnostic,
     String? categoryId,
     // Врачи, которым разрешена услуга (бэкенд ServiceOut.doctors:
     // [{id, full_name, cabinet}]). Кабинет приёма берётся от врача.

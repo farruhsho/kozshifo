@@ -339,10 +339,22 @@ on every mutation · multi-branch**.
   Flutter: `lib/features/diagnoses/` (model + repo + `DiagnosticConclusionCard`) embedded in the «Приём»
   pane (gated `diagnoses.record` + a visit). No migration (perm is seed data); 3 tests. **Phase 4 done**
   (4a surgeon-at-referral, 4b diagnostician conclusion). Optional follow-up: structure «лечение N дней» on
-  `Treatment`. **Next: Phase 5** — operations schedule board (no time, referred pool, N/day, detach/replace)
-  + flexible cost + HIV-PDF gate + day P&L (revenue − COGS − expenses).
+  `Treatment`.
 
-**Verified green:** backend `pytest` = 254 passed · Flutter `flutter test` = 160 passed
+- **Patient-flow overhaul — Phase 5a operations day P&L: ✅ done** — `GET /operations/day-summary?date=&
+  branch_id=` (operations.read): the director's daily operations profit/loss — revenue (Σ price of
+  operations PERFORMED that local day) − COGS (consumables written off for them, Σ |qty|×batch unit_cost
+  from the stock ledger, joined StockMovement→StockBatch) − that day's operation expenses (finance
+  `Expense` category «Операции») = profit; branch-scoped. `OperationDaySummary` DTO; 2 tests; no migration.
+  Flutter: `operationDayPnlProvider` + a «P&L дня» card in the operations calendar day-view
+  (Выручка/Себестоимость/Расходы/Прибыль). **Remaining Phase 5 (UI-heavy):** the operations **schedule
+  board redesign** — drop the time column, add a right-side **referred pool** (status=referred), reception
+  places N patients/day + **detach/replace** (force-majeure); expose the **price override** at schedule
+  (flexible cost — backend already supports it via OperationSchedule.price); **HIV-analysis gate** (attach
+  kind=hiv PDF to the operation via Phase 1 attachments; warn if missing before the op day). **Then Phase 6**
+  (warehouse replenishment + fl_chart dashboard charts).
+
+**Verified green:** backend `pytest` = 256 passed · Flutter `flutter test` = 160 passed
 · `flutter analyze` = no issues ·
 `alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
 Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,

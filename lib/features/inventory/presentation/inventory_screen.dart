@@ -37,21 +37,25 @@ class InventoryScreen extends ConsumerWidget {
     }
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Склад'),
           actions: [
             IconButton(
               tooltip: 'Обновить',
-              onPressed: () => ref.invalidate(stockProvider(branchId)),
+              onPressed: () {
+                ref.invalidate(stockProvider(branchId));
+                ref.invalidate(reorderSuggestionsProvider(branchId));
+              },
               icon: const Icon(Icons.refresh),
             ),
           ],
-          bottom: const TabBar(tabs: [
+          bottom: const TabBar(isScrollable: true, tabs: [
             Tab(text: 'Остатки'),
             Tab(text: 'Дефицит'),
             Tab(text: 'Истекает'),
+            Tab(text: 'К заказу'),
           ]),
         ),
         floatingActionButton: _Fab(
@@ -64,6 +68,7 @@ class InventoryScreen extends ConsumerWidget {
             _StockListTab(branchId: branchId, canWriteOff: canWriteOff),
             _LowStockTab(branchId: branchId, canWriteOff: canWriteOff),
             _ExpiringTab(branchId: branchId, canWriteOff: canWriteOff),
+            _ReorderTab(branchId: branchId, canManage: canManage),
           ],
         ),
       ),
@@ -477,53 +482,237 @@ class _StockTile extends ConsumerWidget {
   }
 }
 
-// ═══ Диалог прихода (без изменений в логике) ═════════════════════════════════
+// ═══ Вкладка 4: К заказу (reorder-suggestions) ═══════════════════════════════
 
-/// Диалог прихода: товар, количество, цена закупки, партия, срок годности.
-class _ReceiptDialog extends ConsumerStatefulWidget {
-  const _ReceiptDialog({required this.branchId});
+/// «Что заказать»: активные товары на/ниже min_stock с подсказкой количества
+/// (до 2× мин), самые дефицитные сверху. Кнопка «Оформить приход на всё»
+/// открывает существующий диалог прихода, предзаполненный подсказками.
+class _ReorderTab extends ConsumerWidget {
+  const _ReorderTab({required this.branchId, required this.canManage});
 
   final String branchId;
+  final bool canManage;
+
+  Future<void> _orderAll(
+      BuildContext context, WidgetRef ref, List<ReorderSuggestion> sugg) async {
+    final prefill = [
+      for (final s in sugg)
+        _ReceiptPrefill(product: s.product, quantity: s.suggestedQty),
+    ];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ReceiptDialog(branchId: branchId, prefill: prefill),
+    );
+    if (ok == true && context.mounted) {
+      ref.invalidate(stockProvider(branchId));
+      ref.invalidate(reorderSuggestionsProvider(branchId));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Приход оформлен')));
+    }
+  }
+
+  Future<void> _orderOne(
+      BuildContext context, WidgetRef ref, ReorderSuggestion s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ReceiptDialog(
+        branchId: branchId,
+        prefill: [_ReceiptPrefill(product: s.product, quantity: s.suggestedQty)],
+      ),
+    );
+    if (ok == true && context.mounted) {
+      ref.invalidate(stockProvider(branchId));
+      ref.invalidate(reorderSuggestionsProvider(branchId));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Приход оформлен')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sugg = ref.watch(reorderSuggestionsProvider(branchId));
+    final scheme = Theme.of(context).colorScheme;
+    return AsyncValueWidget<List<ReorderSuggestion>>(
+      value: sugg,
+      onRetry: () => ref.invalidate(reorderSuggestionsProvider(branchId)),
+      builder: (rows) {
+        if (rows.isEmpty) {
+          return const Center(
+              child: Text('Нечего заказывать — остатки в норме.'));
+        }
+        return Column(
+          children: [
+            if (canManage)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    icon: const Icon(Icons.playlist_add_check_outlined),
+                    label: Text('Оформить приход на всё (${rows.length})'),
+                    onPressed: () => _orderAll(context, ref, rows),
+                  ),
+                ),
+              ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
+                itemCount: rows.length,
+                itemBuilder: (_, i) {
+                  final s = rows[i];
+                  final p = s.product;
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: ListTile(
+                      leading: Icon(Icons.add_shopping_cart_outlined,
+                          color: scheme.primary),
+                      title: Text(p.name),
+                      subtitle: Text('${p.sku} · '
+                          'остаток ${_trimQty(s.onHand)} / '
+                          'мин ${_trimQty(s.minStock)} ${p.unit}'),
+                      trailing: canManage
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _orderChip(scheme, s, p.unit),
+                                const SizedBox(width: 8),
+                                TextButton(
+                                  onPressed: () => _orderOne(context, ref, s),
+                                  child: const Text('Заказать'),
+                                ),
+                              ],
+                            )
+                          : _orderChip(scheme, s, p.unit),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _orderChip(ColorScheme scheme, ReorderSuggestion s, String unit) =>
+      Chip(
+        label: Text('заказать ${_trimQty(s.suggestedQty)} $unit'),
+        backgroundColor: scheme.primary.withValues(alpha: 0.15),
+        labelStyle:
+            TextStyle(color: scheme.primary, fontWeight: FontWeight.bold),
+        side: BorderSide.none,
+        visualDensity: VisualDensity.compact,
+      );
+}
+
+/// Decimal-строку количества показываем без лишних нулей: 5.0 → 5, 5.5 → 5.5.
+String _trimQty(String value) {
+  final d = double.tryParse(value);
+  if (d == null) return value;
+  return d == d.roundToDouble() ? d.toStringAsFixed(0) : d.toString();
+}
+
+// ═══ Диалог прихода ══════════════════════════════════════════════════════════
+
+/// Предзаполненная строка прихода (товар уже выбран, количество подсказано).
+class _ReceiptPrefill {
+  const _ReceiptPrefill({required this.product, required this.quantity});
+  final Product product;
+  final String quantity;
+}
+
+/// Одна строка диалога прихода: товар + количество/цена/партия/срок. При
+/// предзаполнении товар зафиксирован (из подсказки), иначе выбирается в дропдауне.
+class _ReceiptLine {
+  _ReceiptLine({this.product, String quantity = ''})
+      : productId = product?.id,
+        quantity = TextEditingController(text: quantity);
+
+  /// Зафиксированный товар (предзаполненная строка) либо null (ручной выбор).
+  final Product? product;
+  String? productId;
+  final TextEditingController quantity;
+  final TextEditingController unitCost = TextEditingController();
+  final TextEditingController batchNo = TextEditingController();
+  final TextEditingController expiry = TextEditingController();
+
+  void dispose() {
+    quantity.dispose();
+    unitCost.dispose();
+    batchNo.dispose();
+    expiry.dispose();
+  }
+
+  bool get isValid =>
+      productId != null && quantity.text.trim().isNotEmpty;
+}
+
+/// Диалог прихода: одна или несколько позиций (товар, количество, цена закупки,
+/// партия, срок годности). Открывается как из FAB (одна пустая строка), так и из
+/// вкладки «К заказу» с [prefill] (строка на каждый предложенный товар).
+class _ReceiptDialog extends ConsumerStatefulWidget {
+  const _ReceiptDialog({required this.branchId, this.prefill});
+
+  final String branchId;
+
+  /// Предзаполненные позиции (из reorder-подсказок). Null/пусто → одна пустая
+  /// строка с дропдауном товара (поведение прежнего диалога).
+  final List<_ReceiptPrefill>? prefill;
 
   @override
   ConsumerState<_ReceiptDialog> createState() => _ReceiptDialogState();
 }
 
 class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
-  final _quantity = TextEditingController();
-  final _unitCost = TextEditingController();
-  final _batchNo = TextEditingController();
-  final _expiry = TextEditingController();
-  String? _productId;
+  late final List<_ReceiptLine> _lines;
   bool _saving = false;
+
+  bool get _isPrefilled => widget.prefill != null && widget.prefill!.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    final prefill = widget.prefill;
+    _lines = (prefill != null && prefill.isNotEmpty)
+        ? [
+            for (final p in prefill)
+              _ReceiptLine(product: p.product, quantity: p.quantity),
+          ]
+        : [_ReceiptLine()];
+  }
 
   @override
   void dispose() {
-    _quantity.dispose();
-    _unitCost.dispose();
-    _batchNo.dispose();
-    _expiry.dispose();
+    for (final l in _lines) {
+      l.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _save() async {
-    final productId = _productId;
-    if (productId == null) return;
+    final lines = _lines.where((l) => l.isValid).toList();
+    if (lines.isEmpty) return;
     setState(() => _saving = true);
     try {
       await ref.read(inventoryRepositoryProvider).createReceipt(
             branchId: widget.branchId,
             items: [
-              (
-                productId: productId,
-                // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
-                quantity: _quantity.text.trim().replaceAll(',', '.'),
-                unitCost: _unitCost.text.trim().replaceAll(',', '.'),
-                batchNo:
-                    _batchNo.text.trim().isEmpty ? null : _batchNo.text.trim(),
-                expiryDate:
-                    _expiry.text.trim().isEmpty ? null : _expiry.text.trim(),
-              ),
+              for (final l in lines)
+                (
+                  productId: l.productId!,
+                  // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
+                  quantity: l.quantity.text.trim().replaceAll(',', '.'),
+                  // Цена закупки необязательна — backend подставит 0.00.
+                  unitCost: l.unitCost.text.trim().isEmpty
+                      ? '0'
+                      : l.unitCost.text.trim().replaceAll(',', '.'),
+                  batchNo: l.batchNo.text.trim().isEmpty
+                      ? null
+                      : l.batchNo.text.trim(),
+                  expiryDate: l.expiry.text.trim().isEmpty
+                      ? null
+                      : l.expiry.text.trim(),
+                ),
             ],
           );
       if (mounted) Navigator.of(context).pop(true);
@@ -540,75 +729,17 @@ class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final products = ref.watch(productsProvider);
-    final canSave = !_saving &&
-        _productId != null &&
-        _quantity.text.trim().isNotEmpty &&
-        _unitCost.text.trim().isNotEmpty;
+    final canSave = !_saving && _lines.any((l) => l.isValid);
 
     return AlertDialog(
-      title: const Text('Приход товара'),
+      title: Text(_isPrefilled
+          ? 'Приход по подсказкам (${_lines.length})'
+          : 'Приход товара'),
       content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            products.when(
-              data: (items) => DropdownButtonFormField<String>(
-                initialValue: _productId,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Товар'),
-                items: [
-                  // Приход в деактивированный товар backend отклоняет (422) —
-                  // не предлагаем его вовсе.
-                  for (final p in items.where((p) => p.isActive))
-                    DropdownMenuItem(
-                      value: p.id,
-                      child: Text('${p.name} (${p.unit})',
-                          overflow: TextOverflow.ellipsis),
-                    ),
-                ],
-                onChanged: (v) => setState(() => _productId = v),
-              ),
-              loading: () => const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: LinearProgressIndicator(),
-              ),
-              error: (e, _) => Text('$e',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _quantity,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Количество'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _unitCost,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration:
-                  const InputDecoration(labelText: 'Цена за единицу, сум'),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _batchNo,
-              decoration: const InputDecoration(
-                  labelText: 'Номер партии (необязательно)'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _expiry,
-              decoration: const InputDecoration(
-                  labelText: 'Годен до (ГГГГ-ММ-ДД, необязательно)',
-                  hintText: '2027-01-01'),
-            ),
-          ],
-        ),
+        width: 460,
+        child: _isPrefilled
+            ? _prefilledBody()
+            : _SingleLineBody(line: _lines.first, onChanged: () => setState(() {})),
       ),
       actions: [
         TextButton(
@@ -623,6 +754,129 @@ class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
                   width: 18,
                   child: CircularProgressIndicator(strokeWidth: 2))
               : const Text('Оформить'),
+        ),
+      ],
+    );
+  }
+
+  /// Предзаполненный режим: товар на строку зафиксирован, количество/цена
+  /// редактируются. Список прокручивается — позиций может быть много.
+  Widget _prefilledBody() => ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 420),
+        child: ListView.separated(
+          shrinkWrap: true,
+          itemCount: _lines.length,
+          separatorBuilder: (_, _) => const Divider(height: 24),
+          itemBuilder: (_, i) {
+            final l = _lines[i];
+            final p = l.product!;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${p.name} (${p.unit})',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis),
+                Text(p.sku,
+                    style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: l.quantity,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration:
+                            const InputDecoration(labelText: 'Количество'),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: l.unitCost,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                            labelText: 'Цена, сум', hintText: '0'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
+}
+
+/// Тело диалога в ручном режиме — прежний одностраничный приход (одна позиция).
+class _SingleLineBody extends ConsumerWidget {
+  const _SingleLineBody({required this.line, required this.onChanged});
+
+  final _ReceiptLine line;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final products = ref.watch(productsProvider);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        products.when(
+          data: (items) => DropdownButtonFormField<String>(
+            initialValue: line.productId,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Товар'),
+            items: [
+              // Приход в деактивированный товар backend отклоняет (422) —
+              // не предлагаем его вовсе.
+              for (final p in items.where((p) => p.isActive))
+                DropdownMenuItem(
+                  value: p.id,
+                  child: Text('${p.name} (${p.unit})',
+                      overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: (v) {
+              line.productId = v;
+              onChanged();
+            },
+          ),
+          loading: () => const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(),
+          ),
+          error: (e, _) => Text('$e',
+              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: line.quantity,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Количество'),
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: line.unitCost,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration:
+              const InputDecoration(labelText: 'Цена за единицу, сум'),
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: line.batchNo,
+          decoration: const InputDecoration(
+              labelText: 'Номер партии (необязательно)'),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: line.expiry,
+          decoration: const InputDecoration(
+              labelText: 'Годен до (ГГГГ-ММ-ДД, необязательно)',
+              hintText: '2027-01-01'),
         ),
       ],
     );

@@ -43,6 +43,27 @@ def list_diagnoses(
     return list(rows)
 
 
+@router.get("/mine", response_model=list[DiagnosisOut],
+            dependencies=[Depends(require_permission("diagnoses.read"))])
+def my_diagnoses(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("diagnoses.read"))],
+) -> list[Diagnosis]:
+    """The current user's ALLOWED diagnoses (user_diagnoses) for the «Приём»
+    conclusion picker. Empty allowed set = unrestricted → all active diagnoses."""
+    if actor.diagnoses:
+        return sorted(
+            [d for d in actor.diagnoses if d.is_active],
+            key=lambda d: (d.category or "", d.name),
+        )
+    return list(
+        db.execute(
+            select(Diagnosis).where(Diagnosis.is_active.is_(True))
+            .order_by(Diagnosis.category, Diagnosis.name)
+        ).scalars().all()
+    )
+
+
 @router.post("", response_model=DiagnosisOut, status_code=status.HTTP_201_CREATED)
 def create_diagnosis(
     payload: DiagnosisCreate,

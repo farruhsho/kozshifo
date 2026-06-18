@@ -17,7 +17,7 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.print_forms import build_exam_card_pdf
-from app.models.diagnosis import VisitDiagnosis
+from app.models.diagnosis import Diagnosis, VisitDiagnosis
 from app.models.exam import EyeExam
 from app.models.exam_template import ExamTemplate
 from app.models.patient import Patient
@@ -26,6 +26,7 @@ from app.schemas.common import Message
 from app.schemas.exam import (
     EyeExamOut,
     EyeExamUpsert,
+    DiagnosticConclusionCreate,
     VisitDiagnosisCreate,
     VisitDiagnosisOut,
 )
@@ -136,6 +137,57 @@ def add_diagnosis(
     db.commit()
     db.refresh(diagnosis)
     return diagnosis
+
+
+@router.post("/visits/{visit_id}/diagnostic-conclusion", response_model=VisitDiagnosisOut,
+             status_code=status.HTTP_201_CREATED)
+def record_diagnostic_conclusion(
+    visit_id: UUID,
+    payload: DiagnosticConclusionCreate,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("diagnoses.record"))],
+) -> VisitDiagnosis:
+    """A diagnostician (e.g. УЗИ) records a conclusion on the visit, chosen from the
+    catalog scoped to their allowed diagnoses (`user_diagnoses`), or typed free-form
+    when unrestricted. Stored as a `VisitDiagnosis` authored by the recorder, so it
+    shows on the doctor card and patient timeline next to the УЗИ PDF — separate
+    from `exams.write` (the diagnostician doesn't author the full 025-8 exam)."""
+    visit = get_or_404_visit(db, visit_id)
+    text: str
+    icd10: str | None = None
+    if payload.diagnosis_id is not None:
+        catalog = db.get(Diagnosis, payload.diagnosis_id)
+        if catalog is None or not catalog.is_active:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown or inactive diagnosis")
+        # Enforce the recorder's allowed subset (empty membership = unrestricted).
+        allowed = {d.id for d in actor.diagnoses}
+        if allowed and catalog.id not in allowed:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Этот диагноз не разрешён для вашего профиля")
+        text = catalog.name
+        icd10 = catalog.icd10
+    elif payload.diagnosis and payload.diagnosis.strip():
+        # A restricted user must pick from their allowed catalog, not free-type.
+        if actor.diagnoses:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Выберите заключение из вашего разрешённого списка")
+        text = payload.diagnosis.strip()
+        icd10 = payload.icd10.strip() if payload.icd10 and payload.icd10.strip() else None
+    else:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Provide diagnosis_id (from the catalog) or diagnosis text")
+    conclusion = VisitDiagnosis(
+        visit_id=visit.id, patient_id=visit.patient_id, doctor_id=actor.id,
+        diagnosis=text, icd10=icd10,
+    )
+    db.add(conclusion)
+    db.flush()
+    record_audit(db, action="create", entity_type="visit_diagnosis", entity_id=conclusion.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Recorded conclusion «{text}» on visit {visit.visit_no}")
+    db.commit()
+    db.refresh(conclusion)
+    return conclusion
 
 
 @router.delete("/diagnoses/{diagnosis_id}", status_code=status.HTTP_204_NO_CONTENT)

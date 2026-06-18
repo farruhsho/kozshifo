@@ -34,6 +34,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Diagnosis / conclusion catalog (справочник заключений)
     ("diagnoses.read", "diagnoses", "View the diagnosis catalog"),
     ("diagnoses.manage", "diagnoses", "Create / edit diagnoses"),
+    ("diagnoses.record", "diagnoses", "Record a diagnostic conclusion on a visit"),
     # Service catalog
     ("services.read", "catalog", "View services"),
     ("services.create", "catalog", "Create services & categories"),
@@ -156,7 +157,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # into their cabinet, recalls, returns to waiting (the «Моя очередь·Приём»
         # workstation). Reception keeps the full two-track board.
         "queue.read", "queue.manage", "services.read",
-        "exams.read", "exams.write", "diagnoses.read", "diagnoses.manage",
+        "exams.read", "exams.write", "diagnoses.read", "diagnoses.manage", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
@@ -174,7 +175,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # diagnost attaches УЗИ / scan conclusions to the patient card
         "attachments.read", "attachments.write",
         "queue.read", "queue.manage",
-        "exams.read", "diagnoses.read",
+        "exams.read", "diagnoses.read", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
     ],
     "Warehouse": [

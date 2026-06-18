@@ -222,14 +222,23 @@ on every mutation · multi-branch**.
   `{openedFrom,openedTo,status,owing}`; a new `patientVisitsFilteredProvider` keyed on
   a `VisitHistoryQuery` record powers the screen, leaving the doctor card's unfiltered
   `patientVisitsProvider` untouched; the screen reuses `VisitSummary` (money/items/debt
-  getters) and taps through to the med card. **Next:** **Ф6** накладная PDF (signature
-  areas) + Excel/PDF export choice + director operations-analytics UI.
+  getters) and taps through to the med card.
 
-**Verified green:** backend `pytest` = 236 passed · Flutter `flutter test` = 160 passed
-· `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (head `d3a7c1f4b920`; Ф4 leftovers
-and Ф5 add no schema change — the window filters and the timeline enrichment are
-query-only).
+- **Patient-flow overhaul (owner brief 2026-06-18) — Phase 0 removals: ✅ done** — a
+  new 7-phase wave reshaping the clinic flow (attachments, doctor-of-patient,
+  queue-by-service + load balancing, «Приём» screen, operations P&L, dashboard
+  charts; see the approved plan). **Phase 0** removed two verticals entirely:
+  **Оптика** (frontend `lib/features/optics/` + backend feature/model/schema/seq/
+  tests + `optics.*` perms) and the **«Видео»/Камеры** screen (frontend
+  `lib/features/camera/` + backend feature/model/schema/tests + `cameras.*` perms).
+  Migration `b2f7c0a91d34` drops `optics_orders` + `cameras` (keeps `lab_orders`).
+  The shared `HikvisionClient` (face terminals) is untouched. **Next:** **Phase 1**
+  generic patient/operation file attachments (UZI + HIV PDFs on the card & timeline).
+
+**Verified green:** backend `pytest` = 226 passed · Flutter `flutter test` = 159 passed
+· `flutter analyze` = no issues ·
+`alembic upgrade head` = clean (head `b2f7c0a91d34`; Phase 0 drops `optics_orders` +
+`cameras`).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

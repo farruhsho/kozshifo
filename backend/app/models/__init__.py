@@ -4,7 +4,6 @@ from app.models.attendance import AttendanceEvent
 from app.models.audit import AuditLog
 from app.models.branch import Branch
 from app.models.call import CallRecord
-from app.models.camera import Camera
 from app.models.catalog import Service, ServiceCategory, service_doctors
 from app.models.finance import Expense
 from app.models.device import Device, DeviceResult
@@ -15,7 +14,6 @@ from app.models.face_terminal import FaceTerminal
 from app.models.inventory import InventoryCategory, Product, StockBatch, StockMovement, Supplier
 from app.models.lab import LabOrder
 from app.models.notification import Notification
-from app.models.optics import OpticsOrder
 from app.models.operation import Operation, OperationType, OperationTypeConsumable, Treatment
 from app.models.patient import Patient
 from app.models.payment import Payment
@@ -30,7 +28,6 @@ __all__ = [
     "AuditLog",
     "Branch",
     "CallRecord",
-    "Camera",
     "Device",
     "DeviceResult",
     "Expense",
@@ -39,7 +36,6 @@ __all__ = [
     "InventoryCategory",
     "LabOrder",
     "Notification",
-    "OpticsOrder",
     "Operation",
     "OperationType",
     "OperationTypeConsumable",

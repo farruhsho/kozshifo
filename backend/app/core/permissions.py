@@ -81,16 +81,10 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Access control / Face ID terminals
     ("access_control.read", "access_control", "View face terminals, enrollment & events"),
     ("access_control.manage", "access_control", "Connect terminals, enroll staff faces"),
-    # IP cameras (live view by IP)
-    ("cameras.view", "cameras", "View cameras & live snapshots"),
-    ("cameras.manage", "cameras", "Connect / edit / remove cameras"),
     # Scheduling / appointments
     ("appointments.read", "scheduling", "View the appointments calendar"),
     ("appointments.create", "scheduling", "Book appointments"),
     ("appointments.update", "scheduling", "Reschedule / change appointment status"),
-    # Optics salon (glasses / lenses orders)
-    ("optics.read", "optics", "View optics orders"),
-    ("optics.manage", "optics", "Create / update optics orders"),
     # Lab / diagnostics referrals
     ("lab.read", "lab", "View lab referrals & results"),
     ("lab.manage", "lab", "Create referrals / enter results"),
@@ -138,13 +132,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # (date/surgeon/price) — the act of billing them onto the visit.
         "operations.read", "operations.schedule", "treatments.read",
         "devices.read", "notifications.read",
-        # cameras: front desk connects & watches the live view
-        "cameras.view", "cameras.manage",
         # scheduling: front desk books & manages the calendar
         "appointments.read", "appointments.create", "appointments.update",
-        # optics salon: front desk takes glasses/lenses orders (prototype:
-        # reception nav includes Оптика)
-        "optics.read", "optics.manage",
     ],
     "Cashier": [
         "patients.read", "visits.read",
@@ -163,7 +152,6 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
         "treatments.read", "treatments.prescribe", "treatments.perform",
-        "cameras.view",
         # scheduling: a doctor sees their day and marks arrived/done
         "appointments.read", "appointments.update",
         # lab: a doctor refers tests and reads results (prototype: doctor nav
@@ -177,13 +165,9 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "queue.read", "queue.manage",
         "exams.read",
         "devices.read", "device_results.read", "device_results.create",
-        "cameras.view",
     ],
     "Warehouse": [
         "inventory.read", "inventory.manage", "inventory.write_off",
         "branches.read", "notifications.read",
-        # optics salon belongs to the store side (prototype Settings groups
-        # «Склад / Оптика» under one role)
-        "optics.read", "optics.manage",
     ],
 }

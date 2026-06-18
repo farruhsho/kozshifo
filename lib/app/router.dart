@@ -11,7 +11,6 @@ import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_user.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/calls/presentation/calls_screen.dart';
-import '../features/camera/presentation/cameras_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
 import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
@@ -20,7 +19,6 @@ import '../features/inventory/presentation/inventory_screen.dart';
 import '../features/lab/presentation/lab_screen.dart';
 import '../features/notifications/presentation/notifications_screen.dart';
 import '../features/operations/presentation/operations_screen.dart';
-import '../features/optics/presentation/optics_screen.dart';
 import '../features/patients/presentation/patient_visits_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
@@ -71,7 +69,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/analytics',
             builder: (_, _) => const AnalyticsScreen(),
           ),
-          GoRoute(path: '/optics', builder: (_, _) => const OpticsScreen()),
           GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),
           GoRoute(
             path: '/notifications',
@@ -97,7 +94,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(path: '/calls', builder: (_, _) => const CallsScreen()),
           GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
-          GoRoute(path: '/cameras', builder: (_, _) => const CamerasScreen()),
           GoRoute(
             path: '/inventory',
             builder: (_, _) => const InventoryScreen(),

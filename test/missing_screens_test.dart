@@ -1,5 +1,5 @@
-// Render smoke tests for the 5 prototype screens added to the shell:
-// Analytics, Notifications, Optics, Lab, Worklist. Each mounts the real screen
+// Render smoke tests for the prototype screens added to the shell:
+// Analytics, Notifications, Lab, Worklist. Each mounts the real screen
 // with its data providers overridden (no network) + a fake authenticated user,
 // then asserts a key element renders and that no exception was thrown (catches
 // overflow / null-deref / provider-misuse the analyzer cannot see).
@@ -20,9 +20,6 @@ import 'package:kozshifo/features/lab/presentation/lab_screen.dart';
 import 'package:kozshifo/features/notifications/data/notifications_repository.dart';
 import 'package:kozshifo/features/notifications/domain/app_notification.dart';
 import 'package:kozshifo/features/notifications/presentation/notifications_screen.dart';
-import 'package:kozshifo/features/optics/data/optics_repository.dart';
-import 'package:kozshifo/features/optics/domain/optics_order.dart';
-import 'package:kozshifo/features/optics/presentation/optics_screen.dart';
 import 'package:kozshifo/features/scheduling/data/scheduling_repository.dart';
 import 'package:kozshifo/features/scheduling/domain/appointment.dart';
 import 'package:kozshifo/features/worklist/presentation/worklist_screen.dart';
@@ -32,7 +29,7 @@ const _user = AuthUser(
   email: 'doc@kozshifo.uz',
   fullName: 'Доктор Тест',
   branchId: 'b1',
-  permissions: ['optics.manage', 'lab.manage', 'dashboard.view', 'exams.write'],
+  permissions: ['lab.manage', 'dashboard.view', 'exams.write'],
 );
 
 Widget _host(Widget screen, List<Override> overrides) => ProviderScope(
@@ -96,25 +93,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Низкий остаток'), findsNothing);
     expect(find.text('Новых уведомлений нет'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Optics renders the orders table + counts', (tester) async {
-    _desktop(tester);
-    await tester.pumpWidget(_host(const OpticsScreen(), [
-      opticsListProvider('b1').overrideWith((ref) async => const [
-            OpticsOrder(
-              id: 'o1', orderNo: 'OPT-1', branchId: 'b1', patientId: 'p1',
-              patientName: 'Каримова Дилноза', kind: 'glasses', rx: 'OD -2.5',
-              frame: 'Ray-Ban', price: '1290000.00', status: 'ordered', createdAt: '2026-06-14T08:00:00Z',
-            ),
-          ]),
-    ]));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Оптика и салон'), findsOneWidget);
-    expect(find.text('Каримова Дилноза'), findsOneWidget);
-    expect(find.text('В работу'), findsOneWidget); // next-status advance button
     expect(tester.takeException(), isNull);
   });
 

@@ -44,6 +44,7 @@ from app.schemas.operation import (
     OperationTypeOut,
     PerformOperationRequest,
     SurgeonOperationStat,
+    SurgeonOut,
 )
 
 router = APIRouter(tags=["Operations"])
@@ -158,11 +159,14 @@ def refer_operation(
     op_type = db.get(OperationType, payload.operation_type_id)
     if op_type is None or not op_type.is_active:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown or inactive operation type")
+    if payload.surgeon_id is not None and db.get(User, payload.surgeon_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown surgeon")
 
     operation = Operation(
         visit_id=visit.id,
         patient_id=visit.patient_id,
         referring_doctor_id=actor.id,
+        surgeon_id=payload.surgeon_id,
         operation_type_id=op_type.id,
         eye=payload.eye,
         priority=payload.priority,
@@ -180,6 +184,25 @@ def refer_operation(
     db.commit()
     db.refresh(operation)
     return operation
+
+
+@router.get("/operations/surgeons", response_model=list[SurgeonOut],
+            dependencies=[Depends(require_permission("operations.read"))])
+def list_surgeons(db: Annotated[Session, Depends(get_db)]) -> list[User]:
+    """Staff eligible to operate — for the referral / schedule surgeon picker.
+
+    A surgeon is an active user who can perform operations (operations.perform via
+    role or direct grant) OR is flagged as a visiting/external surgeon (e.g.
+    приезжает из Ташкента). Gated operations.read so the referring doctor can pick
+    without identity-module (users.read) access; external surgeons are flagged so
+    the UI can mark «приезжий»."""
+    users = db.execute(
+        select(User).where(User.is_active.is_(True)).order_by(User.full_name)
+    ).scalars().all()
+    return [
+        u for u in users
+        if u.is_external_surgeon or "operations.perform" in u.effective_permission_codes()
+    ]
 
 
 @router.get("/visits/{visit_id}/operations", response_model=list[OperationOut],

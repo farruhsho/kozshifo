@@ -124,6 +124,15 @@ class StockRowOut(BaseModel):
     batches: list[BatchOut]
 
 
+class ReorderSuggestionOut(BaseModel):
+    """A product at/below min_stock with a suggested reorder qty (up to 2× min)."""
+
+    product: ProductOut
+    on_hand: Decimal
+    min_stock: Decimal
+    suggested_qty: Decimal
+
+
 # ── Write-off ─────────────────────────────────────────────────────────────────
 class WriteOffIn(BaseModel):
     product_id: UUID

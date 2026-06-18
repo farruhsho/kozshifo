@@ -18,6 +18,7 @@ from app.core.security import hash_password
 from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device
+from app.models.diagnosis import Diagnosis
 from app.models.inventory import InventoryCategory, Product, Supplier
 from app.models.operation import OperationType, OperationTypeConsumable
 from app.models.rbac import Permission, Role
@@ -268,6 +269,27 @@ def _seed_operations(db: Session) -> None:
     db.flush()
 
 
+# Starter diagnosis / conclusion catalog (справочник заключений). Idempotent by
+# code. (code, name, category, icd10) — heavy on УЗИ conclusions so a УЗИ-диагност
+# has a ready picker.
+_DEMO_DIAGNOSES: list[tuple[str, str, str, str | None]] = [
+    ("UZI-NORM", "УЗИ: без патологии", "УЗИ", None),
+    ("UZI-PVD", "УЗИ: задняя отслойка стекловидного тела", "УЗИ", None),
+    ("UZI-RD", "УЗИ: отслойка сетчатки", "УЗИ", "H33.0"),
+    ("UZI-VH", "УЗИ: гемофтальм", "УЗИ", "H43.1"),
+    ("CATARACT", "Катаракта", "Диагноз", "H25"),
+    ("GLAUCOMA", "Глаукома", "Диагноз", "H40"),
+    ("DR", "Диабетическая ретинопатия", "Диагноз", "H36.0"),
+]
+
+
+def _seed_diagnoses(db: Session) -> None:
+    for code, name, category, icd10 in _DEMO_DIAGNOSES:
+        if db.execute(select(Diagnosis).where(Diagnosis.code == code)).scalar_one_or_none() is None:
+            db.add(Diagnosis(code=code, name=name, category=category, icd10=icd10))
+    db.flush()
+
+
 def run_seed() -> None:
     db = SessionLocal()
     try:
@@ -280,6 +302,7 @@ def run_seed() -> None:
         _seed_devices(db, branch)
         _seed_inventory(db)
         _seed_operations(db)
+        _seed_diagnoses(db)
         db.commit()
     finally:
         db.close()

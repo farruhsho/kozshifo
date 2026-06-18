@@ -18,7 +18,7 @@ class AdminScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Администрирование'),
@@ -26,10 +26,13 @@ class AdminScreen extends StatelessWidget {
             tabs: [
               Tab(text: 'Филиалы'),
               Tab(text: 'Сотрудники'),
+              Tab(text: 'Диагнозы'),
             ],
           ),
         ),
-        body: const TabBarView(children: [_BranchesTab(), _StaffTab()]),
+        body: const TabBarView(
+          children: [_BranchesTab(), _StaffTab(), _DiagnosesTab()],
+        ),
       ),
     );
   }
@@ -1039,8 +1042,11 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
   final _fullName = TextEditingController();
   final _password = TextEditingController();
   final _cabinet = TextEditingController();
+  final _queuePrefix = TextEditingController();
+  bool _isExternalSurgeon = false;
   final _selectedRoles = <String>{};
   final _selectedServiceIds = <String>{};
+  final _selectedDiagnosisIds = <String>{};
   String? _branchId;
   bool _saving = false;
 
@@ -1050,6 +1056,7 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
     _fullName.dispose();
     _password.dispose();
     _cabinet.dispose();
+    _queuePrefix.dispose();
     super.dispose();
   }
 
@@ -1067,6 +1074,11 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
             branchId: _branchId,
             cabinet: _cabinet.text.trim().isEmpty ? null : _cabinet.text.trim(),
             serviceIds: _selectedServiceIds.toList(),
+            queuePrefix: _queuePrefix.text.trim().isEmpty
+                ? null
+                : _queuePrefix.text.trim(),
+            isExternalSurgeon: _isExternalSurgeon,
+            diagnosisIds: _selectedDiagnosisIds.toList(),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -1082,6 +1094,7 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
     final roles = ref.watch(adminRolesProvider);
     final branches = ref.watch(adminBranchesProvider);
     final services = ref.watch(adminServicesProvider);
+    final diagnoses = ref.watch(adminDiagnosesProvider);
 
     return AlertDialog(
       title: const Text('Новый сотрудник'),
@@ -1163,6 +1176,21 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                     hintText: 'Каб. 1',
                   ),
                 ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _queuePrefix,
+                  decoration: const InputDecoration(
+                    labelText: 'Префикс очереди (напр. С → С-001)',
+                    hintText: 'авто из имени',
+                  ),
+                ),
+                const SizedBox(height: 4),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Внешний хирург (из Ташкента)'),
+                  value: _isExternalSurgeon,
+                  onChanged: (v) => setState(() => _isExternalSurgeon = v),
+                ),
                 const SizedBox(height: 16),
                 Text('Роли', style: Theme.of(context).textTheme.titleSmall),
                 roles.when(
@@ -1214,6 +1242,20 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                   isActive: (s) => s.isActive,
                   sub: (s) => '${s.code} · ${formatMoney(s.price)}',
                 ),
+                const SizedBox(height: 16),
+                _asyncMultiPick<DiagnosisRef>(
+                  context,
+                  diagnoses,
+                  title: 'Разрешённые заключения',
+                  emptyHint: 'Нет диагнозов',
+                  errorLabel: 'Диагнозы недоступны',
+                  selected: _selectedDiagnosisIds,
+                  onChanged: () => setState(() {}),
+                  id: (d) => d.id,
+                  label: (d) => d.name,
+                  isActive: (d) => true,
+                  sub: (d) => d.category,
+                ),
               ],
             ),
           ),
@@ -1256,10 +1298,17 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
     text: widget.user.salaryPercent ?? '',
   );
   late final _cabinet = TextEditingController(text: widget.user.cabinet ?? '');
+  late final _queuePrefix = TextEditingController(
+    text: widget.user.queuePrefix ?? '',
+  );
+  late bool _isExternalSurgeon = widget.user.isExternalSurgeon;
   // Предзаполняем текущими ролями пользователя — снять/добавить можно тут же.
   late final _selectedRoles = <String>{...widget.user.roles};
   late final _selectedServiceIds = <String>{
     for (final s in widget.user.services) s.id,
+  };
+  late final _selectedDiagnosisIds = <String>{
+    for (final d in widget.user.diagnoses) d.id,
   };
   bool _saving = false;
 
@@ -1267,6 +1316,7 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
   void dispose() {
     _percent.dispose();
     _cabinet.dispose();
+    _queuePrefix.dispose();
     super.dispose();
   }
 
@@ -1289,6 +1339,7 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
     setState(() => _saving = true);
     final raw = _normalizedPercent;
     final cab = _cabinet.text.trim();
+    final qp = _queuePrefix.text.trim();
     try {
       await ref
           .read(adminRepositoryProvider)
@@ -1301,6 +1352,11 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
             cabinet: cab.isEmpty ? null : cab,
             clearCabinet: cab.isEmpty,
             serviceIds: _selectedServiceIds.toList(),
+            queuePrefix: qp.isEmpty ? null : qp,
+            // Пустое поле — явный сброс префикса очереди (отправляем null).
+            clearQueuePrefix: qp.isEmpty,
+            isExternalSurgeon: _isExternalSurgeon,
+            diagnosisIds: _selectedDiagnosisIds.toList(),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -1316,6 +1372,7 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
     final error = _percent.text.trim().isEmpty ? null : _validatePercent();
     final roles = ref.watch(adminRolesProvider);
     final services = ref.watch(adminServicesProvider);
+    final diagnoses = ref.watch(adminDiagnosesProvider);
     return AlertDialog(
       title: Text(widget.user.fullName),
       content: SizedBox(
@@ -1351,6 +1408,21 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                   labelText: 'Кабинет (для врача)',
                   hintText: 'Каб. 1',
                 ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _queuePrefix,
+                decoration: const InputDecoration(
+                  labelText: 'Префикс очереди (напр. С → С-001)',
+                  hintText: 'авто из имени',
+                ),
+              ),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Внешний хирург (из Ташкента)'),
+                value: _isExternalSurgeon,
+                onChanged: (v) => setState(() => _isExternalSurgeon = v),
               ),
               const SizedBox(height: 16),
               Text(
@@ -1404,6 +1476,20 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                 isActive: (s) => s.isActive,
                 sub: (s) => '${s.code} · ${formatMoney(s.price)}',
               ),
+              const SizedBox(height: 16),
+              _asyncMultiPick<DiagnosisRef>(
+                context,
+                diagnoses,
+                title: 'Разрешённые заключения',
+                emptyHint: 'Нет диагнозов',
+                errorLabel: 'Диагнозы недоступны',
+                selected: _selectedDiagnosisIds,
+                onChanged: () => setState(() {}),
+                id: (d) => d.id,
+                label: (d) => d.name,
+                isActive: (d) => true,
+                sub: (d) => d.category,
+              ),
             ],
           ),
         ),
@@ -1422,6 +1508,167 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══ Диагнозы (справочник заключений) ════════════════════════════════════════
+
+/// Каталог диагнозов/заключений. Сотруднику можно разрешить лишь часть из них
+/// (см. пикер «Разрешённые заключения» в карточке сотрудника).
+class _DiagnosesTab extends ConsumerWidget {
+  const _DiagnosesTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final diagnoses = ref.watch(adminDiagnosesProvider);
+    final user = ref.watch(authControllerProvider).user;
+    final canManage = user?.can('diagnoses.manage') ?? false;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    return Scaffold(
+      floatingActionButton: canManage
+          ? FloatingActionButton.extended(
+              onPressed: () => _openCreate(context, ref),
+              icon: const Icon(Icons.add),
+              label: const Text('Новый диагноз'),
+            )
+          : null,
+      body: AsyncValueWidget<List<DiagnosisRef>>(
+        value: diagnoses,
+        onRetry: () => ref.invalidate(adminDiagnosesProvider),
+        builder: (items) {
+          if (items.isEmpty) {
+            return const Center(child: Text('Диагнозов пока нет.'));
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.only(bottom: 88),
+            itemCount: items.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, i) {
+              final d = items[i];
+              return ListTile(
+                leading: Icon(Icons.assignment_outlined, color: primary),
+                title: Text(d.name),
+                subtitle: Text(
+                  [d.code, if (d.category != null) d.category!].join(' · '),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openCreate(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _DiagnosisCreateDialog(),
+    );
+    if (ok == true && context.mounted) {
+      ref.invalidate(adminDiagnosesProvider);
+      _showSnack(context, 'Диагноз создан');
+    }
+  }
+}
+
+class _DiagnosisCreateDialog extends ConsumerStatefulWidget {
+  const _DiagnosisCreateDialog();
+
+  @override
+  ConsumerState<_DiagnosisCreateDialog> createState() =>
+      _DiagnosisCreateDialogState();
+}
+
+class _DiagnosisCreateDialogState
+    extends ConsumerState<_DiagnosisCreateDialog> {
+  final _code = TextEditingController();
+  final _name = TextEditingController();
+  final _category = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _code.dispose();
+    _name.dispose();
+    _category.dispose();
+    super.dispose();
+  }
+
+  bool get _canSave =>
+      !_saving && _code.text.trim().isNotEmpty && _name.text.trim().isNotEmpty;
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      await ref
+          .read(adminRepositoryProvider)
+          .createDiagnosis(
+            code: _code.text.trim(),
+            name: _name.text.trim(),
+            category: _category.text.trim().isEmpty
+                ? null
+                : _category.text.trim(),
+          );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        _showSnack(context, e.toString(), error: true);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Новый диагноз'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _code,
+              decoration: const InputDecoration(
+                labelText: 'Код (уникальный)',
+                hintText: 'H52.1',
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _name,
+              decoration: const InputDecoration(labelText: 'Название'),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _category,
+              decoration: const InputDecoration(
+                labelText: 'Категория (необязательно)',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _canSave ? _save : null,
+          child: _saving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Создать'),
         ),
       ],
     );

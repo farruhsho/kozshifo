@@ -31,6 +31,9 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Patient document attachments (УЗИ-заключения, анализ на ВИЧ, прочие сканы)
     ("attachments.read", "attachments", "View patient file attachments"),
     ("attachments.write", "attachments", "Upload / delete patient attachments"),
+    # Diagnosis / conclusion catalog (справочник заключений)
+    ("diagnoses.read", "diagnoses", "View the diagnosis catalog"),
+    ("diagnoses.manage", "diagnoses", "Create / edit diagnoses"),
     # Service catalog
     ("services.read", "catalog", "View services"),
     ("services.create", "catalog", "Create services & categories"),
@@ -132,7 +135,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "expenses.read", "expenses.manage",
         # services: front desk maintains the price list — add / edit (per ТЗ).
         "services.read", "services.create", "services.update", "branches.read",
-        "exams.read",
+        "exams.read", "diagnoses.read",
         # Operations dept (TZ Modul 6): reception schedules referred operations
         # (date/surgeon/price) — the act of billing them onto the visit.
         "operations.read", "operations.schedule", "treatments.read",
@@ -153,7 +156,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # into their cabinet, recalls, returns to waiting (the «Моя очередь·Приём»
         # workstation). Reception keeps the full two-track board.
         "queue.read", "queue.manage", "services.read",
-        "exams.read", "exams.write",
+        "exams.read", "exams.write", "diagnoses.read", "diagnoses.manage",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
@@ -171,7 +174,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # diagnost attaches УЗИ / scan conclusions to the patient card
         "attachments.read", "attachments.write",
         "queue.read", "queue.manage",
-        "exams.read",
+        "exams.read", "diagnoses.read",
         "devices.read", "device_results.read", "device_results.create",
     ],
     "Warehouse": [

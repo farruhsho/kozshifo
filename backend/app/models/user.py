@@ -39,6 +39,13 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # calls a queue ticket the patient is routed to THIS cabinet, so reception
     # never picks a cabinet at payment time. NULL for non-clinical staff.
     cabinet: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Queue-ticket prefix for THIS doctor's track (e.g. "С" for Сарвар → С-001).
+    # NULL = derive from the first letter of full_name at ticket-creation time.
+    queue_prefix: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Visiting / external surgeon (e.g. приезжает из Ташкента делать операции).
+    # Surfaced in surgeon pickers; such an account may exist only as a directory
+    # entry (no real login).
+    is_external_surgeon: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles, back_populates="users", lazy="selectin"
@@ -52,6 +59,12 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # doctor (see `cabinet`). Empty = open pool.
     services: Mapped[list["Service"]] = relationship(  # noqa: F821
         secondary="service_doctors", back_populates="doctors", lazy="selectin"
+    )
+    # Diagnoses/conclusions this staff member is allowed to record (M2M). For a
+    # diagnostician this scopes the picker in the «Приём» form (e.g. a UZI
+    # diagnost only sees УЗИ conclusions). Empty = unrestricted.
+    diagnoses: Mapped[list["Diagnosis"]] = relationship(  # noqa: F821
+        secondary="user_diagnoses", lazy="selectin"
     )
 
     def effective_permission_codes(self) -> set[str]:

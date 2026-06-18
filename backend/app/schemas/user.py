@@ -19,6 +19,12 @@ class UserCreate(BaseModel):
     # cabinet and the services they provide. None/empty for non-clinical staff.
     cabinet: str | None = None
     service_ids: list[UUID] = []
+    # Queue-ticket prefix (e.g. "С" → С-001). Omitted = derived from full_name.
+    queue_prefix: str | None = None
+    # Visiting/external surgeon (from out of town) — shown in surgeon pickers.
+    is_external_surgeon: bool = False
+    # Diagnoses/conclusions this staff member may record (scopes the Приём picker).
+    diagnosis_ids: list[UUID] = []
 
 
 class UserUpdate(BaseModel):
@@ -32,6 +38,9 @@ class UserUpdate(BaseModel):
     salary_percent: Decimal | None = Field(default=None, ge=0, le=100)
     cabinet: str | None = None
     service_ids: list[UUID] | None = None
+    queue_prefix: str | None = None
+    is_external_surgeon: bool | None = None
+    diagnosis_ids: list[UUID] | None = None
 
 
 class RoleRef(BaseModel):
@@ -42,6 +51,14 @@ class RoleRef(BaseModel):
 
 
 class ServiceRef(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    code: str
+    name: str
+
+
+class DiagnosisRef(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -61,5 +78,8 @@ class UserOut(BaseModel):
     branch_id: UUID | None
     salary_percent: Decimal | None
     cabinet: str | None = None
+    queue_prefix: str | None = None
+    is_external_surgeon: bool = False
     roles: list[RoleRef]
     services: list[ServiceRef] = []
+    diagnoses: list[DiagnosisRef] = []

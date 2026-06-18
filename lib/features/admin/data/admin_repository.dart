@@ -12,6 +12,9 @@ import '../domain/staff_user.dart';
 /// Service-category reference for the create-service dropdown.
 typedef CategoryRef = ({String id, String name});
 
+/// Diagnosis/conclusion reference for the staff diagnoses picker and catalog.
+typedef DiagnosisRef = ({String id, String code, String name, String? category});
+
 /// Staff member selectable as a service's eligible doctor (mirrors backend
 /// `AssignableDoctorOut`). Listed under services.read, so reception can fill the
 /// service form's doctor picker without identity-module (users.read) access.
@@ -84,6 +87,47 @@ class AdminRepository {
             name: e['name'] as String,
           ),
       ];
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  // ── Diagnoses / conclusions catalog ────────────────────────────────────────
+
+  /// Diagnosis catalog (plain list, no Page envelope; gated `diagnoses.read`).
+  Future<List<DiagnosisRef>> diagnoses() async {
+    try {
+      final resp = await _dio.get('/diagnoses');
+      return [
+        for (final e in resp.data as List<dynamic>)
+          (
+            id: (e as Map<String, dynamic>)['id'] as String,
+            code: e['code'] as String,
+            name: e['name'] as String,
+            category: e['category'] as String?,
+          ),
+      ];
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  Future<void> createDiagnosis({
+    required String code,
+    required String name,
+    String? category,
+    String? icd10,
+  }) async {
+    try {
+      await _dio.post(
+        '/diagnoses',
+        data: {
+          'code': code,
+          'name': name,
+          'category': ?category,
+          'icd10': ?icd10,
+        },
+      );
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -230,6 +274,9 @@ class AdminRepository {
     String? branchId,
     String? cabinet,
     List<String>? serviceIds,
+    String? queuePrefix,
+    bool? isExternalSurgeon,
+    List<String>? diagnosisIds,
   }) async {
     try {
       final resp = await _dio.post(
@@ -242,6 +289,9 @@ class AdminRepository {
           'branch_id': ?branchId,
           'cabinet': ?cabinet,
           'service_ids': ?serviceIds,
+          'queue_prefix': ?queuePrefix,
+          'is_external_surgeon': ?isExternalSurgeon,
+          'diagnosis_ids': ?diagnosisIds,
         },
       );
       return StaffUser.fromJson(resp.data as Map<String, dynamic>);
@@ -266,11 +316,16 @@ class AdminRepository {
     String? cabinet,
     bool clearCabinet = false,
     List<String>? serviceIds,
+    String? queuePrefix,
+    bool clearQueuePrefix = false,
+    bool? isExternalSurgeon,
+    List<String>? diagnosisIds,
   }) async {
     try {
       final body = <String, dynamic>{
         'is_active': ?isActive,
         'role_names': ?roleNames,
+        'is_external_surgeon': ?isExternalSurgeon,
       };
       // Explicit null clears the percent (backend uses exclude_unset, so a
       // present null means "set to null" while omission leaves it unchanged).
@@ -285,10 +340,21 @@ class AdminRepository {
       } else if (cabinet != null) {
         body['cabinet'] = cabinet;
       }
+      // Same explicit-null clear path for the queue-ticket prefix (empty field).
+      if (clearQueuePrefix) {
+        body['queue_prefix'] = null;
+      } else if (queuePrefix != null) {
+        body['queue_prefix'] = queuePrefix;
+      }
       // service_ids (when non-null) replaces the doctor's services wholesale;
       // `[]` clears them. Omitted = unchanged.
       if (serviceIds != null) {
         body['service_ids'] = serviceIds;
+      }
+      // diagnosis_ids (when non-null) replaces the staff member's allowed
+      // diagnoses wholesale; `[]` clears them. Omitted = unchanged.
+      if (diagnosisIds != null) {
+        body['diagnosis_ids'] = diagnosisIds;
       }
       final resp = await _dio.patch('/users/$id', data: body);
       return StaffUser.fromJson(resp.data as Map<String, dynamic>);
@@ -322,6 +388,10 @@ final assignableDoctorsProvider =
 
 final adminCategoriesProvider = FutureProvider.autoDispose<List<CategoryRef>>(
   (ref) => ref.watch(adminRepositoryProvider).categories(),
+);
+
+final adminDiagnosesProvider = FutureProvider.autoDispose<List<DiagnosisRef>>(
+  (ref) => ref.watch(adminRepositoryProvider).diagnoses(),
 );
 
 final adminBranchesProvider = FutureProvider.autoDispose<List<AdminBranch>>(

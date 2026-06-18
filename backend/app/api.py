@@ -14,6 +14,7 @@ from app.features import (
     catalog,
     dashboard,
     devices,
+    diagnoses,
     exams,
     finance,
     inventory,
@@ -33,5 +34,5 @@ from app.features import (
 )
 
 api_router = APIRouter()
-for module in (auth, permissions, roles, users, branches, patients, catalog, visits, payments, queue, dashboard, exams, devices, inventory, operations, treatments, timeline, notifications, search, attendance, finance, calls, access_control, appointments, attachments, lab):
+for module in (auth, permissions, roles, users, branches, patients, catalog, visits, payments, queue, dashboard, exams, devices, inventory, operations, treatments, timeline, notifications, search, attendance, finance, calls, access_control, appointments, attachments, diagnoses, lab):
     api_router.include_router(module.router)

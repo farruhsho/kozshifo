@@ -23,6 +23,10 @@ abstract class StaffUser with _$StaffUser {
     // Кабинет врача (например «Каб. 1») — при вызове талона в очереди пациент
     // направляется именно сюда. Задаёт директор. null = не клинический сотрудник.
     String? cabinet,
+    // Префикс талона очереди (например «С» → С-001). null = авто из имени.
+    String? queuePrefix,
+    // Внешний (приезжий) хирург — например, оперирует наездами из Ташкента.
+    @Default(false) bool isExternalSurgeon,
     @JsonKey(fromJson: roleNamesFromJson)
     @Default(<String>[])
     List<String> roles,
@@ -30,6 +34,11 @@ abstract class StaffUser with _$StaffUser {
     @JsonKey(fromJson: doctorServicesFromJson, toJson: doctorServicesToJson)
     @Default(<DoctorService>[])
     List<DoctorService> services,
+    // Диагнозы/заключения, которые сотрудник вправе фиксировать
+    // (бэкенд UserOut.diagnoses: [{id, code, name}]).
+    @JsonKey(fromJson: doctorDiagnosesFromJson, toJson: doctorDiagnosesToJson)
+    @Default(<DoctorDiagnosis>[])
+    List<DoctorDiagnosis> diagnoses,
   }) = _StaffUser;
 
   factory StaffUser.fromJson(Map<String, dynamic> json) =>
@@ -58,4 +67,22 @@ List<DoctorService> doctorServicesFromJson(Object? raw) => [
 
 List<Map<String, String>> doctorServicesToJson(List<DoctorService> v) => [
   for (final s in v) {'id': s.id, 'code': s.code, 'name': s.name},
+];
+
+/// One diagnosis/conclusion a staff member may record (subset of backend
+/// `DiagnosisRef`).
+typedef DoctorDiagnosis = ({String id, String code, String name});
+
+/// Backend emits `diagnoses: [{id, code, name}, …]` on UserOut.
+List<DoctorDiagnosis> doctorDiagnosesFromJson(Object? raw) => [
+  for (final e in (raw as List<dynamic>? ?? const []))
+    (
+      id: (e as Map<String, dynamic>)['id'] as String,
+      code: e['code'] as String,
+      name: e['name'] as String,
+    ),
+];
+
+List<Map<String, String>> doctorDiagnosesToJson(List<DoctorDiagnosis> v) => [
+  for (final d in v) {'id': d.id, 'code': d.code, 'name': d.name},
 ];

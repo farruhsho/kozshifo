@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.security import hash_password
 from app.models.catalog import Service
+from app.models.diagnosis import Diagnosis
 from app.models.rbac import Role, user_roles
 from app.models.user import User
 from app.schemas.common import Page
@@ -41,6 +42,24 @@ def _resolve_services(db: Session, ids: list[UUID]) -> list[Service]:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             f"Unknown service ids: {sorted(map(str, missing))}")
     return found
+
+
+def _resolve_diagnoses(db: Session, ids: list[UUID]) -> list[Diagnosis]:
+    """Resolve the diagnoses/conclusions a staff member may record (validated)."""
+    if not ids:
+        return []
+    found = list(db.execute(select(Diagnosis).where(Diagnosis.id.in_(ids))).scalars().all())
+    missing = set(ids) - {d.id for d in found}
+    if missing:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            f"Unknown diagnosis ids: {sorted(map(str, missing))}")
+    return found
+
+
+def _default_prefix(full_name: str) -> str | None:
+    """Queue-ticket prefix derived from the first letter of the name (Сарвар → С)."""
+    name = (full_name or "").strip()
+    return name[0].upper() if name else None
 
 
 def _is_owner(user: User) -> bool:
@@ -109,9 +128,12 @@ def create_user(
         branch_id=payload.branch_id,
         is_superuser=payload.is_superuser,
         cabinet=payload.cabinet,
+        queue_prefix=payload.queue_prefix or _default_prefix(payload.full_name),
+        is_external_surgeon=payload.is_external_surgeon,
     )
     user.roles = _resolve_roles(db, payload.role_names)
     user.services = _resolve_services(db, payload.service_ids)
+    user.diagnoses = _resolve_diagnoses(db, payload.diagnosis_ids)
     db.add(user)
     db.flush()
     record_audit(db, action="create", entity_type="user", entity_id=user.id, actor_id=actor.id,
@@ -155,6 +177,8 @@ def update_user(
         user.roles = _resolve_roles(db, data.pop("role_names") or [])
     if "service_ids" in data:
         user.services = _resolve_services(db, data.pop("service_ids") or [])
+    if "diagnosis_ids" in data:
+        user.diagnoses = _resolve_diagnoses(db, data.pop("diagnosis_ids") or [])
     for field, value in data.items():
         setattr(user, field, value)
     record_audit(db, action="update", entity_type="user", entity_id=user.id, actor_id=actor.id,

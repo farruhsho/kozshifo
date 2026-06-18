@@ -5,7 +5,7 @@ import uuid
 from datetime import date
 
 from sqlalchemy import Date, ForeignKey, String, Uuid
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.base import TimestampMixin, UUIDPKMixin
@@ -45,6 +45,18 @@ class Patient(UUIDPKMixin, TimestampMixin, Base):
     branch_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True
     )
+    # The patient's regular («лечащий») doctor. Auto-filled on a new visit for a
+    # returning patient; if the doctor is away, reception picks another for that
+    # visit without changing this field. NULL = no fixed doctor yet.
+    primary_doctor_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    primary_doctor: Mapped["User | None"] = relationship(lazy="joined")  # noqa: F821
+
+    @property
+    def primary_doctor_name(self) -> str | None:
+        return self.primary_doctor.full_name if self.primary_doctor else None
 
     @property
     def full_name(self) -> str:

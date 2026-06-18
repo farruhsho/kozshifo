@@ -246,13 +246,28 @@ on every mutation · multi-branch**.
   reusable `AttachmentsSection`: list / upload PDF via FilePicker / download via
   `saveBytes`), embedded in the doctor card's ПАЦИЕНТ column (gated `attachments.read`).
   Storage caveat: Cloud Run disk is ephemeral (same as device files) — GCS is the
-  prod follow-up. **Next:** **Phase 2** data model (patient primary_doctor_id, user
-  queue_prefix + external surgeons, diagnosis catalog).
+  prod follow-up.
 
-**Verified green:** backend `pytest` = 231 passed · Flutter `flutter test` = 159 passed
+- **Patient-flow overhaul — Phase 2 data model: ✅ done** — (1) `patients.primary_doctor_id`
+  (лечащий врач, FK users): POST/PATCH /patients accept it (unknown id → 422); GET
+  /patients/{id}/summary also returns `primary_doctor_id`/`_name` plus
+  `last_visit_doctor_id`/`_name` (from the most recent visit) so reception can pre-fill
+  the picker with a fallback. (2) `users.queue_prefix` (ticket prefix, Сарвар → С-001;
+  defaulted from full_name's first letter at create, director-editable) and
+  `users.is_external_surgeon` (visiting Tashkent surgeon, shown in surgeon pickers).
+  (3) Diagnosis catalog (справочник заключений): model `diagnoses` + M2M `user_diagnoses`,
+  `GET/POST/PATCH /diagnoses` (perms `diagnoses.read`/`.manage`; read → Reception/Doctor/
+  Diagnost, manage → Doctor); `/users` accept `diagnosis_ids` to scope a diagnostician's
+  allowed conclusions; seed adds 7 starter УЗИ/diagnosis entries. Migration `a7e3c9b15d28`.
+  Flutter admin: `StaffUser` carries the 3 fields; the create/edit user dialogs gained a
+  queue-prefix field, an «Внешний хирург» switch and a «Разрешённые заключения» multipick;
+  a new «Диагнозы» admin tab manages the catalog. **Next:** **Phase 3** queue-by-service
+  routing + per-doctor ticket numbering + load-balancing + «Приём» screen.
+
+**Verified green:** backend `pytest` = 237 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues ·
-`alembic upgrade head` = clean (head `c4d8e1f0a2b6`; Phase 0 drops optics/cameras,
-Phase 1 adds the `attachments` table).
+`alembic upgrade head` = clean (head `a7e3c9b15d28`; Phase 0 drops optics/cameras,
+Phase 1 adds `attachments`, Phase 2 adds primary_doctor/queue_prefix/diagnoses).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

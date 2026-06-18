@@ -327,12 +327,22 @@ on every mutation · multi-branch**.
   `operations.perform` OR `is_external_surgeon` (visiting Tashkent surgeons, flagged). Flutter:
   `clinical_repository.surgeons()` + `surgeonsProvider`; the referral dialog (`OperationsSection`) got a
   «Хирург» dropdown (external ones labelled «· приезжий»), optional. No migration (surgeon_id already on
-  Operation); 2 tests. **Remaining Phase 4:** the diagnostician records a conclusion from their allowed
-  diagnoses (`user_diagnoses`) in «Приём» (the УЗИ-PDF attach already works there); optionally structure
-  «лечение N дней» on `Treatment`. **Then Phase 5** (operations schedule board + flexible cost + day P&L +
-  HIV PDF gate) and **Phase 6** (warehouse replenishment + fl_chart dashboard charts).
+  Operation); 2 tests.
 
-**Verified green:** backend `pytest` = 251 passed · Flutter `flutter test` = 160 passed
+- **Patient-flow overhaul — Phase 4b diagnostician conclusion: ✅ done (Phase 4 COMPLETE)** — a
+  diagnostician (УЗИ etc.) records a conclusion (заключение) scoped to the diagnoses the director allowed
+  them (`user_diagnoses`). New perm `diagnoses.record` (Doctor + Diagnost); `GET /diagnoses/mine` (the
+  user's allowed list — empty = unrestricted → all active) feeds the picker; `POST
+  /visits/{id}/diagnostic-conclusion` records a `VisitDiagnosis` authored by the recorder (catalog pick
+  validated against the allowed set; a restricted user can't free-type) — separate from `exams.write` so
+  the diagnost doesn't author the full 025-8 exam. Shows on the doctor card + timeline next to the УЗИ PDF.
+  Flutter: `lib/features/diagnoses/` (model + repo + `DiagnosticConclusionCard`) embedded in the «Приём»
+  pane (gated `diagnoses.record` + a visit). No migration (perm is seed data); 3 tests. **Phase 4 done**
+  (4a surgeon-at-referral, 4b diagnostician conclusion). Optional follow-up: structure «лечение N дней» on
+  `Treatment`. **Next: Phase 5** — operations schedule board (no time, referred pool, N/day, detach/replace)
+  + flexible cost + HIV-PDF gate + day P&L (revenue − COGS − expenses).
+
+**Verified green:** backend `pytest` = 254 passed · Flutter `flutter test` = 160 passed
 · `flutter analyze` = no issues ·
 `alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
 Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,

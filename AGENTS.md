@@ -309,11 +309,20 @@ on every mutation · multi-branch**.
   Flow-engine guard: treatment tickets never drive the diagnostic→doctor visit flow and never auto-advance
   to a doctor ticket. The public TV board (`tv-board` endpoint + the standalone `tv_board.html`) is now a
   **3-column** layout (Врач / Диагностика / Лечение, purple section, voice+chime wired). No migration;
-  3 tests. A reception «Талон на лечение» button completes the front-desk side. **Remaining Phase 3:** the
-  card-centric **«Приём» screen** (waiting list + «Вызвать следующего» + inline patient card — enhance
-  `/my-queue` `QueueScreen(personal)` or a new `lib/features/intake/`).
+  3 tests. A reception «Талон на лечение» button completes the front-desk side.
 
-**Verified green:** backend `pytest` = 249 passed · Flutter `flutter test` = 159 passed
+- **Patient-flow overhaul — Phase 3e card-centric «Приём» screen: ✅ done (Phase 3 COMPLETE)** — the
+  personal queue (`/my-queue` `QueueScreen(personal)`) becomes a 2-pane intake workspace on wide screens
+  (≥1000px): the queue + «Вызвать следующего» on the left, and the CURRENT patient (the serving ticket,
+  else the first called ticket) on the right — `PatientInfoCard` + `AttachmentsSection` (УЗИ/ВИЧ files) +
+  an «Открыть карту» button into the full med-card. Calling a patient immediately surfaces their data.
+  Narrow screens keep the original single-pane queue. No backend change; 1 widget test. **Phase 3 of the
+  overhaul is fully done** (3a per-doctor numbers, 3b diagnostic-by-service, 3c load-balancing + «принят»
+  history, 3d treatment track, 3e «Приём» screen). **Next: Phase 4** — diagnostician records a conclusion
+  (from allowed diagnoses) + attaches the УЗИ PDF; doctor writes treatment (N days) OR refers to operation
+  choosing the surgeon (incl. is_external_surgeon Tashkent surgeons).
+
+**Verified green:** backend `pytest` = 249 passed · Flutter `flutter test` = 160 passed
 · `flutter analyze` = no issues ·
 `alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
 Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,

@@ -219,6 +219,32 @@ def _eligible_doctor_for_visit(db: Session, visit: Visit) -> User | None:
     return doctors[0] if len(doctors) == 1 else None
 
 
+def _doctor_prefix(doctor: User | None) -> str:
+    """Queue-ticket prefix for a doctor's track: their ``queue_prefix``, else the
+    first letter of their name, else the generic 'V' (open pool)."""
+    if doctor is None:
+        return "V"
+    if doctor.queue_prefix and doctor.queue_prefix.strip():
+        return doctor.queue_prefix.strip()
+    name = (doctor.full_name or "").strip()
+    return name[0].upper() if name else "V"
+
+
+def _doctor_for_visit(db: Session, visit: Visit) -> User | None:
+    """The doctor a paid visit's doctor-track ticket belongs to, in priority
+    order: the doctor reception chose on the visit (``visit.doctor_id``) → the
+    patient's лечащий (primary) doctor → the single eligible doctor of the billed
+    services → None (open pool). This is what makes a returning patient land back
+    with their own doctor (and gives the ticket their С-001 prefix)."""
+    patient = db.get(Patient, visit.patient_id)
+    for uid in (visit.doctor_id, patient.primary_doctor_id if patient else None):
+        if uid is not None:
+            user = db.get(User, uid)
+            if user is not None and user.is_active:
+                return user
+    return _eligible_doctor_for_visit(db, visit)
+
+
 def _auto_advance_to_doctor(db: Session, ticket: QueueTicket, actor: CurrentUser) -> None:
     """Diagnostics finished -> automatically queue the patient for the doctor.
 
@@ -245,9 +271,9 @@ def _auto_advance_to_doctor(db: Session, ticket: QueueTicket, actor: CurrentUser
     ).first()
     if active_doctor is not None:
         return
-    doctor = _eligible_doctor_for_visit(db, visit)
+    doctor = _doctor_for_visit(db, visit)
     new_ticket = QueueTicket(
-        ticket_number=next_ticket_number(db, ticket.branch_id, "doctor"),
+        ticket_number=next_ticket_number(db, ticket.branch_id, _doctor_prefix(doctor)),
         track="doctor",
         patient_id=ticket.patient_id,
         branch_id=ticket.branch_id,

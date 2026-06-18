@@ -116,7 +116,7 @@ def take_payment(
         # diagnostics, even when no ticket is active anymore.
         elif visit.flow_status == "waiting_diagnostic":
             ticket = QueueTicket(
-                ticket_number=next_ticket_number(db, visit.branch_id, "diagnostic"),
+                ticket_number=next_ticket_number(db, visit.branch_id, "D"),
                 track="diagnostic",
                 patient_id=visit.patient_id,
                 branch_id=visit.branch_id,

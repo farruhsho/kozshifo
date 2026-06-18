@@ -6,7 +6,7 @@ Performing it consumes the template consumables via the FEFO stock engine.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -17,13 +17,15 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
+from app.core.dates import local_day_bounds_utc
 from app.core.deps import CurrentUser, require_any_permission, require_permission
 from app.core.flow import advance_flow, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, on_hand, write_off_fefo
 from app.features.visits import _make_item, _recompute_total
 from app.models.catalog import Service
-from app.models.inventory import Product
+from app.models.finance import Expense
+from app.models.inventory import Product, StockBatch, StockMovement
 from app.models.operation import (
     ADHOC_REASON_SUFFIX,
     Operation,
@@ -37,6 +39,7 @@ from app.schemas.operation import (
     AvailabilityOut,
     OperationComplete,
     OperationCreate,
+    OperationDaySummary,
     OperationOut,
     OperationReport,
     OperationSchedule,
@@ -308,6 +311,74 @@ def operation_report(
     return OperationReport(
         date_from=date_from, date_to=date_to,
         count=count, total_amount=Decimal(total), by_surgeon=by_surgeon,
+    )
+
+
+# Operation day-expenses are logged via the finance module under this category;
+# the day-summary subtracts exactly these from the day's operation revenue.
+OPERATIONS_EXPENSE_CATEGORY = "Операции"
+
+
+@router.get("/operations/day-summary", response_model=OperationDaySummary,
+            dependencies=[Depends(require_permission("operations.read"))])
+def operation_day_summary(
+    db: Annotated[Session, Depends(get_db)],
+    actor: CurrentUser,
+    d: date = Query(..., alias="date"),
+    branch_id: UUID | None = None,
+) -> OperationDaySummary:
+    """End-of-day operations P&L for the director: revenue (Σ price of operations
+    PERFORMED that local day) − COGS (consumables written off for them, qty ×
+    batch unit_cost) − the day's operation expenses (finance Expense category
+    «Операции»). Branch scope: explicit param, else the caller's own branch."""
+    start, end = local_day_bounds_utc(d)
+    branch = branch_id if branch_id is not None else (
+        None if actor.is_superuser else actor.branch_id)
+
+    op_stmt = (
+        select(Operation.id, Operation.price)
+        .join(Visit, Operation.visit_id == Visit.id)
+        .where(
+            Operation.status.in_(Operation.DONE_STATUSES),
+            Operation.performed_at >= start,
+            Operation.performed_at < end,
+        )
+    )
+    if branch is not None:
+        op_stmt = op_stmt.where(Visit.branch_id == branch)
+    op_rows = db.execute(op_stmt).all()
+    op_ids = [r[0] for r in op_rows]
+    revenue = sum((r[1] if r[1] is not None else Decimal("0") for r in op_rows), Decimal("0"))
+
+    cogs = Decimal("0")
+    if op_ids:
+        cogs = Decimal(db.execute(
+            select(func.coalesce(
+                func.sum(func.abs(StockMovement.quantity) * StockBatch.unit_cost), 0))
+            .select_from(StockMovement)
+            .join(StockBatch, StockBatch.id == StockMovement.batch_id)
+            .where(
+                StockMovement.ref_type == "operation",
+                StockMovement.ref_id.in_(op_ids),
+                StockMovement.movement_type == "write_off",
+            )
+        ).scalar_one())
+
+    exp_stmt = select(func.coalesce(func.sum(Expense.amount), 0)).where(
+        Expense.expense_date == d,
+        Expense.category == OPERATIONS_EXPENSE_CATEGORY,
+    )
+    if branch is not None:
+        exp_stmt = exp_stmt.where(Expense.branch_id == branch)
+    expenses = Decimal(db.execute(exp_stmt).scalar_one())
+
+    return OperationDaySummary(
+        date=d,
+        operations_count=len(op_ids),
+        revenue=revenue,
+        cogs=cogs,
+        expenses=expenses,
+        profit=revenue - cogs - expenses,
     )
 
 

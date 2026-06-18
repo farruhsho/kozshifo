@@ -1,7 +1,7 @@
 """Operations & treatments DTOs."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -160,6 +160,17 @@ class OperationReport(BaseModel):
     count: int
     total_amount: Decimal
     by_surgeon: list[SurgeonOperationStat]
+
+
+class OperationDaySummary(BaseModel):
+    """End-of-day operations P&L: profit = revenue − COGS − day expenses."""
+
+    date: date
+    operations_count: int
+    revenue: Decimal   # Σ price of operations performed that day
+    cogs: Decimal      # Σ consumables cost (qty × batch unit_cost)
+    expenses: Decimal  # Σ day operation-expenses (Expense category «Операции»)
+    profit: Decimal
 
 
 # ── Treatments ────────────────────────────────────────────────────────────────

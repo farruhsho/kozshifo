@@ -6,6 +6,7 @@ import '../../../core/network/dio_client.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
+import '../domain/region_report.dart';
 
 final dashboardRepositoryProvider =
     Provider<DashboardRepository>((ref) => DashboardRepository(ref.watch(dioProvider)));
@@ -53,6 +54,18 @@ class DashboardRepository {
     }
   }
 
+  /// «Пациенты по регионам» — распределение пациентов по географии с разбивкой
+  /// новые/посещавшие. Бэкенд уже отсортировал по total desc и держит bucket
+  /// «Не указано» для пациентов без региона.
+  Future<RegionReport> patientsByRegion() async {
+    try {
+      final resp = await _dio.get('/dashboard/patients-by-region');
+      return RegionReport.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   static String? _date(DateTime? d) {
     if (d == null) return null;
     String two(int n) => n.toString().padLeft(2, '0');
@@ -76,4 +89,11 @@ final leadSourcesProvider = FutureProvider.autoDispose<LeadSourceReport>((ref) {
   final now = DateTime.now();
   final from = DateTime(now.year, now.month, 1);
   return ref.watch(dashboardRepositoryProvider).leadSources(from: from, to: now);
+});
+
+/// «Пациенты по регионам» — география всей базы (без диапазона дат; бэкенд
+/// считает совокупно), с разбивкой новые/посещавшие.
+final patientsByRegionProvider =
+    FutureProvider.autoDispose<RegionReport>((ref) {
+  return ref.watch(dashboardRepositoryProvider).patientsByRegion();
 });

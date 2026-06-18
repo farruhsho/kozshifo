@@ -16,6 +16,7 @@ import 'package:kozshifo/features/dashboard/data/dashboard_repository.dart';
 import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
 import 'package:kozshifo/features/dashboard/domain/insight.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
+import 'package:kozshifo/features/dashboard/domain/region_report.dart';
 import 'package:kozshifo/features/dashboard/presentation/dashboard_screen.dart';
 
 void main() {
@@ -139,6 +140,16 @@ void main() {
         authControllerProvider.overrideWith(() => _FakeAuth(user)),
         dashboardSummaryProvider.overrideWith((ref) async => _summary),
         insightsProvider.overrideWith((ref) async => const <Insight>[]),
+        // The dashboard also renders the «Пациенты по регионам» panel; stub its
+        // provider with NON-empty data so it doesn't fire a real Dio call AND
+        // doesn't render its own «Пока нет данных» empty state (which would
+        // collide with the lead-sources zero-state assertion below).
+        patientsByRegionProvider.overrideWith((ref) async => RegionReport.fromJson(const {
+              'total': 1,
+              'regions': [
+                {'region': 'Ферганская', 'new_count': 1, 'returning_count': 0, 'total': 1},
+              ],
+            })),
       ];
 
   Widget harness({required List<Override> overrides}) => ProviderScope(

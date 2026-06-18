@@ -8,6 +8,7 @@ import '../../../core/network/page.dart';
 import '../../../core/utils/input_formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../reception/domain/regions.dart';
 import '../data/patients_repository.dart';
 import '../domain/patient.dart';
 
@@ -204,6 +205,10 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
   final _birthDate = TextEditingController();
   String? _gender;
   String? _leadSource;
+  // Регион — маркетинговый сигнал (откуда географически пациент), поэтому
+  // на основном экране. Район/город — только для Ферганской области.
+  String? _region;
+  String? _district;
   // Advanced (collapsed — rarely used, must not slow the common path).
   final _phone2 = TextEditingController();
   final _address = TextEditingController();
@@ -317,6 +322,8 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
             phone2: assembleUzPhone(_phone2.text),
             leadSource: _leadSource,
             address: _address.text,
+            region: _region,
+            district: _district,
             passport: _passport.text,
             pinfl: _pinfl.text,
             workplace: _workplace.text,
@@ -449,6 +456,47 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                   ],
                   onChanged: (v) => setState(() => _leadSource = v),
                 ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String?>(
+                  initialValue: _region,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Регион',
+                    helperText: 'Откуда географически пациент — для аналитики',
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('— не указан —'),
+                    ),
+                    for (final r in kUzRegions)
+                      DropdownMenuItem<String?>(value: r, child: Text(r)),
+                  ],
+                  onChanged: (v) => setState(() {
+                    _region = v;
+                    // Покидаем Фергану — сбрасываем район, чтобы не уехал «хвост».
+                    if (v != kFerganaRegion) _district = null;
+                  }),
+                ),
+                if (_region == kFerganaRegion) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String?>(
+                    initialValue: _district,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Район / город',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('— не указан —'),
+                      ),
+                      for (final d in kFerganaDistricts)
+                        DropdownMenuItem<String?>(value: d, child: Text(d)),
+                    ],
+                    onChanged: (v) => setState(() => _district = v),
+                  ),
+                ],
                 const SizedBox(height: 4),
                 // Редко используемые поля — свёрнуты, чтобы не замедлять обычную
                 // регистрацию (SELF IMPROVEMENT MEDICAL MODE).

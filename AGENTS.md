@@ -261,13 +261,24 @@ on every mutation · multi-branch**.
   allowed conclusions; seed adds 7 starter УЗИ/diagnosis entries. Migration `a7e3c9b15d28`.
   Flutter admin: `StaffUser` carries the 3 fields; the create/edit user dialogs gained a
   queue-prefix field, an «Внешний хирург» switch and a «Разрешённые заключения» multipick;
-  a new «Диагнозы» admin tab manages the catalog. **Next:** **Phase 3** queue-by-service
-  routing + per-doctor ticket numbering + load-balancing + «Приём» screen.
+  a new «Диагнозы» admin tab manages the catalog.
 
-**Verified green:** backend `pytest` = 237 passed · Flutter `flutter test` = 159 passed
+- **Patient-flow overhaul — Region analytics: ✅ done** — owner marketing add-on. Patients now carry
+  `region` (one of Uzbekistan's 14 oblasts) + `district` (Fergana raion/city, shown only when region =
+  Ферганская — the clinic's home region). `POST/PATCH /patients` + `PatientOut` carry both; reception's
+  `RegisterPatientDialog` got a «Регион» dropdown (+ conditional «Район / город»); list lives in
+  `lib/features/reception/domain/regions.dart`. New `GET /dashboard/patients-by-region` (dashboard.view)
+  groups patients by region split **new vs returning** (returning = >1 visit; NULL → «Не указано»),
+  sorted by total; a «Пациенты по регионам» dashboard panel renders each region's new/returning split as
+  a two-segment bar (so the director sees which audience to market to). Migration `d5b1f3a86c47`.
+  **Next:** **Phase 3** — per-doctor ticket numbers (С-001) + queue-by-service routing + load-balancing
+  + «Приём» screen + a **TREATMENT queue track** (лечение) on the TV board with flexible payment
+  (per-day / 10-day / deferred-pay-at-end / partial, reusing the Visit+Payment balance model).
+
+**Verified green:** backend `pytest` = 240 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues ·
-`alembic upgrade head` = clean (head `a7e3c9b15d28`; Phase 0 drops optics/cameras,
-Phase 1 adds `attachments`, Phase 2 adds primary_doctor/queue_prefix/diagnoses).
+`alembic upgrade head` = clean (head `d5b1f3a86c47`; Phase 0 drops optics/cameras,
+Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

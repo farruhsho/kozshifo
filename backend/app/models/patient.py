@@ -29,6 +29,12 @@ class Patient(UUIDPKMixin, TimestampMixin, Base):
     phone2: Mapped[str | None] = mapped_column(String(32), nullable=True)  # secondary contact
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Geography for the director's marketing analytics (patients-by-region). Region
+    # = one of Uzbekistan's 14 oblasts (Russian label from a fixed picker list);
+    # district = sub-area, filled for Fergana (the clinic's home region) where the
+    # raion/city breakdown matters most. NULL = not captured.
+    region: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    district: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Identity documents (Uzbekistan): passport series+number and ПИНФЛ (14 digits).
     passport: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pinfl: Mapped[str | None] = mapped_column(String(14), index=True, nullable=True)

@@ -26,6 +26,8 @@ class PatientCreate(BaseModel):
     phone2: str | None = None
     email: str | None = None
     address: str | None = None
+    region: str | None = None
+    district: str | None = None
     passport: str | None = None
     pinfl: str | None = None
     lead_source: LeadSource | None = None
@@ -50,6 +52,8 @@ class PatientUpdate(BaseModel):
     phone2: str | None = None
     email: str | None = None
     address: str | None = None
+    region: str | None = None
+    district: str | None = None
     passport: str | None = None
     pinfl: str | None = None
     lead_source: LeadSource | None = None
@@ -78,6 +82,8 @@ class PatientOut(BaseModel):
     phone2: str | None
     email: str | None
     address: str | None
+    region: str | None = None
+    district: str | None = None
     passport: str | None
     pinfl: str | None
     lead_source: str | None

@@ -259,6 +259,67 @@ def lead_sources(
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Patients by region — geographic audience for the director's marketing view.
+# ════════════════════════════════════════════════════════════════════════════
+
+_UNKNOWN_REGION = "Не указано"
+
+
+class RegionCount(BaseModel):
+    region: str
+    new_count: int       # registered / single-visit patients (новые)
+    returning_count: int  # patients with more than one visit (посещавшие)
+    total: int
+
+
+class RegionReport(BaseModel):
+    total: int
+    regions: list[RegionCount]
+
+
+@router.get("/patients-by-region", response_model=RegionReport,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def patients_by_region(db: Annotated[Session, Depends(get_db)]) -> RegionReport:
+    """Patients grouped by region, split into new vs returning — so the director
+    can see which audience to market to.
+
+    "Returning" (посещавшие) = a patient with more than one visit; "new" (новые)
+    = everyone else (freshly registered or single-visit). NULL region folds into a
+    «Не указано» bucket. All-time counts (no date window) for a complete
+    geographic picture; sorted by total descending."""
+    visit_counts = (
+        select(Visit.patient_id, func.count().label("vc"))
+        .group_by(Visit.patient_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(
+            Patient.region,
+            func.count(Patient.id),
+            func.coalesce(
+                func.sum(case((func.coalesce(visit_counts.c.vc, 0) > 1, 1), else_=0)), 0
+            ),
+        )
+        .select_from(Patient)
+        .outerjoin(visit_counts, visit_counts.c.patient_id == Patient.id)
+        .group_by(Patient.region)
+    ).all()
+
+    regions: list[RegionCount] = []
+    for region, total, returning in rows:
+        total = int(total)
+        returning = int(returning)
+        regions.append(RegionCount(
+            region=region if region else _UNKNOWN_REGION,
+            new_count=total - returning,
+            returning_count=returning,
+            total=total,
+        ))
+    regions.sort(key=lambda r: r.total, reverse=True)
+    return RegionReport(total=sum(r.total for r in regions), regions=regions)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Top services — this month's revenue per service (Analytics screen).
 # ════════════════════════════════════════════════════════════════════════════
 

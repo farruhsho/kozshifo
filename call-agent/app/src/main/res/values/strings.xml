@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">KO\'Z SHIFO — Звонки</string>
+
+    <!-- Foreground notification -->
+    <string name="channel_name">Мониторинг звонков</string>
+    <string name="channel_desc">Фоновая отправка детализации звонков ресепшена</string>
+    <string name="notif_title">Мониторинг звонков активен</string>
+    <string name="notif_text">Звонки ресепшена отправляются директору</string>
+
+    <!-- Setup screen -->
+    <string name="title_setup">Настройка агента</string>
+    <string name="hint_server">Адрес сервера (…/api/v1)</string>
+    <string name="hint_key">Ключ устройства</string>
+    <string name="intro">Введите адрес сервера и ключ из приложения директора\n(Звонки → Телефоны ресепшена → создать телефон).</string>
+    <string name="btn_perms">Выдать разрешения</string>
+    <string name="btn_battery">Отключить экономию батареи</string>
+    <string name="btn_start">Сохранить и запустить</string>
+    <string name="btn_stop">Остановить</string>
+
+    <!-- Status / toasts -->
+    <string name="st_perms">Разрешения (телефон, журнал звонков)</string>
+    <string name="st_battery">Без ограничений батареи</string>
+    <string name="st_running">Мониторинг включён</string>
+    <string name="fill_both">Заполните адрес сервера и ключ</string>
+    <string name="started">Мониторинг запущен</string>
+    <string name="stopped">Мониторинг остановлен</string>
+    <string name="battery_ok">Ограничения батареи уже отключены</string>
+</resources>

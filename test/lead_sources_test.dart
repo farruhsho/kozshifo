@@ -17,6 +17,7 @@ import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
 import 'package:kozshifo/features/dashboard/domain/insight.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
 import 'package:kozshifo/features/dashboard/domain/region_report.dart';
+import 'package:kozshifo/features/dashboard/domain/revenue_trend.dart';
 import 'package:kozshifo/features/dashboard/presentation/dashboard_screen.dart';
 
 void main() {
@@ -148,6 +149,14 @@ void main() {
               'total': 1,
               'regions': [
                 {'region': 'Ферганская', 'new_count': 1, 'returning_count': 0, 'total': 1},
+              ],
+            })),
+        // The dashboard also renders the revenue-trend chart; stub its provider
+        // so the screen doesn't fire a real Dio call in widget tests.
+        revenueTrendProvider.overrideWith((ref) async => RevenueTrend.fromJson(const {
+              'points': [
+                {'date': '2026-06-10', 'revenue': '100000'},
+                {'date': '2026-06-11', 'revenue': '120000'},
               ],
             })),
       ];

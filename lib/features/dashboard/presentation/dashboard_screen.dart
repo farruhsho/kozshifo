@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -12,6 +13,7 @@ import '../domain/dashboard_summary.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
+import '../domain/revenue_trend.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -28,6 +30,7 @@ class DashboardScreen extends ConsumerWidget {
             onPressed: () {
               ref.invalidate(dashboardSummaryProvider);
               ref.invalidate(insightsProvider);
+              ref.invalidate(revenueTrendProvider);
               ref.invalidate(leadSourcesProvider);
               ref.invalidate(patientsByRegionProvider);
             },
@@ -42,6 +45,7 @@ class DashboardScreen extends ConsumerWidget {
           onRefresh: () async {
             ref.invalidate(dashboardSummaryProvider);
             ref.invalidate(insightsProvider);
+            ref.invalidate(revenueTrendProvider);
             ref.invalidate(leadSourcesProvider);
             ref.invalidate(patientsByRegionProvider);
           },
@@ -54,6 +58,7 @@ class DashboardScreen extends ConsumerWidget {
                 const _InsightsPanel(),
                 const SizedBox(height: 20),
                 _KpiGrid(data: data),
+                const _RevenueTrendPanel(),
                 const _LeadSourcesPanel(),
                 const _RegionsPanel(),
               ],
@@ -190,6 +195,141 @@ class _KpiGrid extends StatelessWidget {
           children: cards,
         );
       },
+    );
+  }
+}
+
+/// «Выручка (14 дней)» — тренд завершённой выручки по локальным дням
+/// линией fl_chart. Видно только директору (право `dashboard.view`).
+class _RevenueTrendPanel extends ConsumerWidget {
+  const _RevenueTrendPanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authControllerProvider).user;
+    if (!(user?.can('dashboard.view') ?? false)) {
+      return const SizedBox.shrink();
+    }
+    final trend = ref.watch(revenueTrendProvider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 28),
+        Text('Выручка (14 дней)',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        AsyncValueWidget<RevenueTrend>(
+          value: trend,
+          onRetry: () => ref.invalidate(revenueTrendProvider),
+          builder: (data) => Card(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: data.isEmpty
+                  ? const _RevenueTrendEmpty()
+                  : SizedBox(
+                      height: 160,
+                      child: _RevenueLineChart(points: data.points),
+                    ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RevenueTrendEmpty extends StatelessWidget {
+  const _RevenueTrendEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Icon(Icons.show_chart_outlined,
+            color: scheme.onSurface.withValues(alpha: 0.5)),
+        const SizedBox(width: 12),
+        Text('Пока нет выручки',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.7))),
+      ],
+    );
+  }
+}
+
+/// Линия тренда выручки: x — индекс точки (0..n-1), y — выручка дня.
+/// Скрыты сетка/рамка/левые-правые-верхние оси; снизу — каждая ~Nя метка
+/// `dd.MM`, чтобы подписи не наезжали друг на друга.
+class _RevenueLineChart extends StatelessWidget {
+  const _RevenueLineChart({required this.points});
+
+  final List<RevenuePoint> points;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final n = points.length;
+    // Показать ~5 подписей по оси X — каждая step-я точка (но не реже 1).
+    final step = (n / 5).ceil().clamp(1, n);
+    final spots = <FlSpot>[
+      for (var i = 0; i < n; i++)
+        FlSpot(i.toDouble(), points[i].revenueValue),
+    ];
+    return LineChart(
+      LineChartData(
+        minY: 0,
+        minX: 0,
+        maxX: (n - 1).toDouble(),
+        gridData: const FlGridData(show: false),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          show: true,
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 22,
+              interval: 1,
+              getTitlesWidget: (value, meta) {
+                final i = value.round();
+                // Только каждая step-я точка (плюс самая последняя).
+                if (i < 0 || i >= n) return const SizedBox.shrink();
+                if (i % step != 0 && i != n - 1) {
+                  return const SizedBox.shrink();
+                }
+                return Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(points[i].dayLabel,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.6))),
+                );
+              },
+            ),
+          ),
+        ),
+        lineTouchData: const LineTouchData(enabled: false),
+        lineBarsData: [
+          LineChartBarData(
+            spots: spots,
+            isCurved: true,
+            color: AppColors.accent,
+            barWidth: 3,
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(
+              show: true,
+              color: AppColors.accent.withValues(alpha: 0.12),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

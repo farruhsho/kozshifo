@@ -7,6 +7,7 @@ import '../domain/dashboard_summary.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
+import '../domain/revenue_trend.dart';
 
 final dashboardRepositoryProvider =
     Provider<DashboardRepository>((ref) => DashboardRepository(ref.watch(dioProvider)));
@@ -66,6 +67,18 @@ class DashboardRepository {
     }
   }
 
+  /// «Выручка по дням» — тренд завершённой выручки за последние `days`
+  /// локальных дней (старые→новые, ровно `days` точек). Право `dashboard.view`.
+  Future<RevenueTrend> revenueTrend({int days = 14}) async {
+    try {
+      final resp = await _dio.get('/dashboard/revenue-trend',
+          queryParameters: {'days': days});
+      return RevenueTrend.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   static String? _date(DateTime? d) {
     if (d == null) return null;
     String two(int n) => n.toString().padLeft(2, '0');
@@ -96,4 +109,10 @@ final leadSourcesProvider = FutureProvider.autoDispose<LeadSourceReport>((ref) {
 final patientsByRegionProvider =
     FutureProvider.autoDispose<RegionReport>((ref) {
   return ref.watch(dashboardRepositoryProvider).patientsByRegion();
+});
+
+/// «Выручка (14 дней)» — тренд завершённой выручки по локальным дням для
+/// графика на дашборде директора.
+final revenueTrendProvider = FutureProvider.autoDispose<RevenueTrend>((ref) {
+  return ref.watch(dashboardRepositoryProvider).revenueTrend(days: 14);
 });

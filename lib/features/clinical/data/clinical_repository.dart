@@ -25,6 +25,15 @@ typedef ConsumableAvailability = ({
 /// `ok` is true when every template line is coverable (empty template → true).
 typedef OperationAvailability = ({bool ok, List<ConsumableAvailability> items});
 
+/// A staff member eligible to operate (TZ Modul 6). [isExternal] marks visiting
+/// «приезжий» surgeons (e.g. from Tashkent); [cabinet] is their room, if any.
+typedef Surgeon = ({
+  String id,
+  String fullName,
+  bool isExternal,
+  String? cabinet,
+});
+
 /// Operations + treatment prescriptions of the clinical loop.
 /// Decimals (price, quantity) are strings end-to-end — the server owns the math.
 class ClinicalRepository {
@@ -40,6 +49,26 @@ class ClinicalRepository {
       return (resp.data as List<dynamic>)
           .map((e) => OperationType.fromJson(e as Map<String, dynamic>))
           .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Staff eligible to operate, including visiting/external surgeons. The doctor
+  /// may pick one when referring; surgeon stays optional (reception can assign
+  /// later at scheduling time).
+  Future<List<Surgeon>> surgeons() async {
+    try {
+      final resp = await _dio.get('/operations/surgeons');
+      return [
+        for (final raw in resp.data as List<dynamic>)
+          (
+            id: (raw as Map<String, dynamic>)['id'] as String,
+            fullName: raw['full_name'] as String,
+            isExternal: raw['is_external_surgeon'] as bool,
+            cabinet: raw['cabinet'] as String?,
+          ),
+      ];
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -125,6 +154,7 @@ class ClinicalRepository {
     required String eye,
     String priority = 'normal',
     String? notes,
+    String? surgeonId,
   }) async {
     try {
       final resp = await _dio.post(
@@ -134,6 +164,7 @@ class ClinicalRepository {
           'eye': eye,
           'priority': priority,
           'notes': ?notes,
+          'surgeon_id': ?surgeonId,
         },
       );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
@@ -293,6 +324,12 @@ class ClinicalRepository {
 
 final operationTypesProvider = FutureProvider.autoDispose<List<OperationType>>(
   (ref) => ref.watch(clinicalRepositoryProvider).operationTypes(),
+);
+
+/// Surgeons eligible to operate (incl. external «приезжий») — feeds the
+/// optional surgeon picker on the referral dialog.
+final surgeonsProvider = FutureProvider.autoDispose<List<Surgeon>>(
+  (ref) => ref.watch(clinicalRepositoryProvider).surgeons(),
 );
 
 final visitOperationsProvider = FutureProvider.autoDispose

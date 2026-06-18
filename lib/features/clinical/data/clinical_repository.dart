@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
+import '../../auth/application/auth_controller.dart';
 import '../domain/operation.dart';
 import '../domain/operation_type.dart';
 import '../domain/treatment.dart';
@@ -32,6 +33,17 @@ typedef Surgeon = ({
   String fullName,
   bool isExternal,
   String? cabinet,
+});
+
+/// End-of-day operations P&L for one local day: revenue − COGS (consumables) −
+/// operation expenses = profit. Money fields are decimal strings (server owns
+/// the math); [operationsCount] is the number of operations counted that day.
+typedef OperationDayPnl = ({
+  int operationsCount,
+  String revenue,
+  String cogs,
+  String expenses,
+  String profit,
 });
 
 /// Operations + treatment prescriptions of the clinical loop.
@@ -141,6 +153,31 @@ class ClinicalRepository {
       return (resp.data as List<dynamic>)
           .map((e) => Operation.fromJson(e as Map<String, dynamic>))
           .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// End-of-day operations P&L for [date] (local day, `YYYY-MM-DD`), optionally
+  /// scoped to [branchId]. Returns revenue/COGS/expenses/profit (decimal strings)
+  /// and the operations count — feeds the director's «P&L дня» calendar panel.
+  Future<OperationDayPnl> operationDaySummary({
+    required String date,
+    String? branchId,
+  }) async {
+    try {
+      final resp = await _dio.get(
+        '/operations/day-summary',
+        queryParameters: {'date': date, 'branch_id': ?branchId},
+      );
+      final data = resp.data as Map<String, dynamic>;
+      return (
+        operationsCount: data['operations_count'] as int,
+        revenue: data['revenue'] as String,
+        cogs: data['cogs'] as String,
+        expenses: data['expenses'] as String,
+        profit: data['profit'] as String,
+      );
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -363,6 +400,23 @@ final scheduledOperationsProvider = FutureProvider.autoDispose
             scheduledTo: to,
             limit: 500,
           );
+    });
+
+/// End-of-day operations P&L for one local day, keyed by that day — feeds the
+/// director's «P&L дня» panel in the operations calendar. The key day is
+/// formatted to a `YYYY-MM-DD` LOCAL date string (same local-day basis as
+/// [scheduledOperationsProvider]'s window) — NOT toIso8601String, which would
+/// carry time/UTC and could land the summary on the wrong calendar day. Scoped
+/// to the signed-in user's branch when known. Pass a date-only `DateTime` (local
+/// midnight) as the key so equal calendar days share one provider instance.
+final operationDayPnlProvider = FutureProvider.autoDispose
+    .family<OperationDayPnl, DateTime>((ref, day) {
+      String two(int n) => n.toString().padLeft(2, '0');
+      final date = '${day.year}-${two(day.month)}-${two(day.day)}';
+      final branchId = ref.watch(authControllerProvider).user?.branchId;
+      return ref
+          .watch(clinicalRepositoryProvider)
+          .operationDaySummary(date: date, branchId: branchId);
     });
 
 final visitTreatmentsProvider = FutureProvider.autoDispose

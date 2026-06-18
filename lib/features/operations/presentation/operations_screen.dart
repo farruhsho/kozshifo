@@ -164,6 +164,8 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     // новый провайдер и сетевой запрос.
     final day = DateTime(_calDay.year, _calDay.month, _calDay.day);
     final scheduled = ref.watch(scheduledOperationsProvider(day));
+    final canReadPnl =
+        ref.watch(authControllerProvider).user?.can('operations.read') ?? false;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -206,6 +208,10 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
             ),
           ],
         ),
+        if (canReadPnl) ...[
+          const SizedBox(height: 16),
+          _pnlCard(day),
+        ],
         const SizedBox(height: 16),
         scheduled.when(
           loading: () => const Padding(
@@ -244,6 +250,94 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
           },
         ),
       ],
+    );
+  }
+
+  /// «P&L дня» — итог операций выбранного календарного дня (выручка − COGS −
+  /// расходы = прибыль) для филиала пользователя. Сбой сводки не ломает
+  /// календарь: рендерим компактную ошибку, список операций живёт отдельно.
+  Widget _pnlCard(DateTime day) {
+    final pnl = ref.watch(operationDayPnlProvider(day));
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: pnl.when(
+        loading: () => const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Center(
+            child: SizedBox(
+              height: 22,
+              width: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+        error: (e, _) => Text(
+          'Сводка дня недоступна: ${e is ApiException ? e.message : e}',
+          style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
+        ),
+        data: (p) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'P&L дня',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${p.operationsCount} опер.',
+                  style: const TextStyle(
+                    color: AppColors.sub,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _pnlRow('Выручка', p.revenue),
+            _pnlRow('Себестоимость', p.cogs),
+            _pnlRow('Расходы', p.expenses),
+            const Divider(height: 18, color: AppColors.line),
+            _pnlRow('Прибыль', p.profit, emphasize: true),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pnlRow(String label, String value, {bool emphasize = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: emphasize ? AppColors.ink : AppColors.sub,
+                fontSize: 13.5,
+                fontWeight: emphasize ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            formatMoney(value),
+            textAlign: TextAlign.right,
+            style: AppTypography.number(
+              emphasize ? 16 : 14,
+              color: emphasize ? AppColors.tealDark : AppColors.ink,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

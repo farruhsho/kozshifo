@@ -275,10 +275,26 @@ on every mutation · multi-branch**.
   + «Приём» screen + a **TREATMENT queue track** (лечение) on the TV board with flexible payment
   (per-day / 10-day / deferred-pay-at-end / partial, reusing the Visit+Payment balance model).
 
-**Verified green:** backend `pytest` = 240 passed · Flutter `flutter test` = 159 passed
+- **Patient-flow overhaul — Phase 3a per-doctor ticket numbers: ✅ done** — the doctor-track queue
+  ticket now takes the assigned doctor's `queue_prefix` (Сарвар → С-001) instead of a fixed «V».
+  `next_ticket_number(db, branch, prefix)` is now PREFIX-based — a per-branch, per-prefix daily counter
+  (`ticket_number LIKE '<prefix>-%'`, "-"-anchored so С-% never matches Сд-001) — so each doctor has
+  their own С-001… series while diagnostic keeps D-001. The doctor for a paid visit resolves in priority
+  order (`queue._doctor_for_visit`): `visit.doctor_id` (reception's choice) → `patient.primary_doctor_id`
+  (returning patient's лечащий) → the service's single eligible doctor → open pool («V»); the resolved
+  doctor also pre-fills cabinet+assignment. No-doctor visits still mint V-001 (existing queue tests green).
+  No migration; 3 tests. **Remaining Phase 3 (next):** (a) diagnostic queue routing BY SERVICE — needs an
+  `is_diagnostic` marker on Service: mint one diagnostic ticket per diagnostic service, a diagnostician
+  serves only their `service_doctors`, and the doctor V-ticket issues only when ALL diagnostic tickets are
+  done; (b) load-balancing (cap≈10 least-loaded doctor for unassigned patients); (c) the «Приём» screen
+  (list + «Вызвать следующего» + inline patient card + «принят ФИО, время» timeline source from served
+  tickets); (d) the TREATMENT track (Л-, 3rd TV section, flexible per-day/10-day/deferred/partial payment).
+
+**Verified green:** backend `pytest` = 243 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues ·
 `alembic upgrade head` = clean (head `d5b1f3a86c47`; Phase 0 drops optics/cameras,
-Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district).
+Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,
+Phase 3a is query-only — no schema change).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

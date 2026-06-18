@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.models.attachment import Attachment
 from app.models.device import DeviceResult
 from app.models.exam import EyeExam
 from app.models.inventory import Product, StockMovement
@@ -170,6 +171,16 @@ def patient_timeline(
             original_name = (r.payload or {}).get("original_name")
             add(r.measured_at, "device_result", f"Результат прибора: {r.result_type}",
                 detail=original_name, visit_id=r.visit_id, ref_id=r.id)
+
+    # Patient document attachments (УЗИ-заключения, анализ на ВИЧ, прочие сканы).
+    if allowed("attachments.read"):
+        _kind_label = {"uzi": "УЗИ", "hiv": "Анализ на ВИЧ", "lab": "Лаборатория", "other": "Документ"}
+        attachments = db.execute(
+            select(Attachment).where(Attachment.patient_id == patient_id)
+        ).scalars().all()
+        for a in attachments:
+            add(a.created_at, "attachment", f"Файл: {_kind_label.get(a.kind, 'Документ')}",
+                detail=a.original_name, visit_id=a.visit_id, ref_id=a.id)
 
     # Operations (TZ Modul 6): referral always; scheduling, performance,
     # completion and cancellation surface as extra timeline events.

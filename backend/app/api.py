@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from app.features import (
     access_control,
     appointments,
+    attachments,
     attendance,
     auth,
     branches,
@@ -32,5 +33,5 @@ from app.features import (
 )
 
 api_router = APIRouter()
-for module in (auth, permissions, roles, users, branches, patients, catalog, visits, payments, queue, dashboard, exams, devices, inventory, operations, treatments, timeline, notifications, search, attendance, finance, calls, access_control, appointments, lab):
+for module in (auth, permissions, roles, users, branches, patients, catalog, visits, payments, queue, dashboard, exams, devices, inventory, operations, treatments, timeline, notifications, search, attendance, finance, calls, access_control, appointments, attachments, lab):
     api_router.include_router(module.router)

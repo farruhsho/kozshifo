@@ -232,13 +232,27 @@ on every mutation · multi-branch**.
   tests + `optics.*` perms) and the **«Видео»/Камеры** screen (frontend
   `lib/features/camera/` + backend feature/model/schema/tests + `cameras.*` perms).
   Migration `b2f7c0a91d34` drops `optics_orders` + `cameras` (keeps `lab_orders`).
-  The shared `HikvisionClient` (face terminals) is untouched. **Next:** **Phase 1**
-  generic patient/operation file attachments (UZI + HIV PDFs on the card & timeline).
+  The shared `HikvisionClient` (face terminals) is untouched.
 
-**Verified green:** backend `pytest` = 226 passed · Flutter `flutter test` = 159 passed
+- **Patient-flow overhaul — Phase 1 attachments: ✅ done** — a general patient
+  document store (model `attachments`, migration `c4d8e1f0a2b6`): `POST/GET
+  /patients/{id}/attachments` (multipart, kind = uzi|hiv|lab|other, optional
+  visit_id/operation_id that must belong to the patient), `GET /attachments/{id}/file`
+  (auth-gated download), `DELETE /attachments/{id}` — all reusing `core.files`
+  (20 MB cap, ext whitelist incl. .pdf; bytes under a random name, original name =
+  metadata only). New perms `attachments.read`/`.write` granted to
+  Reception/Doctor/Diagnost; documents surface on the patient timeline as an
+  `attachment` event. Flutter: `lib/features/attachments/` (plain model + Dio repo +
+  reusable `AttachmentsSection`: list / upload PDF via FilePicker / download via
+  `saveBytes`), embedded in the doctor card's ПАЦИЕНТ column (gated `attachments.read`).
+  Storage caveat: Cloud Run disk is ephemeral (same as device files) — GCS is the
+  prod follow-up. **Next:** **Phase 2** data model (patient primary_doctor_id, user
+  queue_prefix + external surgeons, diagnosis catalog).
+
+**Verified green:** backend `pytest` = 231 passed · Flutter `flutter test` = 159 passed
 · `flutter analyze` = no issues ·
-`alembic upgrade head` = clean (head `b2f7c0a91d34`; Phase 0 drops `optics_orders` +
-`cameras`).
+`alembic upgrade head` = clean (head `c4d8e1f0a2b6`; Phase 0 drops optics/cameras,
+Phase 1 adds the `attachments` table).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

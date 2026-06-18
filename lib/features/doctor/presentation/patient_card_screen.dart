@@ -10,6 +10,7 @@ import '../../../core/utils/file_saver.dart';
 import '../../../core/utils/flow_labels.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
+import '../../attachments/presentation/attachments_section.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../clinical/presentation/operations_section.dart';
 import '../../clinical/presentation/treatments_section.dart';
@@ -486,6 +487,12 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
               List<Widget> patientColumn() => [
                 PatientInfoCard(patientId: widget.patientId),
                 _visitHistory(items),
+                if (ref.watch(authControllerProvider).user?.can('attachments.read') ??
+                    false)
+                  AttachmentsSection(
+                    patientId: widget.patientId,
+                    visitId: _visitId,
+                  ),
                 if (!_loadingExam) ...[_history(), _timeline()],
               ];
               // ДИАГНОСТИКА: приборы/сканы + структурные показания осмотра.

@@ -28,6 +28,9 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("patients.create", "patients", "Register patients"),
     ("patients.update", "patients", "Edit patients"),
     ("patients.delete", "patients", "Delete patients"),
+    # Patient document attachments (УЗИ-заключения, анализ на ВИЧ, прочие сканы)
+    ("attachments.read", "attachments", "View patient file attachments"),
+    ("attachments.write", "attachments", "Upload / delete patient attachments"),
     # Service catalog
     ("services.read", "catalog", "View services"),
     ("services.create", "catalog", "Create services & categories"),
@@ -115,6 +118,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     "Director": ALL_CODES,
     "Reception": [
         "patients.read", "patients.create", "patients.update",
+        # front desk staples scanned analyses (анализ на ВИЧ перед операцией и т.п.)
+        "attachments.read", "attachments.write",
         "visits.read", "visits.create", "visits.update",
         # FULL till: front desk takes payments AND refunds (Reception = ресепшен
         # + касса by the owner's model). Payroll stays walled off — the front
@@ -143,6 +148,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     ],
     "Doctor": [
         "patients.read", "visits.read", "visits.update",
+        "attachments.read", "attachments.write",
         # queue.manage: a doctor runs their OWN queue — calls the next patient
         # into their cabinet, recalls, returns to waiting (the «Моя очередь·Приём»
         # workstation). Reception keeps the full two-track board.
@@ -162,6 +168,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     # sees patients/visits. No clinical authoring (exams.write) or money.
     "Diagnost": [
         "patients.read", "visits.read",
+        # diagnost attaches УЗИ / scan conclusions to the patient card
+        "attachments.read", "attachments.write",
         "queue.read", "queue.manage",
         "exams.read",
         "devices.read", "device_results.read", "device_results.create",

@@ -33,6 +33,7 @@ from app.schemas.queue import (
     QueueTicketOut,
     QueueTrack,
     SpecialistOut,
+    TreatmentTicketRequest,
     TvBranchOption,
     TVBoard,
     TVBoardEntry,
@@ -121,7 +122,9 @@ def _mark_called_effects(db: Session, ticket: QueueTicket, room: str | None,
     record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
                  actor_id=actor.id, branch_id=ticket.branch_id,
                  summary=f"Called {ticket.ticket_number} to {room}")
-    if ticket.visit_id is not None:
+    # Treatment tickets stand apart from the diagnostic→doctor journey, so they
+    # never drive the visit flow engine (only diagnostic/doctor do).
+    if ticket.visit_id is not None and ticket.track in ("diagnostic", "doctor"):
         visit = db.get(Visit, ticket.visit_id)
         if visit is not None:
             advance_flow(db, visit,
@@ -360,7 +363,8 @@ def _transition(db: Session, ticket_id: UUID, actor: CurrentUser, new_status: st
                  branch_id=ticket.branch_id, summary=f"Ticket {ticket.ticket_number} -> {new_status}")
     if new_status == "done" and ticket.track == "diagnostic" and ticket.visit_id is not None:
         _auto_advance_to_doctor(db, ticket, actor)
-    if new_status in ("done", "skipped") and ticket.visit_id is not None:
+    if (new_status in ("done", "skipped") and ticket.visit_id is not None
+            and ticket.track in ("diagnostic", "doctor")):
         visit = db.get(Visit, ticket.visit_id)
         if visit is not None:  # workflow engine: same transaction as the transition
             if new_status == "done":
@@ -502,7 +506,7 @@ def leave_ticket(ticket_id: UUID, db: Annotated[Session, Depends(get_db)],
     record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
                  actor_id=actor.id, branch_id=ticket.branch_id,
                  summary=f"Returned {ticket.ticket_number} to waiting")
-    if visit_id is not None:  # revert the "in the room" flow claim back to waiting
+    if visit_id is not None and track in ("diagnostic", "doctor"):  # revert flow claim
         visit = db.get(Visit, visit_id)
         if visit is not None:
             advance_flow(db, visit,
@@ -547,6 +551,56 @@ def assign_ticket(
         summary=(f"Routed {ticket.ticket_number} to {target.full_name}" if target is not None
                  else f"Cleared routing on {ticket.ticket_number}"),
     )
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/treatment-ticket", response_model=QueueTicketOut, status_code=status.HTTP_201_CREATED)
+def issue_treatment_ticket(
+    payload: TreatmentTicketRequest,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("queue.manage"))],
+) -> QueueTicket:
+    """Reception issues a TREATMENT-track ticket (Л-…) so a patient who came for a
+    course of treatment is queued and called to the procedure room, and appears on
+    the TV board's «Лечение» section.
+
+    Deliberately independent of payment: лечение can be paid per-day, prepaid for
+    several days, deferred to the end, or partially — all via the visit's normal
+    balance — so the ticket is NOT gated on a full payment.
+    """
+    patient = db.get(Patient, payload.patient_id)
+    if patient is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    if db.get(Branch, payload.branch_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Branch not found")
+    if payload.visit_id is not None:
+        visit = db.get(Visit, payload.visit_id)
+        if visit is None or visit.patient_id != patient.id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "visit_id does not belong to this patient")
+    assigned: User | None = None
+    if payload.assigned_user_id is not None:
+        assigned = db.get(User, payload.assigned_user_id)
+        if assigned is None or not assigned.is_active:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignee not found or inactive")
+    room = (payload.room or "").strip() or (assigned.cabinet if assigned else None)
+    ticket = QueueTicket(
+        ticket_number=next_ticket_number(db, payload.branch_id, "Л"),
+        track="treatment",
+        patient_id=patient.id,
+        branch_id=payload.branch_id,
+        visit_id=payload.visit_id,
+        room=room,
+        assigned_user_id=payload.assigned_user_id,
+        status="waiting",
+    )
+    db.add(ticket)
+    db.flush()
+    record_audit(db, action="create", entity_type="queue_ticket", entity_id=ticket.id,
+                 actor_id=actor.id, branch_id=payload.branch_id,
+                 summary=f"Issued treatment ticket {ticket.ticket_number} for {patient.mrn}")
     db.commit()
     db.refresh(ticket)
     return ticket
@@ -613,6 +667,7 @@ def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)], response:
     tracks: dict[str, dict[str, list[QueueTicket]]] = {
         "doctor": {"now": [], "waiting": []},
         "diagnostic": {"now": [], "waiting": []},
+        "treatment": {"now": [], "waiting": []},
     }
     for t in rows:
         bucket = tracks.get(t.track)
@@ -631,5 +686,9 @@ def tv_board(branch_id: UUID, db: Annotated[Session, Depends(get_db)], response:
         diagnostic=TVTrack(
             now=[_tv_entry(t) for t in tracks["diagnostic"]["now"]],
             waiting=[_tv_entry(t) for t in tracks["diagnostic"]["waiting"]],
+        ),
+        treatment=TVTrack(
+            now=[_tv_entry(t) for t in tracks["treatment"]["now"]],
+            waiting=[_tv_entry(t) for t in tracks["treatment"]["waiting"]],
         ),
     )

@@ -26,6 +26,8 @@
     --doctor-deep: #143e87;
     --diag: #0e7a52;
     --diag-deep: #0a5c3e;
+    --treat: #8a3fb0;
+    --treat-deep: #5e2a80;
     --called: #ffd54a;
     --emergency: #ff5a5a;
   }
@@ -54,7 +56,7 @@
   main {
     flex: 1;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     grid-template-rows: 42% 1fr;
     gap: 0.8vh;
     padding: 0 0.8vh 0.8vh;
@@ -65,6 +67,8 @@
   .doctor-list  { background: var(--doctor-deep); }
   .diag-now     { background: linear-gradient(160deg, var(--diag), var(--diag-deep)); }
   .diag-list    { background: var(--diag-deep); }
+  .treat-now    { background: linear-gradient(160deg, var(--treat), var(--treat-deep)); }
+  .treat-list   { background: var(--treat-deep); }
 
   .now-title {
     font-size: 2.6vh;
@@ -78,7 +82,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 17vh;
+    font-size: 12vh;
     font-weight: 900;
     line-height: 1;
     font-variant-numeric: tabular-nums;
@@ -169,6 +173,12 @@
       <div class="now-meta"><span id="dia-room"></span><div class="who" id="dia-who"></div></div>
       <div class="now-more" id="dia-more"></div>
     </section>
+    <section class="treat-now">
+      <div class="now-title">Сейчас вызывается · Лечение</div>
+      <div class="now-ticket" id="trt-ticket">—</div>
+      <div class="now-meta"><span id="trt-room"></span><div class="who" id="trt-who"></div></div>
+      <div class="now-more" id="trt-more"></div>
+    </section>
     <section class="doctor-list">
       <div class="list-title">Очередь к врачу</div>
       <div id="doc-list" style="overflow:hidden; flex:1"></div>
@@ -176,6 +186,10 @@
     <section class="diag-list">
       <div class="list-title">Очередь на диагностику</div>
       <div id="dia-list" style="overflow:hidden; flex:1"></div>
+    </section>
+    <section class="treat-list">
+      <div class="list-title">Очередь на лечение</div>
+      <div id="trt-list" style="overflow:hidden; flex:1"></div>
     </section>
   </main>
 
@@ -209,13 +223,16 @@
            list: document.getElementById('doc-list') },
     dia: { ticket: document.getElementById('dia-ticket'), room: document.getElementById('dia-room'),
            who: document.getElementById('dia-who'), more: document.getElementById('dia-more'),
-           list: document.getElementById('dia-list') }
+           list: document.getElementById('dia-list') },
+    trt: { ticket: document.getElementById('trt-ticket'), room: document.getElementById('trt-room'),
+           who: document.getElementById('trt-who'), more: document.getElementById('trt-more'),
+           list: document.getElementById('trt-list') }
   };
 
   var seenCalled = {};
   var firstPoll = true;
   var lastOkAt = null;
-  var freshUntil = { doc: 0, dia: 0 };
+  var freshUntil = { doc: 0, dia: 0, trt: 0 };
 
   function tickClock() {
     var d = new Date();
@@ -463,6 +480,7 @@
         if (board.branch_name) els.branch.textContent = board.branch_name;
         processTrack(board.doctor, els.doc, 'doc');
         processTrack(board.diagnostic, els.dia, 'dia');
+        processTrack(board.treatment, els.trt, 'trt');
         firstPoll = false;
         lastOkAt = Date.now();
         refreshFreshness();

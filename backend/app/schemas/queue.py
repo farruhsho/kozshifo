@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-QueueTrack = Literal["doctor", "diagnostic"]
+QueueTrack = Literal["doctor", "diagnostic", "treatment"]
 
 
 class QueueTicketOut(BaseModel):
@@ -57,6 +57,18 @@ class AssignRequest(BaseModel):
     assigned_user_id: UUID | None = None
 
 
+class TreatmentTicketRequest(BaseModel):
+    """Reception issues a treatment-track ticket (Л-…) for a patient who is here
+    for a course of treatment. Independent of payment (per-day / prepaid /
+    deferred / partial all run through the visit's balance)."""
+
+    patient_id: UUID
+    branch_id: UUID
+    visit_id: UUID | None = None
+    room: str | None = None
+    assigned_user_id: UUID | None = None
+
+
 class SpecialistOut(BaseModel):
     """Routable staff member for the queue assign-picker (privacy: staff only).
 
@@ -94,6 +106,7 @@ class TVBoard(BaseModel):
     branch_name: str | None = None
     doctor: TVTrack
     diagnostic: TVTrack
+    treatment: TVTrack
 
 
 class TvBranchOption(BaseModel):

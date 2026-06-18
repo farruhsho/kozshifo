@@ -443,6 +443,46 @@ def schedule_operation(
     return operation
 
 
+@router.post("/operations/{operation_id}/unschedule", response_model=OperationOut)
+def unschedule_operation(
+    operation_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("operations.schedule"))],
+) -> Operation:
+    """Detach a SCHEDULED operation from its day, back to the referred pool
+    (force-majeure: the patient can't make that day, so reception frees the slot
+    for another from the pool). De-bills the visit (scheduling had added the
+    linked service) unless it was already paid — then a refund is required first.
+    The operation stays alive (status → referred) so it can be re-scheduled for
+    another day; the chosen surgeon is kept."""
+    operation = _get_or_404(db, operation_id)
+    if operation.status != "scheduled":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Only a scheduled operation can be detached (status: {operation.status})")
+    visit = db.get(Visit, operation.visit_id)
+    if operation.visit_item_id is not None:
+        item = db.get(VisitItem, operation.visit_item_id)
+        if item is not None:
+            if item.status != "ordered":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The billed item is already paid — refund the payment before detaching")
+            visit.items.remove(item)  # delete-orphan cascade removes the row
+            _recompute_total(visit)
+        operation.visit_item_id = None
+    operation.status = "referred"
+    operation.scheduled_at = None
+    operation.price = None
+    record_audit(db, action="unschedule", entity_type="operation", entity_id=operation.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Detached operation {operation.type_name} from its day (back to pool)")
+    db.flush()
+    recompute_plan(db, visit)  # the lifecycle stops advertising a fixed surgery date
+    db.commit()
+    db.refresh(operation)
+    return operation
+
+
 @router.post("/operations/{operation_id}/start", response_model=OperationOut)
 def start_operation(
     operation_id: UUID,

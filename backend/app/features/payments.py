@@ -20,6 +20,7 @@ from app.core.deps import CurrentUser, require_permission
 from app.core.flow import advance_flow
 from app.core.print_forms import build_receipt_pdf
 from app.core.sequences import next_receipt_no, next_ticket_number
+from app.models.catalog import Service
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
 from app.models.visit import Visit
@@ -115,12 +116,23 @@ def take_payment(
         # surgery after the appointment — must never re-queue the patient to
         # diagnostics, even when no ticket is active anymore.
         elif visit.flow_status == "waiting_diagnostic":
+            # Tag the ticket with the visit's diagnostic service (УЗИ, биометрия…)
+            # so call-next routes it to the matching diagnostician. NULL when the
+            # visit has no diagnostic service → open to any diagnostician.
+            billed_service_ids = [it.service_id for it in visit.items if it.service_id is not None]
+            diag_service_id = db.execute(
+                select(Service.id).where(
+                    Service.id.in_(billed_service_ids),
+                    Service.is_diagnostic.is_(True),
+                ).limit(1)
+            ).scalar_one_or_none() if billed_service_ids else None
             ticket = QueueTicket(
                 ticket_number=next_ticket_number(db, visit.branch_id, "D"),
                 track="diagnostic",
                 patient_id=visit.patient_id,
                 branch_id=visit.branch_id,
                 visit_id=visit.id,
+                service_id=diag_service_id,
                 room=payload.room,
                 # Emergency intake jumps the queue: inherit the visit's priority
                 # + reason so this ticket sorts to the top and flags «ЭКСТРЕННЫЙ».

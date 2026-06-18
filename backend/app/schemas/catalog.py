@@ -28,6 +28,7 @@ class ServiceCreate(BaseModel):
     duration_minutes: int | None = None
     description: str | None = None
     category_id: UUID | None = None
+    is_diagnostic: bool = False
     # Eligible doctors (their cabinets become the routing target). Empty = any.
     doctor_ids: list[UUID] = []
 
@@ -39,6 +40,7 @@ class ServiceUpdate(BaseModel):
     description: str | None = None
     category_id: UUID | None = None
     is_active: bool | None = None
+    is_diagnostic: bool | None = None
     doctor_ids: list[UUID] | None = None
 
 
@@ -73,5 +75,6 @@ class ServiceOut(BaseModel):
     duration_minutes: int | None
     description: str | None
     is_active: bool
+    is_diagnostic: bool = False
     category_id: UUID | None
     doctors: list[DoctorRef] = []

@@ -36,6 +36,11 @@ class Service(UUIDPKMixin, TimestampMixin, Base):
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Diagnostic service (УЗИ, биометрия, ОКТ…): a paid visit billed for it mints
+    # a diagnostic-track queue ticket tagged with this service, so the matching
+    # diagnostician (service_doctors) pulls only their own kind of work. False =
+    # a doctor/clinical service that needs no diagnostic step.
+    is_diagnostic: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     description: Mapped[str | None] = mapped_column(String(512), nullable=True)
     category_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("service_categories.id", ondelete="SET NULL"), nullable=True

@@ -24,12 +24,14 @@ from app.models.operation import OperationType, OperationTypeConsumable
 from app.models.rbac import Permission, Role
 from app.models.user import User
 
+# (code, name, price, is_diagnostic). Diagnostic services route to a diagnostician
+# queue ticket; the consultation goes straight to the doctor track.
 _DEMO_SERVICES = [
-    ("CONS", "Консультация офтальмолога", 150000),
-    ("ARM", "Авторефрактометрия", 50000),
-    ("TONO", "Тонометрия", 40000),
-    ("BIO", "Биомикроскопия", 60000),
-    ("OCT", "ОКТ сетчатки", 250000),
+    ("CONS", "Консультация офтальмолога", 150000, False),
+    ("ARM", "Авторефрактометрия", 50000, True),
+    ("TONO", "Тонометрия", 40000, True),
+    ("BIO", "Биомикроскопия", 60000, True),
+    ("OCT", "ОКТ сетчатки", 250000, True),
 ]
 
 
@@ -141,9 +143,10 @@ def _seed_services(db: Session) -> None:
         category = ServiceCategory(name="Диагностика", description="Диагностические услуги")
         db.add(category)
         db.flush()
-    for code, name, price in _DEMO_SERVICES:
+    for code, name, price, is_diagnostic in _DEMO_SERVICES:
         if db.execute(select(Service).where(Service.code == code)).scalar_one_or_none() is None:
-            db.add(Service(code=code, name=name, price=Decimal(price), category_id=category.id))
+            db.add(Service(code=code, name=name, price=Decimal(price),
+                           category_id=category.id, is_diagnostic=is_diagnostic))
     db.flush()
 
 

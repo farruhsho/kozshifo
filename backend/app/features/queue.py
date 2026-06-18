@@ -155,6 +155,19 @@ def call_next(
                     QueueTicket.assigned_user_id.is_(None),
                 )
             )
+        # Diagnostic queue is distributed BY SERVICE: a diagnostician who serves
+        # specific services (service_doctors) only pulls tickets tagged with one
+        # of those services (or untagged = open). A caller with no assigned
+        # services (e.g. reception/director) is unrestricted, as before.
+        if payload.track == "diagnostic":
+            caller_service_ids = [s.id for s in actor.services]
+            if caller_service_ids:
+                stmt = stmt.where(
+                    or_(
+                        QueueTicket.service_id.in_(caller_service_ids),
+                        QueueTicket.service_id.is_(None),
+                    )
+                )
         ticket = db.execute(
             stmt.order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc()).limit(1)
         ).scalar_one_or_none()

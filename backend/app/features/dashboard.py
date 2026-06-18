@@ -320,6 +320,45 @@ def patients_by_region(db: Annotated[Session, Depends(get_db)]) -> RegionReport:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Revenue trend — daily completed-payment revenue (dashboard line chart).
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class RevenuePoint(BaseModel):
+    date: date
+    revenue: Decimal
+
+
+class RevenueTrend(BaseModel):
+    points: list[RevenuePoint]
+
+
+@router.get("/revenue-trend", response_model=RevenueTrend,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def revenue_trend(
+    db: Annotated[Session, Depends(get_db)],
+    days: int = Query(14, ge=1, le=90),
+) -> RevenueTrend:
+    """Completed-payment revenue per LOCAL day for the last ``days`` days — feeds
+    the dashboard's revenue trend chart. Each day uses the same local→UTC instant
+    window the cash reports use, so the trend agrees with the rest of the board."""
+    today = business_today()
+    points: list[RevenuePoint] = []
+    for offset in range(days - 1, -1, -1):
+        day = today - timedelta(days=offset)
+        start, end = local_day_bounds_utc(day)
+        rev = db.execute(
+            select(func.coalesce(func.sum(Payment.amount), 0)).where(
+                Payment.status == "completed",
+                Payment.created_at >= start,
+                Payment.created_at < end,
+            )
+        ).scalar_one()
+        points.append(RevenuePoint(date=day, revenue=Decimal(rev)))
+    return RevenueTrend(points=points)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Top services — this month's revenue per service (Analytics screen).
 # ════════════════════════════════════════════════════════════════════════════
 

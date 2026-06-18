@@ -3,12 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/api_constants.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/url_opener.dart';
 import '../../../core/widgets/async_value_widget.dart';
+import '../../attachments/presentation/attachments_section.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../doctor/presentation/patient_info_card.dart';
 import '../data/queue_repository.dart';
 import '../domain/queue_ticket.dart';
 
@@ -308,21 +311,61 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                   value: tickets,
                   onRetry: () => ref.invalidate(queueListProvider(branchId)),
                   builder: (items) {
-                    // Личный режим: одна дорожка на всю ширину (рабочее место
-                    // врача «Мой приём» или диагноста «Диагностика»).
+                    // Личный режим «Приём»: на широком экране — 2 колонки (слева
+                    // очередь+«Вызвать следующего», справа карточка ТЕКУЩЕГО —
+                    // вызванного / на приёме — пациента: данные, файлы, переход в
+                    // полную карту). Узкий экран — только очередь.
                     if (singleTrack != null) {
+                      final trackPane = _trackSection(
+                        context,
+                        branchId,
+                        title: singleTrack == 'doctor'
+                            ? 'К врачу (V)'
+                            : 'Диагностика (D)',
+                        track: singleTrack,
+                        items: items,
+                        canManage: canManage,
+                        specialistNames: specialistNames,
+                      );
+                      final wide = MediaQuery.sizeOf(context).width >= 1000;
+                      if (!wide) {
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: trackPane,
+                        );
+                      }
+                      // Текущий пациент = тот, кого сейчас принимают (serving),
+                      // иначе первый вызванный (called) этой дорожки.
+                      final mineTickets = items
+                          .where((t) => t.track == singleTrack)
+                          .toList();
+                      QueueTicket? current;
+                      for (final t in mineTickets) {
+                        if (t.status == 'serving') {
+                          current = t;
+                          break;
+                        }
+                      }
+                      if (current == null) {
+                        for (final t in mineTickets) {
+                          if (t.isActive) {
+                            current = t;
+                            break;
+                          }
+                        }
+                      }
                       return Padding(
                         padding: const EdgeInsets.all(16),
-                        child: _trackSection(
-                          context,
-                          branchId,
-                          title: singleTrack == 'doctor'
-                              ? 'К врачу (V)'
-                              : 'Диагностика (D)',
-                          track: singleTrack,
-                          items: items,
-                          canManage: canManage,
-                          specialistNames: specialistNames,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(flex: 2, child: trackPane),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 3,
+                              child: _patientPane(context, current),
+                            ),
+                          ],
                         ),
                       );
                     }
@@ -366,6 +409,65 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Правая колонка «Приёма»: карточка ТЕКУЩЕГО пациента (вызванного / на приёме)
+  /// — краткие данные, файлы/анализы (УЗИ, ВИЧ) и переход в полную медкарту.
+  /// Пусто, пока никто не вызван («вызвал → появились данные»).
+  Widget _patientPane(BuildContext context, QueueTicket? current) {
+    if (current == null) {
+      return Card(
+        margin: const EdgeInsets.all(4),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Вызовите пациента — здесь появятся его данные.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final canSeeFiles =
+        ref.watch(authControllerProvider).user?.can('attachments.read') ?? false;
+    final patientId = current.patientId;
+    final visitId = current.visitId;
+    return Card(
+      margin: const EdgeInsets.all(4),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Текущий пациент · ${current.ticketNumber}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: () => context.go('/patients/$patientId/card'),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Открыть карту'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            PatientInfoCard(patientId: patientId),
+            if (canSeeFiles)
+              AttachmentsSection(patientId: patientId, visitId: visitId),
+          ],
         ),
       ),
     );

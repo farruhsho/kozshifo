@@ -223,4 +223,35 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets(
+    'personal «Приём» on a wide screen shows the patient-card pane (empty state '
+    'until someone is called)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(_FakeDoctorAuthController.new),
+            queueRepositoryProvider.overrideWithValue(_EmptyQueueRepository()),
+          ],
+          child: const MaterialApp(home: QueueScreen(personal: true)),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('Мой приём'), findsOneWidget);
+      // The right-hand patient pane renders (empty state, since no active ticket).
+      expect(
+        find.text('Вызовите пациента — здесь появятся его данные.'),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }

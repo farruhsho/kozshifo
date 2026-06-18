@@ -235,6 +235,36 @@ class ClinicalRepository {
     }
   }
 
+  /// Detach a scheduled operation back to the referred POOL (force-majeure):
+  /// drops the day/surgeon and de-bills the linked service. The backend answers
+  /// 409 (surfaced via [ApiException]) if that billed item is already paid.
+  Future<Operation> unscheduleOperation(String id) async {
+    try {
+      final resp = await _dio.post('/operations/$id/unschedule');
+      return Operation.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Place a referred operation onto a day from the scheduling board. Thin
+  /// wrapper over [scheduleOperation] that takes the chosen instant as a
+  /// `DateTime` and serialises it to a UTC ISO string for the server. The board
+  /// passes a placeholder wall-clock time (it never shows the time-of-day).
+  Future<Operation> scheduleOperationAt({
+    required String id,
+    required DateTime scheduledAt,
+    String? surgeonId,
+    String? price,
+  }) {
+    return scheduleOperation(
+      id: id,
+      scheduledAt: scheduledAt.toUtc().toIso8601String(),
+      surgeonId: surgeonId,
+      price: price,
+    );
+  }
+
   /// Mark a scheduled operation as in progress (TZ: «Bajarilmoqda»).
   Future<Operation> startOperation(String id) async {
     try {
@@ -381,6 +411,13 @@ final operationsWorklistProvider = FutureProvider.autoDispose
       (ref, status) =>
           ref.watch(clinicalRepositoryProvider).operations(status: status),
     );
+
+/// The REFERRED pool — operations a doctor sent to surgery but reception has
+/// not yet placed on a day. Feeds the scheduling board's «Направлены на
+/// операцию» panel; invalidated alongside the day after each schedule/detach.
+final referredOperationsProvider = FutureProvider.autoDispose<List<Operation>>(
+  (ref) => ref.watch(clinicalRepositoryProvider).operations(status: 'referred'),
+);
 
 /// SCHEDULED operations of one local day, keyed by that day — the operations
 /// CALENDAR agenda. The day's [00:00, next-00:00) local bounds go to the server

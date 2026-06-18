@@ -18,6 +18,11 @@ import '../../inventory/domain/product.dart';
 
 final _dateTime = DateFormat('dd.MM.yyyy HH:mm');
 
+/// Soft per-day operations capacity. The scheduling board warns (amber/red) when
+/// a day reaches this many ops — it never blocks placement, force-majeure days
+/// can run over.
+const kOpsPerDayCap = 15;
+
 /// Раздел «Операции» (TZ Modul 6) — рабочий список операционного отделения в
 /// дизайн-системе Clinic OS. Ресепшен планирует направленные операции
 /// (дата/цена), врач-хирург начинает, выполняет (списание расходников) и
@@ -157,15 +162,28 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
-  /// Календарь-агенда: запланированные операции выбранного дня, по времени.
+  /// Доска планирования операций на день: слева — поставленные на выбранный день
+  /// операции (с «Открепить»), справа — пул направленных пациентов (с «Поставить
+  /// на <дата>»). Времени дня нет: длительность операций разная, день не сетка по
+  /// часам, а список пациентов на дату. На широком экране — две колонки, на узком
+  /// пул уходит под список дня.
   Widget _calendarView() {
     // Нормализуем до даты (локальная полночь): ключ семейства — один и тот же
     // для всех пересборок одного календарного дня, иначе каждый кадр плодил бы
     // новый провайдер и сетевой запрос.
     final day = DateTime(_calDay.year, _calDay.month, _calDay.day);
     final scheduled = ref.watch(scheduledOperationsProvider(day));
-    final canReadPnl =
-        ref.watch(authControllerProvider).user?.can('operations.read') ?? false;
+    final user = ref.watch(authControllerProvider).user;
+    final canReadPnl = user?.can('operations.read') ?? false;
+    final canSchedule = user?.can('operations.schedule') ?? false;
+
+    // Кол-во операций дня (для счётчика-капа). Берём из уже загруженных данных;
+    // пока грузится — null (бейдж капа не показываем).
+    final dayCount = scheduled.asData?.value
+        .where((o) => o.scheduledAtLocal != null)
+        .where((o) => _sameDay(o.scheduledAtLocal!, _calDay))
+        .length;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -206,6 +224,8 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
               ),
               icon: const Icon(Icons.chevron_right),
             ),
+            const Spacer(),
+            if (dayCount != null) _capBadge(dayCount),
           ],
         ),
         if (canReadPnl) ...[
@@ -213,43 +233,292 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
           _pnlCard(day),
         ],
         const SizedBox(height: 16),
-        scheduled.when(
-          loading: () => const Padding(
-            padding: EdgeInsets.symmetric(vertical: 48),
-            child: Center(child: CircularProgressIndicator()),
-          ),
-          error: (e, _) => AppCard(
-            child: Center(
-              child: Text(
-                e is ApiException ? e.message : '$e',
-                style: const TextStyle(color: AppColors.red),
-              ),
-            ),
-          ),
-          data: (items) {
-            // Сервер уже отдал ровно этот день (окно scheduled_from/_to). Фильтр
-            // _sameDay — страхующий no-op на случай расхождения границ.
-            final ops = [
-              for (final o in items)
-                if (o.scheduledAtLocal != null)
-                  (op: o, at: o.scheduledAtLocal!),
-            ]..removeWhere((e) => !_sameDay(e.at, _calDay));
-            ops.sort((a, b) => a.at.compareTo(b.at));
-            if (ops.isEmpty) {
-              return const AppCard(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 28),
-                  child: Center(child: Text('На этот день операций нет')),
-                ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 1100;
+            final dayPane = _scheduledPane(day, scheduled, canSchedule);
+            final poolPane = _poolPane(day, canSchedule);
+            if (wide) {
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: dayPane),
+                  const SizedBox(width: 16),
+                  SizedBox(width: 380, child: poolPane),
+                ],
               );
             }
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [for (final e in ops) _calCard(e.op, e.at)],
+              children: [
+                dayPane,
+                const SizedBox(height: 16),
+                poolPane,
+              ],
             );
           },
         ),
       ],
+    );
+  }
+
+  /// Счётчик-кап «N / 15 на день» у навигации по датам. Только предупреждение —
+  /// планирование сверх капа не блокируется (форс-мажорные перегруженные дни).
+  Widget _capBadge(int count) {
+    final over = count >= kOpsPerDayCap;
+    final color = over ? AppColors.red : AppColors.tealDark;
+    final bg = over ? AppColors.redBg : AppColors.tealBg;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '$count / $kOpsPerDayCap на день',
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+
+  /// Левая колонка доски: операции, поставленные на выбранный день.
+  Widget _scheduledPane(
+    DateTime day,
+    AsyncValue<List<Operation>> scheduled,
+    bool canSchedule,
+  ) {
+    return scheduled.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 48),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (e, _) => AppCard(
+        child: Center(
+          child: Text(
+            e is ApiException ? e.message : '$e',
+            style: const TextStyle(color: AppColors.red),
+          ),
+        ),
+      ),
+      data: (items) {
+        // Сервер уже отдал ровно этот день (окно scheduled_from/_to). Фильтр
+        // _sameDay — страхующий no-op на случай расхождения границ.
+        final ops = [
+          for (final o in items)
+            if (o.scheduledAtLocal != null) (op: o, at: o.scheduledAtLocal!),
+        ]..removeWhere((e) => !_sameDay(e.at, _calDay));
+        ops.sort((a, b) => a.at.compareTo(b.at));
+        if (ops.isEmpty) {
+          return const AppCard(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 28),
+              child: Center(child: Text('На этот день операций нет')),
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [for (final e in ops) _calCard(e.op, day, canSchedule)],
+        );
+      },
+    );
+  }
+
+  /// Правая колонка доски: пул «Направлены на операцию» — пациенты, которых врач
+  /// направил, но ресепшен ещё не поставил на день. Каждый с «Поставить на
+  /// <дата>». Виден под `operations.read`; кнопка — под `operations.schedule`.
+  Widget _poolPane(DateTime day, bool canSchedule) {
+    final canRead =
+        ref.watch(authControllerProvider).user?.can('operations.read') ?? false;
+    if (!canRead) return const SizedBox.shrink();
+    final pool = ref.watch(referredOperationsProvider);
+    return AppCard(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Направлены на операцию',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                ),
+              ),
+              if (pool.asData != null)
+                Text(
+                  '${pool.asData!.value.length}',
+                  style: const TextStyle(
+                    color: AppColors.sub,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          pool.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: SizedBox(
+                  height: 22,
+                  width: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+            error: (e, _) => Text(
+              e is ApiException ? e.message : '$e',
+              style: const TextStyle(color: AppColors.red, fontSize: 12.5),
+            ),
+            data: (items) {
+              if (items.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Text(
+                    'Пул пуст — нет направленных пациентов',
+                    style: TextStyle(color: AppColors.muted, fontSize: 13),
+                  ),
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final op in items) _poolCard(op, day, canSchedule),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Карточка пула: пациент + тип + глаз + хирург и кнопка «Поставить на <дата>».
+  Widget _poolCard(Operation op, DateTime day, bool canSchedule) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    op.patientName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                if (op.isUrgent)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 6),
+                    child: Icon(
+                      Icons.priority_high,
+                      color: AppColors.red,
+                      size: 18,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${op.typeName} · ${op.eyeLabel}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppColors.sub, fontSize: 13),
+            ),
+            if (op.surgeonName != null)
+              Text(
+                'Хирург: ${op.surgeonName}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.sub, fontSize: 12.5),
+              ),
+            if (canSchedule) ...[
+              const SizedBox(height: 10),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => _placeOnDay(op, day),
+                  icon: const Icon(Icons.event_available, size: 18),
+                  label: Text('Поставить на ${DateFormat('dd.MM').format(day)}'),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// «Поставить на день»: маленький диалог (хирург + цена), затем планирование на
+  /// 09:00 выбранного дня (время — заглушка, доска его не показывает).
+  Future<void> _placeOnDay(Operation op, DateTime day) async {
+    final res = await showDialog<({String? surgeonId, String? price})>(
+      context: context,
+      builder: (_) => _PlaceOnDayDialog(op: op, day: day),
+    );
+    if (res == null || !mounted) return;
+    final scheduledAt = DateTime(day.year, day.month, day.day, 9);
+    try {
+      await ref
+          .read(clinicalRepositoryProvider)
+          .scheduleOperationAt(
+            id: op.id,
+            scheduledAt: scheduledAt,
+            surgeonId: res.surgeonId,
+            price: res.price,
+          );
+      if (!mounted) return;
+      _afterBoardChange(day, 'Пациент поставлен на ${DateFormat('dd.MM').format(day)}');
+    } catch (e) {
+      if (mounted) {
+        _boardSnack(e is ApiException ? e.message : '$e', error: true);
+      }
+    }
+  }
+
+  /// «Открепить»: возвращает операцию в пул (де-биллинг). 409 (уже оплачено)
+  /// показываем как ошибку в SnackBar.
+  Future<void> _detach(Operation op, DateTime day) async {
+    try {
+      await ref.read(clinicalRepositoryProvider).unscheduleOperation(op.id);
+      if (!mounted) return;
+      _afterBoardChange(day, 'Операция откреплена и возвращена в пул');
+    } catch (e) {
+      if (mounted) {
+        _boardSnack(e is ApiException ? e.message : '$e', error: true);
+      }
+    }
+  }
+
+  void _afterBoardChange(DateTime day, String message) {
+    ref.invalidate(scheduledOperationsProvider(day));
+    ref.invalidate(referredOperationsProvider);
+    ref.invalidate(operationDayPnlProvider(day));
+    _boardSnack(message);
+  }
+
+  void _boardSnack(String message, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? AppColors.red : null,
+      ),
     );
   }
 
@@ -341,78 +610,87 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
     );
   }
 
-  Widget _calCard(Operation op, DateTime at) {
+  /// Карточка операции дня. Времени дня НЕТ (по требованию владельца: длительность
+  /// операций разная, доска — список пациентов на дату). Тап — медкарта; под
+  /// `operations.schedule` есть «Открепить» (форс-мажор → вернуть в пул).
+  Widget _calCard(Operation op, DateTime day, bool canSchedule) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.card,
           borderRadius: BorderRadius.circular(14),
-          onTap: () => context.go('/patients/${op.patientId}/card'),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.line),
-            ),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 52,
-                  child: Text(
-                    DateFormat('HH:mm').format(at),
-                    style: AppTypography.number(16, color: AppColors.tealDark),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        op.patientName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${op.typeName} · ${op.eyeLabel}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.sub,
-                          fontSize: 13,
-                        ),
-                      ),
-                      if (op.surgeonName != null)
+          border: Border.all(color: AppColors.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => context.go('/patients/${op.patientId}/card'),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
                         Text(
-                          'Хирург: ${op.surgeonName}',
+                          op.patientName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${op.typeName} · ${op.eyeLabel}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: AppColors.sub,
-                            fontSize: 12.5,
+                            fontSize: 13,
                           ),
                         ),
-                    ],
-                  ),
-                ),
-                if (op.isUrgent)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 6),
-                    child: Icon(
-                      Icons.priority_high,
-                      color: AppColors.red,
-                      size: 20,
+                        if (op.surgeonName != null)
+                          Text(
+                            'Хирург: ${op.surgeonName}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.sub,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                const Icon(Icons.chevron_right, color: AppColors.muted),
-              ],
+                  if (op.isUrgent)
+                    const Padding(
+                      padding: EdgeInsets.only(right: 6),
+                      child: Icon(
+                        Icons.priority_high,
+                        color: AppColors.red,
+                        size: 20,
+                      ),
+                    ),
+                  const Icon(Icons.chevron_right, color: AppColors.muted),
+                ],
+              ),
             ),
-          ),
+            if (canSchedule) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => _detach(op, day),
+                  style: TextButton.styleFrom(foregroundColor: AppColors.red),
+                  icon: const Icon(Icons.link_off, size: 18),
+                  label: const Text('Открепить'),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -1142,6 +1420,125 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Лёгкий диалог доски «Поставить на день»: необязательный хирург (включая
+/// приезжих) + необязательная цена. День и время (заглушка 09:00) задаёт доска —
+/// здесь их нет. Возврат: `(surgeonId, price)` (оба могут быть null); null — отмена.
+class _PlaceOnDayDialog extends ConsumerStatefulWidget {
+  const _PlaceOnDayDialog({required this.op, required this.day});
+
+  final Operation op;
+  final DateTime day;
+
+  @override
+  ConsumerState<_PlaceOnDayDialog> createState() => _PlaceOnDayDialogState();
+}
+
+class _PlaceOnDayDialogState extends ConsumerState<_PlaceOnDayDialog> {
+  final _price = TextEditingController();
+  String? _surgeonId;
+
+  @override
+  void initState() {
+    super.initState();
+    _surgeonId = widget.op.surgeonId;
+    if (widget.op.price != null) _price.text = widget.op.price!;
+  }
+
+  @override
+  void dispose() {
+    _price.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final surgeons = ref.watch(surgeonsProvider);
+    final dayLabel = DateFormat('dd.MM.yyyy').format(widget.day);
+    return AlertDialog(
+      title: Text('На $dayLabel: ${widget.op.typeName}'),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.op.patientName,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${widget.op.typeName} · ${widget.op.eyeLabel}',
+              style: const TextStyle(color: AppColors.sub, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            surgeons.when(
+              loading: () => const LinearProgressIndicator(),
+              error: (e, _) => Text(
+                'Хирурги недоступны: ${e is ApiException ? e.message : e}',
+                style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
+              ),
+              data: (list) => DropdownButtonFormField<String?>(
+                initialValue: list.any((s) => s.id == _surgeonId)
+                    ? _surgeonId
+                    : null,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Хирург (необязательно)',
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('— не назначен —'),
+                  ),
+                  for (final s in list)
+                    DropdownMenuItem<String?>(
+                      value: s.id,
+                      child: Text(
+                        s.isExternal ? '${s.fullName} · приезжий' : s.fullName,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _surgeonId = v),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _price,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'Цена',
+                hintText: 'по умолчанию — цена услуги',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final price = _price.text.trim();
+            Navigator.of(context).pop((
+              surgeonId: _surgeonId,
+              price: price.isEmpty ? null : price,
+            ));
+          },
+          child: const Text('Поставить'),
         ),
       ],
     );

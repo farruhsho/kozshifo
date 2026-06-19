@@ -118,6 +118,7 @@ class CallsRepository {
     String? q,
     DateTime? dateFrom,
     DateTime? dateTo,
+    String? status,
     int offset = 0,
     int limit = 50,
   }) async {
@@ -130,6 +131,7 @@ class CallsRepository {
         if (q != null && q.isNotEmpty) 'q': q,
         if (dateFrom != null) 'date_from': dateFrom.toUtc().toIso8601String(),
         if (dateTo != null) 'date_to': dateTo.toUtc().toIso8601String(),
+        'status': ?status,
         'offset': offset,
         'limit': limit,
       });
@@ -162,6 +164,10 @@ class CallsDateFilter {
 
 /// Поисковая строка (дебаунс делает экран).
 final callsSearchProvider = StateProvider.autoDispose<String>((ref) => '');
+
+/// Активный фильтр по статусу — карточки KPI работают как кнопки-фильтры.
+/// `null` = показывать все. Значения: answered | missed | outgoing.
+final callsStatusFilterProvider = StateProvider.autoDispose<String?>((ref) => null);
 
 /// KPI-сводка за выбранный период (тот же диапазон, что и журнал).
 /// Экран дёргает refresh раз в ~60с — мониторинг «почти в реальном времени».
@@ -206,7 +212,8 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
   Future<CallsListState> build() async {
     final q = ref.watch(callsSearchProvider);
     final range = ref.watch(callsDateRangeProvider);
-    final page = await _fetch(q: q, range: range, offset: 0);
+    final status = ref.watch(callsStatusFilterProvider);
+    final page = await _fetch(q: q, range: range, status: status, offset: 0);
     return CallsListState(items: page.items, total: page.total);
   }
 
@@ -217,15 +224,17 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
     if (current == null || !current.hasMore) return;
     final q = ref.read(callsSearchProvider);
     final range = ref.read(callsDateRangeProvider);
-    final page =
-        await _fetch(q: q, range: range, offset: current.items.length);
+    final status = ref.read(callsStatusFilterProvider);
+    final page = await _fetch(
+        q: q, range: range, status: status, offset: current.items.length);
     // The search field / date chip stay live during the load, and changing
     // either re-runs build() (it watches both providers), replacing state with
     // the correct offset-0 list for the NEW filter. If that happened while this
     // page was in flight, dropping our stale page is the whole fix — otherwise
     // it would clobber the fresh list with old-filter rows + an inflated total.
     if (q != ref.read(callsSearchProvider) ||
-        range != ref.read(callsDateRangeProvider)) {
+        range != ref.read(callsDateRangeProvider) ||
+        status != ref.read(callsStatusFilterProvider)) {
       return;
     }
     final latest = state.valueOrNull;
@@ -239,6 +248,7 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
   Future<Page<CallRecord>> _fetch({
     required String q,
     required CallsDateFilter? range,
+    required String? status,
     required int offset,
   }) {
     return ref.read(callsRepositoryProvider).list(
@@ -247,6 +257,7 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
           dateTo: range == null
               ? null
               : DateTime(range.to.year, range.to.month, range.to.day, 23, 59, 59),
+          status: status,
           offset: offset,
           limit: _pageSize,
         );

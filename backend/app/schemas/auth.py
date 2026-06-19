@@ -25,5 +25,7 @@ class CurrentUserOut(BaseModel):
     full_name: str
     is_superuser: bool
     branch_id: UUID | None
+    # The clinician's consulting room — lets «Моя очередь» pre-fill the call room.
+    cabinet: str | None = None
     permissions: list[str]
     roles: list[str]

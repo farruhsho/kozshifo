@@ -172,6 +172,7 @@ class _ReferOperationDialogState
     extends ConsumerState<_ReferOperationDialog> {
   final _notes = TextEditingController();
   String? _typeId;
+  String? _surgeonId;
   String _eye = 'od';
   String _priority = 'normal';
   bool _saving = false;
@@ -227,6 +228,7 @@ class _ReferOperationDialogState
             eye: _eye,
             priority: _priority,
             notes: notes.isEmpty ? null : notes,
+            surgeonId: _surgeonId,
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -243,6 +245,7 @@ class _ReferOperationDialogState
   @override
   Widget build(BuildContext context) {
     final types = ref.watch(operationTypesProvider);
+    final surgeons = ref.watch(surgeonsProvider);
 
     return AlertDialog(
       title: const Text('Направить на операцию'),
@@ -291,6 +294,38 @@ class _ReferOperationDialogState
                 )
               else if (_availability != null)
                 _availabilityPanel(context, _availability!),
+              const SizedBox(height: 16),
+              surgeons.when(
+                data: (items) => DropdownButtonFormField<String?>(
+                  initialValue: _surgeonId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Хирург'),
+                  items: [
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('— выбрать при планировании —',
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    for (final s in items)
+                      DropdownMenuItem(
+                        value: s.id,
+                        child: Text(
+                            s.isExternal
+                                ? '${s.fullName} · приезжий'
+                                : s.fullName,
+                            overflow: TextOverflow.ellipsis),
+                      ),
+                  ],
+                  onChanged: (v) => setState(() => _surgeonId = v),
+                ),
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                ),
+                // Хирург необязателен — ошибку списка не показываем, чтобы
+                // не блокировать направление; ресепшен назначит при планировании.
+                error: (_, _) => const SizedBox.shrink(),
+              ),
               const SizedBox(height: 16),
               SegmentedButton<String>(
                 segments: const [

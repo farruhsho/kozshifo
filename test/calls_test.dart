@@ -20,6 +20,7 @@ const _pageJson = <String, dynamic>{
     {
       'id': 'c-1',
       'direction': 'in',
+      'status': 'answered',
       'phone': '+998901234567',
       'started_at': '2026-06-12T10:15:00',
       'duration_seconds': 205,
@@ -34,6 +35,7 @@ const _pageJson = <String, dynamic>{
     {
       'id': 'c-2',
       'direction': 'out',
+      'status': 'outgoing',
       'phone': '+998711112233',
       'started_at': '2026-06-12T09:05:00',
       'duration_seconds': 40,
@@ -234,8 +236,8 @@ class _CapturingAdapter implements HttpClientAdapter {
 
 /// Фейковый репозиторий: отдаёт фиксированную страницу без сети.
 /// [startedAt] подменяет `started_at` первой записи (для теста локального времени).
-class _FakeCallsRepository implements CallsRepository {
-  _FakeCallsRepository({this.empty = false, this.startedAt});
+class _FakeCallsRepository extends CallsRepository {
+  _FakeCallsRepository({this.empty = false, this.startedAt}) : super(Dio());
 
   final bool empty;
   final String? startedAt;
@@ -274,7 +276,9 @@ class _FakeCallsRepository implements CallsRepository {
 /// Two-page repo for the empty filter, single page for `q == 'x'`.
 /// [loadMoreGate], when set, blocks the offset>0 fetch until completed — lets a
 /// test hold a load-more in flight while it changes the filter.
-class _PagingRepo implements CallsRepository {
+class _PagingRepo extends CallsRepository {
+  _PagingRepo() : super(Dio());
+
   Completer<void>? loadMoreGate;
 
   static CallRecord _rec(String id) => CallRecord.fromJson({

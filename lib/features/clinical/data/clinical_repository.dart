@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
+import '../../auth/application/auth_controller.dart';
 import '../domain/operation.dart';
 import '../domain/operation_type.dart';
 import '../domain/treatment.dart';
 
 final clinicalRepositoryProvider = Provider<ClinicalRepository>(
-    (ref) => ClinicalRepository(ref.watch(dioProvider)));
+  (ref) => ClinicalRepository(ref.watch(dioProvider)),
+);
 
 /// One consumable-template line vs. usable stock in the branch.
 /// `required`/`available` are decimal strings (e.g. "2.000") — never doubles.
@@ -22,9 +24,26 @@ typedef ConsumableAvailability = ({
 
 /// Advisory availability verdict for an operation type in a branch.
 /// `ok` is true when every template line is coverable (empty template → true).
-typedef OperationAvailability = ({
-  bool ok,
-  List<ConsumableAvailability> items,
+typedef OperationAvailability = ({bool ok, List<ConsumableAvailability> items});
+
+/// A staff member eligible to operate (TZ Modul 6). [isExternal] marks visiting
+/// «приезжий» surgeons (e.g. from Tashkent); [cabinet] is their room, if any.
+typedef Surgeon = ({
+  String id,
+  String fullName,
+  bool isExternal,
+  String? cabinet,
+});
+
+/// End-of-day operations P&L for one local day: revenue − COGS (consumables) −
+/// operation expenses = profit. Money fields are decimal strings (server owns
+/// the math); [operationsCount] is the number of operations counted that day.
+typedef OperationDayPnl = ({
+  int operationsCount,
+  String revenue,
+  String cogs,
+  String expenses,
+  String profit,
 });
 
 /// Operations + treatment prescriptions of the clinical loop.
@@ -47,6 +66,26 @@ class ClinicalRepository {
     }
   }
 
+  /// Staff eligible to operate, including visiting/external surgeons. The doctor
+  /// may pick one when referring; surgeon stays optional (reception can assign
+  /// later at scheduling time).
+  Future<List<Surgeon>> surgeons() async {
+    try {
+      final resp = await _dio.get('/operations/surgeons');
+      return [
+        for (final raw in resp.data as List<dynamic>)
+          (
+            id: (raw as Map<String, dynamic>)['id'] as String,
+            fullName: raw['full_name'] as String,
+            isExternal: raw['is_external_surgeon'] as bool,
+            cabinet: raw['cabinet'] as String?,
+          ),
+      ];
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   Future<List<Operation>> visitOperations(String visitId) async {
     try {
       final resp = await _dio.get('/visits/$visitId/operations');
@@ -61,7 +100,9 @@ class ClinicalRepository {
   /// Advisory pre-check: can `branchId` cover the type's consumable template?
   /// Advisory only — performOperation still hard-checks stock atomically.
   Future<OperationAvailability> availability(
-      String opTypeId, String branchId) async {
+    String opTypeId,
+    String branchId,
+  ) async {
     try {
       final resp = await _dio.get(
         '/operation-types/$opTypeId/availability',
@@ -88,15 +129,55 @@ class ClinicalRepository {
 
   /// Operations-department worklist (TZ Modul 6). Filter by [status] (referred,
   /// scheduled, in_progress, performed, completed, cancelled) and/or [branchId].
-  Future<List<Operation>> operations({String? status, String? branchId}) async {
+  /// [scheduledFrom]/[scheduledTo] window by `scheduled_at` (half-open [from,to))
+  /// — sent as absolute UTC instants so the calendar pulls a single day instead
+  /// of relying on the 500-row cap.
+  Future<List<Operation>> operations({
+    String? status,
+    String? branchId,
+    DateTime? scheduledFrom,
+    DateTime? scheduledTo,
+    int limit = 100,
+  }) async {
     try {
-      final resp = await _dio.get('/operations', queryParameters: {
-        'status': ?status,
-        'branch_id': ?branchId,
-      });
+      final resp = await _dio.get(
+        '/operations',
+        queryParameters: {
+          'status': ?status,
+          'branch_id': ?branchId,
+          'scheduled_from': ?scheduledFrom?.toUtc().toIso8601String(),
+          'scheduled_to': ?scheduledTo?.toUtc().toIso8601String(),
+          'limit': limit,
+        },
+      );
       return (resp.data as List<dynamic>)
           .map((e) => Operation.fromJson(e as Map<String, dynamic>))
           .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// End-of-day operations P&L for [date] (local day, `YYYY-MM-DD`), optionally
+  /// scoped to [branchId]. Returns revenue/COGS/expenses/profit (decimal strings)
+  /// and the operations count — feeds the director's «P&L дня» calendar panel.
+  Future<OperationDayPnl> operationDaySummary({
+    required String date,
+    String? branchId,
+  }) async {
+    try {
+      final resp = await _dio.get(
+        '/operations/day-summary',
+        queryParameters: {'date': date, 'branch_id': ?branchId},
+      );
+      final data = resp.data as Map<String, dynamic>;
+      return (
+        operationsCount: data['operations_count'] as int,
+        revenue: data['revenue'] as String,
+        cogs: data['cogs'] as String,
+        expenses: data['expenses'] as String,
+        profit: data['profit'] as String,
+      );
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -110,14 +191,19 @@ class ClinicalRepository {
     required String eye,
     String priority = 'normal',
     String? notes,
+    String? surgeonId,
   }) async {
     try {
-      final resp = await _dio.post('/visits/$visitId/operations', data: {
-        'operation_type_id': operationTypeId,
-        'eye': eye,
-        'priority': priority,
-        'notes': ?notes,
-      });
+      final resp = await _dio.post(
+        '/visits/$visitId/operations',
+        data: {
+          'operation_type_id': operationTypeId,
+          'eye': eye,
+          'priority': priority,
+          'notes': ?notes,
+          'surgeon_id': ?surgeonId,
+        },
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -134,16 +220,49 @@ class ClinicalRepository {
     String? notes,
   }) async {
     try {
-      final resp = await _dio.post('/operations/$id/schedule', data: {
-        'scheduled_at': scheduledAt,
-        'surgeon_id': ?surgeonId,
-        'price': ?price,
-        'notes': ?notes,
-      });
+      final resp = await _dio.post(
+        '/operations/$id/schedule',
+        data: {
+          'scheduled_at': scheduledAt,
+          'surgeon_id': ?surgeonId,
+          'price': ?price,
+          'notes': ?notes,
+        },
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
+  }
+
+  /// Detach a scheduled operation back to the referred POOL (force-majeure):
+  /// drops the day/surgeon and de-bills the linked service. The backend answers
+  /// 409 (surfaced via [ApiException]) if that billed item is already paid.
+  Future<Operation> unscheduleOperation(String id) async {
+    try {
+      final resp = await _dio.post('/operations/$id/unschedule');
+      return Operation.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Place a referred operation onto a day from the scheduling board. Thin
+  /// wrapper over [scheduleOperation] that takes the chosen instant as a
+  /// `DateTime` and serialises it to a UTC ISO string for the server. The board
+  /// passes a placeholder wall-clock time (it never shows the time-of-day).
+  Future<Operation> scheduleOperationAt({
+    required String id,
+    required DateTime scheduledAt,
+    String? surgeonId,
+    String? price,
+  }) {
+    return scheduleOperation(
+      id: id,
+      scheduledAt: scheduledAt.toUtc().toIso8601String(),
+      surgeonId: surgeonId,
+      price: price,
+    );
   }
 
   /// Mark a scheduled operation as in progress (TZ: «Bajarilmoqda»).
@@ -156,11 +275,23 @@ class ClinicalRepository {
     }
   }
 
-  /// Mark performed; the backend auto-writes-off the consumables and answers
-  /// 409 with the missing product in `detail` when stock is insufficient.
-  Future<Operation> performOperation(String id) async {
+  /// Mark performed; the backend writes off the type's TEMPLATE consumables plus
+  /// any [adHocConsumables] (extras actually used) via FEFO, atomically, and
+  /// answers 409 with the missing product in `detail` when stock is short.
+  Future<Operation> performOperation(
+    String id, {
+    List<({String productId, String quantity})> adHocConsumables = const [],
+  }) async {
     try {
-      final resp = await _dio.post('/operations/$id/perform');
+      final resp = await _dio.post(
+        '/operations/$id/perform',
+        data: {
+          'ad_hoc_consumables': [
+            for (final c in adHocConsumables)
+              {'product_id': c.productId, 'quantity': c.quantity},
+          ],
+        },
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -171,9 +302,10 @@ class ClinicalRepository {
   /// to the patient card.
   Future<Operation> completeOperation(String id, {String? result}) async {
     try {
-      final resp = await _dio.post('/operations/$id/complete', data: {
-        'result': ?result,
-      });
+      final resp = await _dio.post(
+        '/operations/$id/complete',
+        data: {'result': ?result},
+      );
       return Operation.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -211,13 +343,16 @@ class ClinicalRepository {
     String? instructions,
   }) async {
     try {
-      final resp = await _dio.post('/visits/$visitId/treatments', data: {
-        'kind': kind,
-        'name': name,
-        'product_id': ?productId,
-        'quantity': ?quantity,
-        'instructions': ?instructions,
-      });
+      final resp = await _dio.post(
+        '/visits/$visitId/treatments',
+        data: {
+          'kind': kind,
+          'name': name,
+          'product_id': ?productId,
+          'quantity': ?quantity,
+          'instructions': ?instructions,
+        },
+      );
       return Treatment.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -255,17 +390,74 @@ class ClinicalRepository {
 }
 
 final operationTypesProvider = FutureProvider.autoDispose<List<OperationType>>(
-    (ref) => ref.watch(clinicalRepositoryProvider).operationTypes());
+  (ref) => ref.watch(clinicalRepositoryProvider).operationTypes(),
+);
+
+/// Surgeons eligible to operate (incl. external «приезжий») — feeds the
+/// optional surgeon picker on the referral dialog.
+final surgeonsProvider = FutureProvider.autoDispose<List<Surgeon>>(
+  (ref) => ref.watch(clinicalRepositoryProvider).surgeons(),
+);
 
 final visitOperationsProvider = FutureProvider.autoDispose
-    .family<List<Operation>, String>((ref, visitId) =>
-        ref.watch(clinicalRepositoryProvider).visitOperations(visitId));
+    .family<List<Operation>, String>(
+      (ref, visitId) =>
+          ref.watch(clinicalRepositoryProvider).visitOperations(visitId),
+    );
 
 /// Operations-department worklist, filtered by status (null → all statuses).
 final operationsWorklistProvider = FutureProvider.autoDispose
-    .family<List<Operation>, String?>((ref, status) =>
-        ref.watch(clinicalRepositoryProvider).operations(status: status));
+    .family<List<Operation>, String?>(
+      (ref, status) =>
+          ref.watch(clinicalRepositoryProvider).operations(status: status),
+    );
+
+/// The REFERRED pool — operations a doctor sent to surgery but reception has
+/// not yet placed on a day. Feeds the scheduling board's «Направлены на
+/// операцию» panel; invalidated alongside the day after each schedule/detach.
+final referredOperationsProvider = FutureProvider.autoDispose<List<Operation>>(
+  (ref) => ref.watch(clinicalRepositoryProvider).operations(status: 'referred'),
+);
+
+/// SCHEDULED operations of one local day, keyed by that day — the operations
+/// CALENDAR agenda. The day's [00:00, next-00:00) local bounds go to the server
+/// as UTC instants, so each day is a scoped fetch (no global 500-row cap, no
+/// missing days on busy branches). autoDispose caches recently-viewed days, so
+/// prev/next stays snappy after first load. Pass a date-only `DateTime` (local
+/// midnight) as the key so equal calendar days share one provider instance.
+final scheduledOperationsProvider = FutureProvider.autoDispose
+    .family<List<Operation>, DateTime>((ref, day) {
+      final from = DateTime(day.year, day.month, day.day);
+      final to = from.add(const Duration(days: 1));
+      return ref
+          .watch(clinicalRepositoryProvider)
+          .operations(
+            status: 'scheduled',
+            scheduledFrom: from,
+            scheduledTo: to,
+            limit: 500,
+          );
+    });
+
+/// End-of-day operations P&L for one local day, keyed by that day — feeds the
+/// director's «P&L дня» panel in the operations calendar. The key day is
+/// formatted to a `YYYY-MM-DD` LOCAL date string (same local-day basis as
+/// [scheduledOperationsProvider]'s window) — NOT toIso8601String, which would
+/// carry time/UTC and could land the summary on the wrong calendar day. Scoped
+/// to the signed-in user's branch when known. Pass a date-only `DateTime` (local
+/// midnight) as the key so equal calendar days share one provider instance.
+final operationDayPnlProvider = FutureProvider.autoDispose
+    .family<OperationDayPnl, DateTime>((ref, day) {
+      String two(int n) => n.toString().padLeft(2, '0');
+      final date = '${day.year}-${two(day.month)}-${two(day.day)}';
+      final branchId = ref.watch(authControllerProvider).user?.branchId;
+      return ref
+          .watch(clinicalRepositoryProvider)
+          .operationDaySummary(date: date, branchId: branchId);
+    });
 
 final visitTreatmentsProvider = FutureProvider.autoDispose
-    .family<List<Treatment>, String>((ref, visitId) =>
-        ref.watch(clinicalRepositoryProvider).visitTreatments(visitId));
+    .family<List<Treatment>, String>(
+      (ref, visitId) =>
+          ref.watch(clinicalRepositoryProvider).visitTreatments(visitId),
+    );

@@ -4,16 +4,113 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
 import '../../../core/network/page.dart';
+import '../domain/call_device.dart';
 import '../domain/call_record.dart';
+import '../domain/calls_summary.dart';
 
 final callsRepositoryProvider =
     Provider<CallsRepository>((ref) => CallsRepository(ref.watch(dioProvider)));
 
-/// Журнал IP-телефонии — read-only: записи создаёт webhook АТС.
+/// Журнал + мониторинг звонков. Записи приходят с агентов на телефонах ресепшена
+/// (или webhook АТС); экран директора показывает их и KPI ответов/пропусков.
 class CallsRepository {
   CallsRepository(this._dio);
 
   final Dio _dio;
+
+  /// KPI за период (по умолчанию — сегодня): отвечено / пропущено / среднее
+  /// время ответа, разбивка по телефонам и по часам, офлайн-телефоны.
+  Future<CallsSummary> summary({DateTime? dateFrom, DateTime? dateTo}) async {
+    try {
+      final resp = await _dio.get('/calls/summary', queryParameters: {
+        if (dateFrom != null) 'date_from': _ymd(dateFrom),
+        if (dateTo != null) 'date_to': _ymd(dateTo),
+      });
+      return CallsSummary.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Зарегистрированные телефоны ресепшена (для директора, право calls.manage).
+  Future<List<CallDevice>> listDevices() async {
+    try {
+      final resp = await _dio.get('/calls/devices');
+      return (resp.data as List<dynamic>)
+          .map((e) => CallDevice.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Регистрирует телефон; ключ возвращается ОДИН раз (хранится только хэш).
+  Future<CreatedDevice> createDevice({
+    required String label,
+    String? phoneNumber,
+    String? branchId,
+  }) async {
+    try {
+      final resp = await _dio.post('/calls/devices', data: {
+        'label': label,
+        if (phoneNumber != null && phoneNumber.isNotEmpty)
+          'phone_number': phoneNumber,
+        'branch_id': ?branchId,
+      });
+      return CreatedDevice.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Редактирует телефон (название / активность). Возвращает обновлённую запись.
+  Future<CallDevice> updateDevice(
+    String id, {
+    String? label,
+    bool? isActive,
+  }) async {
+    try {
+      final resp = await _dio.patch('/calls/devices/$id', data: {
+        'label': ?label,
+        'is_active': ?isActive,
+      });
+      return CallDevice.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Выдаёт новый ключ (старый сразу перестаёт работать).
+  Future<CreatedDevice> rotateKey(String id) async {
+    try {
+      final resp = await _dio.post('/calls/devices/$id/rotate-key');
+      return CreatedDevice.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Филиалы как (id, name) — для выпадающего списка при привязке телефона.
+  /// Лёгкий запрос: отдельной branches-фичи на фронте нет.
+  Future<List<({String id, String name})>> branchOptions() async {
+    try {
+      final resp = await _dio.get('/branches');
+      return (resp.data as List<dynamic>)
+          .map((e) => (
+                id: (e as Map<String, dynamic>)['id'] as String,
+                name: e['name'] as String,
+              ))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// `YYYY-MM-DD` из локальной даты (бэкенд summary принимает date-only).
+  static String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
   /// Список звонков, новые сверху. `q` — фрагмент номера или имя пациента;
   /// [dateFrom]/[dateTo] — границы по `started_at` (включительно).
@@ -21,6 +118,7 @@ class CallsRepository {
     String? q,
     DateTime? dateFrom,
     DateTime? dateTo,
+    String? status,
     int offset = 0,
     int limit = 50,
   }) async {
@@ -33,6 +131,7 @@ class CallsRepository {
         if (q != null && q.isNotEmpty) 'q': q,
         if (dateFrom != null) 'date_from': dateFrom.toUtc().toIso8601String(),
         if (dateTo != null) 'date_to': dateTo.toUtc().toIso8601String(),
+        'status': ?status,
         'offset': offset,
         'limit': limit,
       });
@@ -66,6 +165,29 @@ class CallsDateFilter {
 /// Поисковая строка (дебаунс делает экран).
 final callsSearchProvider = StateProvider.autoDispose<String>((ref) => '');
 
+/// Активный фильтр по статусу — карточки KPI работают как кнопки-фильтры.
+/// `null` = показывать все. Значения: answered | missed | outgoing.
+final callsStatusFilterProvider = StateProvider.autoDispose<String?>((ref) => null);
+
+/// KPI-сводка за выбранный период (тот же диапазон, что и журнал).
+/// Экран дёргает refresh раз в ~60с — мониторинг «почти в реальном времени».
+final callsSummaryProvider = FutureProvider.autoDispose<CallsSummary>((ref) {
+  final range = ref.watch(callsDateRangeProvider);
+  return ref.watch(callsRepositoryProvider).summary(
+        dateFrom: range?.from,
+        dateTo: range?.to,
+      );
+});
+
+/// Список зарегистрированных телефонов ресепшена (экран управления).
+final callDevicesProvider = FutureProvider.autoDispose<List<CallDevice>>(
+    (ref) => ref.watch(callsRepositoryProvider).listDevices());
+
+/// Филиалы (id → name) для привязки телефона.
+final branchOptionsProvider =
+    FutureProvider.autoDispose<List<({String id, String name})>>(
+        (ref) => ref.watch(callsRepositoryProvider).branchOptions());
+
 /// Диапазон дат; `null` = «Все». По умолчанию — сегодня.
 final callsDateRangeProvider = StateProvider.autoDispose<CallsDateFilter?>(
     (ref) => CallsDateFilter.today());
@@ -90,7 +212,8 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
   Future<CallsListState> build() async {
     final q = ref.watch(callsSearchProvider);
     final range = ref.watch(callsDateRangeProvider);
-    final page = await _fetch(q: q, range: range, offset: 0);
+    final status = ref.watch(callsStatusFilterProvider);
+    final page = await _fetch(q: q, range: range, status: status, offset: 0);
     return CallsListState(items: page.items, total: page.total);
   }
 
@@ -101,15 +224,17 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
     if (current == null || !current.hasMore) return;
     final q = ref.read(callsSearchProvider);
     final range = ref.read(callsDateRangeProvider);
-    final page =
-        await _fetch(q: q, range: range, offset: current.items.length);
+    final status = ref.read(callsStatusFilterProvider);
+    final page = await _fetch(
+        q: q, range: range, status: status, offset: current.items.length);
     // The search field / date chip stay live during the load, and changing
     // either re-runs build() (it watches both providers), replacing state with
     // the correct offset-0 list for the NEW filter. If that happened while this
     // page was in flight, dropping our stale page is the whole fix — otherwise
     // it would clobber the fresh list with old-filter rows + an inflated total.
     if (q != ref.read(callsSearchProvider) ||
-        range != ref.read(callsDateRangeProvider)) {
+        range != ref.read(callsDateRangeProvider) ||
+        status != ref.read(callsStatusFilterProvider)) {
       return;
     }
     final latest = state.valueOrNull;
@@ -123,6 +248,7 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
   Future<Page<CallRecord>> _fetch({
     required String q,
     required CallsDateFilter? range,
+    required String? status,
     required int offset,
   }) {
     return ref.read(callsRepositoryProvider).list(
@@ -131,6 +257,7 @@ class CallsListController extends AutoDisposeAsyncNotifier<CallsListState> {
           dateTo: range == null
               ? null
               : DateTime(range.to.year, range.to.month, range.to.day, 23, 59, 59),
+          status: status,
           offset: offset,
           limit: _pageSize,
         );

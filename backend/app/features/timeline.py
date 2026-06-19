@@ -10,20 +10,24 @@ is no N+1.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.models.attachment import Attachment
 from app.models.device import DeviceResult
 from app.models.exam import EyeExam
-from app.models.operation import Operation, Treatment
+from app.models.inventory import Product, StockMovement
+from app.models.operation import ADHOC_REASON_SUFFIX, Operation, Treatment
 from app.models.patient import Patient
 from app.models.payment import Payment
+from app.models.queue import QueueTicket
 from app.models.visit import Visit
 from app.schemas.timeline import TimelineEvent, TimelineOut
 
@@ -38,6 +42,52 @@ def _utc(ts: datetime) -> datetime:
     Naive values are stored as UTC here, so tagging them UTC is lossless.
     """
     return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+
+
+def _fmt_qty(q: Decimal) -> str:
+    """Trim a stock quantity for display: 1.000 -> 1, 2.500 -> 2.5."""
+    s = format(abs(q), "f")
+    return s.rstrip("0").rstrip(".") if "." in s else s
+
+
+def _operation_consumables(db: Session, op_ids: list[UUID]) -> dict[UUID, str]:
+    """Summarise the consumables actually written off per operation (template +
+    ad-hoc) from the immutable stock ledger, so the surgical record on the
+    patient timeline shows what was really used. One bulk query keyed by ref_id
+    (no N+1); ad-hoc lines are split out by the shared write-off reason suffix."""
+    if not op_ids:
+        return {}
+    rows = db.execute(
+        select(
+            StockMovement.ref_id,
+            Product.name,
+            StockMovement.reason,
+            func.sum(StockMovement.quantity),
+        )
+        .join(Product, Product.id == StockMovement.product_id)
+        .where(
+            StockMovement.ref_type == "operation",
+            StockMovement.ref_id.in_(op_ids),
+            StockMovement.movement_type == "write_off",
+        )
+        .group_by(StockMovement.ref_id, Product.id, Product.name, StockMovement.reason)
+    ).all()
+
+    buckets: dict[UUID, tuple[list[str], list[str]]] = {}
+    for ref_id, pname, reason, qty in rows:
+        template, adhoc = buckets.setdefault(ref_id, ([], []))
+        is_adhoc = reason is not None and reason.endswith(ADHOC_REASON_SUFFIX)
+        (adhoc if is_adhoc else template).append(f"{pname} ×{_fmt_qty(qty)}")
+
+    out: dict[UUID, str] = {}
+    for ref_id, (template, adhoc) in buckets.items():
+        detail = ", ".join(sorted(template))
+        if adhoc:
+            extra = "доп.: " + ", ".join(sorted(adhoc))
+            detail = f"{detail} · {extra}" if detail else extra
+        if detail:
+            out[ref_id] = detail
+    return out
 
 
 @router.get(
@@ -123,12 +173,48 @@ def patient_timeline(
             add(r.measured_at, "device_result", f"Результат прибора: {r.result_type}",
                 detail=original_name, visit_id=r.visit_id, ref_id=r.id)
 
+    # Patient document attachments (УЗИ-заключения, анализ на ВИЧ, прочие сканы).
+    if allowed("attachments.read"):
+        _kind_label = {"uzi": "УЗИ", "hiv": "Анализ на ВИЧ", "lab": "Лаборатория", "other": "Документ"}
+        attachments = db.execute(
+            select(Attachment).where(Attachment.patient_id == patient_id)
+        ).scalars().all()
+        for a in attachments:
+            add(a.created_at, "attachment", f"Файл: {_kind_label.get(a.kind, 'Документ')}",
+                detail=a.original_name, visit_id=a.visit_id, ref_id=a.id)
+
+    # Encounters: who called the patient in and when (queue tickets that were
+    # actually called) — surfaces «принят: ФИО, время» on the history, so the card
+    # shows that diagnost/doctor X received the patient at HH:MM.
+    if allowed("queue.read"):
+        _track_label = {"diagnostic": "Диагностика", "doctor": "Приём врача",
+                        "treatment": "Лечение"}
+        seen_tickets = db.execute(
+            select(QueueTicket).where(
+                QueueTicket.patient_id == patient_id,
+                QueueTicket.called_by_id.is_not(None),
+            )
+        ).scalars().all()
+        for t in seen_tickets:
+            ts = t.served_at or t.called_at
+            if ts is None:
+                continue
+            who = t.called_by.full_name if t.called_by is not None else "—"
+            label = _track_label.get(t.track, t.track)
+            detail = f"{label} · {t.room}" if t.room else label
+            add(ts, "seen", f"Принят: {who}", detail=detail,
+                visit_id=t.visit_id, ref_id=t.id)
+
     # Operations (TZ Modul 6): referral always; scheduling, performance,
     # completion and cancellation surface as extra timeline events.
     if allowed("operations.read"):
         operations = db.execute(
             select(Operation).where(Operation.patient_id == patient_id)
         ).scalars().all()
+        # The consumables consumed at perform belong to the surgical record, so
+        # they ride on the "performed" event under operations.read (the consumed
+        # material IS part of the operation, not a separate warehouse view).
+        consumables = _operation_consumables(db, [op.id for op in operations])
         for op in operations:
             name = op.type_name  # via the joined-loaded operation_type relationship
             add(op.created_at, "operation_referred", f"Направление на операцию: {name}",
@@ -138,10 +224,10 @@ def patient_timeline(
                     visit_id=op.visit_id, ref_id=op.id)
             if op.performed_at is not None:
                 add(op.performed_at, "operation_performed", f"Операция выполнена: {name}",
-                    visit_id=op.visit_id, ref_id=op.id)
+                    detail=consumables.get(op.id), visit_id=op.visit_id, ref_id=op.id)
             if op.completed_at is not None:
                 add(op.completed_at, "operation_completed", f"Операция завершена: {name}",
-                    visit_id=op.visit_id, ref_id=op.id)
+                    detail=op.result, visit_id=op.visit_id, ref_id=op.id)
             if op.status == "cancelled":
                 add(op.updated_at, "operation_cancelled", f"Операция отменена: {name}",
                     visit_id=op.visit_id, ref_id=op.id)

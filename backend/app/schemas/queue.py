@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-QueueTrack = Literal["doctor", "diagnostic"]
+QueueTrack = Literal["doctor", "diagnostic", "treatment"]
 
 
 class QueueTicketOut(BaseModel):
@@ -37,7 +37,9 @@ class QueueTicketOut(BaseModel):
 
 
 class CallNextRequest(BaseModel):
-    room: str
+    # Blank/omitted → the backend falls back to the caller's own cabinet
+    # (User.cabinet), so a doctor's «Моя очередь» needn't repeat their room.
+    room: str | None = None
     branch_id: UUID
     track: QueueTrack = "doctor"
     # Adressed routing (opt-in). When set, call-next claims the next ticket that
@@ -47,9 +49,27 @@ class CallNextRequest(BaseModel):
     for_user_id: UUID | None = None
 
 
+class CallTicketRequest(BaseModel):
+    # Call ONE specific waiting ticket (out of order) into this room — the room
+    # is the calling staff's cabinet. None = leave the ticket's room unset.
+    room: str | None = None
+
+
 class AssignRequest(BaseModel):
     # Route a waiting ticket to a specific specialist; None clears it back to
     # the open pool.
+    assigned_user_id: UUID | None = None
+
+
+class TreatmentTicketRequest(BaseModel):
+    """Reception issues a treatment-track ticket (Л-…) for a patient who is here
+    for a course of treatment. Independent of payment (per-day / prepaid /
+    deferred / partial all run through the visit's balance)."""
+
+    patient_id: UUID
+    branch_id: UUID
+    visit_id: UUID | None = None
+    room: str | None = None
     assigned_user_id: UUID | None = None
 
 
@@ -90,6 +110,7 @@ class TVBoard(BaseModel):
     branch_name: str | None = None
     doctor: TVTrack
     diagnostic: TVTrack
+    treatment: TVTrack
 
 
 class TvBranchOption(BaseModel):

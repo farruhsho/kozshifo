@@ -67,6 +67,16 @@ class VisitDiagnosisCreate(BaseModel):
     icd10: str | None = Field(None, max_length=16)
 
 
+class DiagnosticConclusionCreate(BaseModel):
+    """A diagnostician's conclusion (заключение, e.g. УЗИ) on a visit — chosen from
+    the catalog (`diagnosis_id`, scoped to the user's allowed list) or, for an
+    unrestricted user, typed free-form."""
+
+    diagnosis_id: UUID | None = None
+    diagnosis: str | None = Field(None, min_length=1)
+    icd10: str | None = Field(None, max_length=16)
+
+
 class VisitDiagnosisOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

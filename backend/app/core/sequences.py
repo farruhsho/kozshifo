@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from app.models.appointment import Appointment
 from app.models.lab import LabOrder
-from app.models.optics import OpticsOrder
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -64,16 +63,6 @@ def next_appointment_no(db: Session) -> str:
             return candidate
 
 
-def next_optics_no(db: Session) -> str:
-    day = _today_str()
-    n = db.execute(select(func.count()).select_from(OpticsOrder)).scalar_one()
-    while True:
-        n += 1
-        candidate = f"OPT-{day}-{n:05d}"
-        if db.execute(select(OpticsOrder.id).where(OpticsOrder.order_no == candidate)).first() is None:
-            return candidate
-
-
 def next_lab_no(db: Session) -> str:
     day = _today_str()
     n = db.execute(select(func.count()).select_from(LabOrder)).scalar_one()
@@ -94,20 +83,20 @@ def next_receipt_no(db: Session) -> str:
             return candidate
 
 
-# Queue tracks: "doctor" -> V-001…, "diagnostic" -> D-001… (independent counters).
-_TICKET_PREFIX = {"doctor": "V", "diagnostic": "D"}
+def next_ticket_number(db: Session, branch_id: UUID, prefix: str = "V") -> str:
+    """Per-branch, per-PREFIX daily counter → e.g. С-001 / D-001 / Л-001.
 
-
-def next_ticket_number(db: Session, branch_id: UUID, track: str = "doctor") -> str:
-    """Per-branch, per-track daily counter, formatted like D-001 / V-001."""
-    prefix = _TICKET_PREFIX[track]
+    Counting by the ticket-number prefix (not the track) gives each doctor their
+    own daily series via ``User.queue_prefix`` (Сарвар → С-001), while the
+    diagnostic (D) and treatment (Л) tracks keep separate counters. The "-" anchor
+    keeps prefixes collision-safe: the LIKE 'С-%' never matches 'Сд-001'."""
     start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     count = db.execute(
         select(func.count())
         .select_from(QueueTicket)
         .where(
             QueueTicket.branch_id == branch_id,
-            QueueTicket.track == track,
+            QueueTicket.ticket_number.like(f"{prefix}-%"),
             QueueTicket.created_at >= start,
         )
     ).scalar_one()

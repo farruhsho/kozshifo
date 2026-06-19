@@ -21,11 +21,28 @@ class DoctorRepository {
 
   final Dio _dio;
 
-  Future<List<VisitSummary>> visitsForPatient(String patientId) async {
+  /// A patient's visits (newest first), optionally narrowed by an `opened_at`
+  /// date window ([openedFrom, openedTo) as absolute UTC), status, and a
+  /// debt-only filter — feeds both the doctor card panel (no filters) and the
+  /// standalone visit-history screen (Ф5).
+  Future<List<VisitSummary>> visitsForPatient(
+    String patientId, {
+    DateTime? openedFrom,
+    DateTime? openedTo,
+    String? status,
+    bool owing = false,
+  }) async {
     try {
       final resp = await _dio.get(
         '/visits',
-        queryParameters: {'patient_id': patientId, 'limit': 200},
+        queryParameters: {
+          'patient_id': patientId,
+          'status': ?status,
+          if (owing) 'owing': true,
+          'opened_from': ?openedFrom?.toUtc().toIso8601String(),
+          'opened_to': ?openedTo?.toUtc().toIso8601String(),
+          'limit': 200,
+        },
       );
       final items = (resp.data['items'] as List<dynamic>)
           .map((e) => VisitSummary.fromJson(e as Map<String, dynamic>))
@@ -207,6 +224,33 @@ final patientVisitsProvider = FutureProvider.autoDispose
     .family<List<VisitSummary>, String>(
       (ref, patientId) =>
           ref.watch(doctorRepositoryProvider).visitsForPatient(patientId),
+    );
+
+/// Filter key for the standalone visit-history screen (Ф5). [from]/[to] are
+/// date-only local-midnight bounds (record equality keeps one provider instance
+/// per distinct filter); [to] is the EXCLUSIVE upper bound (next day's start).
+typedef VisitHistoryQuery = ({
+  String patientId,
+  DateTime? from,
+  DateTime? to,
+  String? status,
+  bool owing,
+});
+
+/// A patient's visits narrowed by the visit-history filter bar (date window,
+/// status, debt-only). Separate from [patientVisitsProvider] so the doctor
+/// card's unfiltered panel is untouched.
+final patientVisitsFilteredProvider = FutureProvider.autoDispose
+    .family<List<VisitSummary>, VisitHistoryQuery>(
+      (ref, q) => ref
+          .watch(doctorRepositoryProvider)
+          .visitsForPatient(
+            q.patientId,
+            openedFrom: q.from,
+            openedTo: q.to,
+            status: q.status,
+            owing: q.owing,
+          ),
     );
 
 final examHistoryProvider = FutureProvider.autoDispose

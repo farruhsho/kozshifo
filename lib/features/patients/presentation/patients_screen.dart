@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/network/page.dart';
+import '../../../core/utils/input_formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../reception/domain/regions.dart';
 import '../data/patients_repository.dart';
 import '../domain/patient.dart';
 
@@ -38,8 +40,9 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
   @override
   Widget build(BuildContext context) {
     final patients = ref.watch(patientsListProvider);
-    final canCreate =
-        ref.watch(authControllerProvider).user?.can('patients.create') ?? false;
+    final user = ref.watch(authControllerProvider).user;
+    final canCreate = user?.can('patients.create') ?? false;
+    final canViewVisits = user?.can('visits.read') ?? false;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Пациенты')),
@@ -76,7 +79,8 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
             child: AsyncValueWidget<Page<Patient>>(
               value: patients,
               onRetry: () => ref.invalidate(patientsListProvider),
-              builder: (page) => _PatientList(page: page),
+              builder: (page) =>
+                  _PatientList(page: page, canViewVisits: canViewVisits),
             ),
           ),
         ],
@@ -94,9 +98,10 @@ class _PatientsScreenState extends ConsumerState<PatientsScreen> {
 }
 
 class _PatientList extends StatelessWidget {
-  const _PatientList({required this.page});
+  const _PatientList({required this.page, required this.canViewVisits});
 
   final Page<Patient> page;
+  final bool canViewVisits;
 
   @override
   Widget build(BuildContext context) {
@@ -127,10 +132,22 @@ class _PatientList extends StatelessWidget {
                 subtitle: Text(
                   [p.mrn, if (p.phone != null) p.phone!].join('  ·  '),
                 ),
-                trailing: TextButton.icon(
-                  onPressed: () => context.go('/patients/${p.id}/card'),
-                  icon: const Icon(Icons.medical_information_outlined),
-                  label: const Text('Карта'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (canViewVisits)
+                      IconButton(
+                        tooltip: 'История визитов',
+                        icon: const Icon(Icons.history),
+                        onPressed: () =>
+                            context.go('/patients/${p.id}/visits'),
+                      ),
+                    TextButton.icon(
+                      onPressed: () => context.go('/patients/${p.id}/card'),
+                      icon: const Icon(Icons.medical_information_outlined),
+                      label: const Text('Карта'),
+                    ),
+                  ],
                 ),
                 onTap: () => context.go('/patients/${p.id}/card'),
               );
@@ -181,10 +198,17 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
   final _lastName = TextEditingController();
   final _firstName = TextEditingController();
   final _middleName = TextEditingController();
-  late final _phone = TextEditingController(text: widget.initialPhone ?? '');
-  DateTime? _birthDate;
+  // Телефон хранит только локальную часть (9 цифр); префикс «+998 » — в поле.
+  late final _phone =
+      TextEditingController(text: extractUzPhoneLocal(widget.initialPhone));
+  // Дата рождения вводится текстом в маске ДД.ММ.ГГГГ (или из календаря).
+  final _birthDate = TextEditingController();
   String? _gender;
   String? _leadSource;
+  // Регион — маркетинговый сигнал (откуда географически пациент), поэтому
+  // на основном экране. Район/город — только для Ферганской области.
+  String? _region;
+  String? _district;
   // Advanced (collapsed — rarely used, must not slow the common path).
   final _phone2 = TextEditingController();
   final _address = TextEditingController();
@@ -196,14 +220,17 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
 
   final _firstNameFocus = FocusNode();
   final _phoneFocus = FocusNode();
+  // Управляет раскрытием «Расширенных данных» — раскрываем при ошибке валидации
+  // в свёрнутых полях, чтобы сообщение было видно.
+  final _advancedController = ExpansibleController();
   bool _saving = false;
   String? _error;
 
   @override
   void dispose() {
     for (final c in [
-      _lastName, _firstName, _middleName, _phone, _phone2, _address,
-      _passport, _pinfl, _workplace, _profession, _notes,
+      _lastName, _firstName, _middleName, _phone, _birthDate, _phone2,
+      _address, _passport, _pinfl, _workplace, _profession, _notes,
     ]) {
       c.dispose();
     }
@@ -212,25 +239,69 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
     super.dispose();
   }
 
-  String? _ymd(DateTime? d) => d == null
-      ? null
-      : '${d.year.toString().padLeft(4, '0')}-'
-            '${d.month.toString().padLeft(2, '0')}-'
-            '${d.day.toString().padLeft(2, '0')}';
+  /// Парсит дату из поля (маска `ДД.ММ.ГГГГ`) в [DateTime].
+  /// Возвращает `null`, если дата неполная или некорректная (несуществующий
+  /// день/месяц, будущая дата, год вне диапазона).
+  DateTime? _parseBirthDate() {
+    final m = RegExp(r'^(\d{2})\.(\d{2})\.(\d{4})$').firstMatch(_birthDate.text);
+    if (m == null) return null;
+    final day = int.parse(m.group(1)!);
+    final month = int.parse(m.group(2)!);
+    final year = int.parse(m.group(3)!);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    if (year < 1900) return null;
+    final d = DateTime(year, month, day);
+    // Отклоняем «перетекание» (например 31.02) и будущие даты.
+    if (d.year != year || d.month != month || d.day != day) return null;
+    if (d.isAfter(DateTime.now())) return null;
+    return d;
+  }
+
+  /// Дата рождения для бэкенда (`YYYY-MM-DD`) или `null`, если поле пустое.
+  String? _ymd() {
+    final d = _parseBirthDate();
+    return d == null
+        ? null
+        : '${d.year.toString().padLeft(4, '0')}-'
+              '${d.month.toString().padLeft(2, '0')}-'
+              '${d.day.toString().padLeft(2, '0')}';
+  }
 
   Future<void> _pickBirthDate() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: _birthDate ?? DateTime(now.year - 30),
+      initialDate: _parseBirthDate() ?? DateTime(now.year - 30),
       firstDate: DateTime(1900),
       lastDate: now,
       helpText: 'Дата рождения',
     );
-    if (picked != null) setState(() => _birthDate = picked);
+    if (picked != null) {
+      setState(() => _birthDate.text =
+          '${picked.day.toString().padLeft(2, '0')}.'
+          '${picked.month.toString().padLeft(2, '0')}.'
+          '${picked.year}');
+    }
+  }
+
+  /// Свёрнутые расширенные поля заполнены, но не проходят валидацию — тогда
+  /// перед показом ошибок раскрываем секцию, иначе сообщение не видно.
+  bool get _advancedHasInvalid {
+    bool badDigits(String v, int len) {
+      final d = v.replaceAll(RegExp(r'[^0-9]'), '');
+      return d.isNotEmpty && d.length != len;
+    }
+
+    final passport = _passport.text.trim();
+    return badDigits(_phone2.text, kUzPhoneLocalLength) ||
+        badDigits(_pinfl.text, 14) ||
+        (passport.isNotEmpty && !RegExp(r'^[A-Z]{2}\d{7}$').hasMatch(passport));
   }
 
   Future<void> _save() async {
+    if (_advancedHasInvalid && !_advancedController.isExpanded) {
+      _advancedController.expand();
+    }
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _saving = true;
@@ -244,12 +315,15 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
             lastName: _lastName.text.trim(),
             firstName: _firstName.text.trim(),
             middleName: _middleName.text,
-            birthDate: _ymd(_birthDate),
+            birthDate: _ymd(),
             gender: _gender,
-            phone: _phone.text,
-            phone2: _phone2.text,
+            // Поле хранит локальную часть — собираем «+998…» для бэкенда.
+            phone: assembleUzPhone(_phone.text),
+            phone2: assembleUzPhone(_phone2.text),
             leadSource: _leadSource,
             address: _address.text,
+            region: _region,
+            district: _district,
             passport: _passport.text,
             pinfl: _pinfl.text,
             workplace: _workplace.text,
@@ -311,15 +385,27 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                 Row(
                   children: [
                     Expanded(
-                      child: InkWell(
-                        onTap: _pickBirthDate,
-                        child: InputDecorator(
-                          decoration: const InputDecoration(
-                            labelText: 'Дата рождения',
-                            suffixIcon: Icon(Icons.calendar_today, size: 18),
+                      child: TextFormField(
+                        controller: _birthDate,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: const [DateInputFormatter()],
+                        decoration: InputDecoration(
+                          labelText: 'Дата рождения',
+                          hintText: 'ДД.ММ.ГГГГ',
+                          suffixIcon: IconButton(
+                            tooltip: 'Выбрать в календаре',
+                            icon: const Icon(Icons.calendar_today, size: 18),
+                            onPressed: _pickBirthDate,
                           ),
-                          child: Text(_ymd(_birthDate) ?? '—'),
                         ),
+                        // Необязательное поле, но если заполнено — должно быть
+                        // корректной датой.
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return null;
+                          return _parseBirthDate() == null
+                              ? 'Неверная дата'
+                              : null;
+                        },
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -342,10 +428,20 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                   focusNode: _phoneFocus,
                   keyboardType: TextInputType.phone,
                   textInputAction: TextInputAction.done,
+                  inputFormatters: uzPhoneLocal,
                   onFieldSubmitted: (_) => _save(),
                   decoration: const InputDecoration(
                     labelText: 'Телефон (необязательно)',
+                    prefixText: '+998 ',
+                    hintText: '90 123 45 67',
                   ),
+                  validator: (v) {
+                    final digits = (v ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+                    if (digits.isEmpty) return null; // необязательное
+                    return digits.length == kUzPhoneLocalLength
+                        ? null
+                        : 'Введите 9 цифр номера';
+                  },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -360,6 +456,55 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                   ],
                   onChanged: (v) => setState(() => _leadSource = v),
                 ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String?>(
+                  initialValue: _region,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Регион *',
+                    helperText: 'Откуда географически пациент — для аналитики',
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('— выберите регион —'),
+                    ),
+                    for (final r in kUzRegions)
+                      DropdownMenuItem<String?>(value: r, child: Text(r)),
+                  ],
+                  // Регион обязателен — это ключевой маркетинговый сигнал
+                  // (откуда приходят пациенты), директор строит на нём решения.
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Выберите регион' : null,
+                  onChanged: (v) => setState(() {
+                    _region = v;
+                    // Сменили регион — сбрасываем район, чтобы не уехал «хвост»
+                    // от прошлого региона.
+                    _district = null;
+                  }),
+                ),
+                if (districtsForRegion(_region).isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String?>(
+                    initialValue: _district,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Район / город *',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('— выберите район / город —'),
+                      ),
+                      for (final d in districtsForRegion(_region))
+                        DropdownMenuItem<String?>(value: d, child: Text(d)),
+                    ],
+                    // Район обязателен, если у выбранного региона есть детализация.
+                    validator: (v) =>
+                        (v == null || v.isEmpty) ? 'Выберите район / город' : null,
+                    onChanged: (v) => setState(() => _district = v),
+                  ),
+                ],
                 const SizedBox(height: 4),
                 // Редко используемые поля — свёрнуты, чтобы не замедлять обычную
                 // регистрацию (SELF IMPROVEMENT MEDICAL MODE).
@@ -367,6 +512,7 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                   data: Theme.of(context)
                       .copyWith(dividerColor: Colors.transparent),
                   child: ExpansionTile(
+                    controller: _advancedController,
                     tilePadding: EdgeInsets.zero,
                     childrenPadding: const EdgeInsets.only(bottom: 8),
                     title: const Text('Расширенные данные'),
@@ -374,9 +520,20 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                       TextFormField(
                         controller: _phone2,
                         keyboardType: TextInputType.phone,
+                        inputFormatters: uzPhoneLocal,
                         decoration: const InputDecoration(
                           labelText: 'Дополнительный телефон',
+                          prefixText: '+998 ',
+                          hintText: '90 123 45 67',
                         ),
+                        validator: (v) {
+                          final digits =
+                              (v ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+                          if (digits.isEmpty) return null;
+                          return digits.length == kUzPhoneLocalLength
+                              ? null
+                              : 'Введите 9 цифр номера';
+                        },
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
@@ -386,13 +543,37 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _passport,
-                        decoration: const InputDecoration(labelText: 'Паспорт'),
+                        textCapitalization: TextCapitalization.characters,
+                        inputFormatters: const [PassportInputFormatter()],
+                        decoration: const InputDecoration(
+                          labelText: 'Паспорт',
+                          hintText: 'AB1234567',
+                        ),
+                        validator: (v) {
+                          final t = (v ?? '').trim();
+                          if (t.isEmpty) return null;
+                          return RegExp(r'^[A-Z]{2}\d{7}$').hasMatch(t)
+                              ? null
+                              : 'Формат: 2 буквы + 7 цифр';
+                        },
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: _pinfl,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'ПИНФЛ'),
+                        inputFormatters: digitsOnly(14),
+                        decoration: const InputDecoration(
+                          labelText: 'ПИНФЛ',
+                          hintText: '14 цифр',
+                        ),
+                        validator: (v) {
+                          final digits =
+                              (v ?? '').replaceAll(RegExp(r'[^0-9]'), '');
+                          if (digits.isEmpty) return null;
+                          return digits.length == 14
+                              ? null
+                              : 'ПИНФЛ — ровно 14 цифр';
+                        },
                       ),
                       const SizedBox(height: 12),
                       TextFormField(

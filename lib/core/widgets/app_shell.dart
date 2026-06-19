@@ -23,12 +23,10 @@ const Map<String, String> _navIconKey = {
   '/analytics': 'analytics',
   '/finance': 'finance',
   '/inventory': 'inventory',
-  '/optics': 'optics',
   '/lab': 'lab',
   '/notifications': 'notifications',
   '/admin': 'settings',
   '/devices': 'devices',
-  '/cameras': 'cameras',
   '/calls': 'calls',
   '/access-control': 'face',
   '/attendance': 'badge',
@@ -98,7 +96,23 @@ const kAppDestinations = <AppDestination>[
     // Union of the tabs FinanceScreen gates: till (payments.create), refunds
     // (payments.read), expenses (expenses.read), payroll (payroll.read) — so a
     // read-only finance role both sees the item and is routed here.
-    permissions: ['payments.create', 'payments.read', 'expenses.read', 'payroll.read'],
+    permissions: [
+      'payments.create',
+      'payments.read',
+      'expenses.read',
+      'payroll.read',
+    ],
+  ),
+  // Личное рабочее место очереди — врач «Мой приём» (V), диагност «Диагностика»
+  // (D): одна дорожка, кабинет из профиля. Gate device_results.create отделяет
+  // клиническую пару (Врач+Диагност) от ресепшена; стоит ПЕРЕД «Очередь», чтобы
+  // диагност приземлялся сюда. Экран сам выводит дорожку из прав (exams.write).
+  AppDestination(
+    Icons.assignment_ind_outlined,
+    Icons.assignment_ind,
+    'Моя очередь',
+    '/my-queue',
+    permissions: ['device_results.create'],
   ),
   AppDestination(
     Icons.confirmation_number_outlined,
@@ -106,6 +120,15 @@ const kAppDestinations = <AppDestination>[
     'Очередь',
     '/queue',
     permissions: ['queue.read'],
+  ),
+  // Процедурный кабинет: дорожка «Лечение» (Л-талоны). Виден тем, кто
+  // проводит лечение (treatments.perform) — врач/процедурная сестра.
+  AppDestination(
+    Icons.medication_outlined,
+    Icons.medication,
+    'Лечение',
+    '/treatment-queue',
+    permissions: ['treatments.perform'],
   ),
   AppDestination(
     Icons.healing_outlined,
@@ -127,6 +150,14 @@ const kAppDestinations = <AppDestination>[
     'Аналитика',
     '/analytics',
     permissions: ['dashboard.view'],
+  ),
+  // Отчёты директора (финансы/врачи/диагносты/операции/регионы/пациенты + CSV).
+  AppDestination(
+    Icons.summarize_outlined,
+    Icons.summarize,
+    'Отчёты',
+    '/reports',
+    permissions: ['reports.view'],
   ),
   AppDestination(
     Icons.badge_outlined,
@@ -157,25 +188,11 @@ const kAppDestinations = <AppDestination>[
     permissions: ['inventory.read'],
   ),
   AppDestination(
-    Icons.remove_red_eye_outlined,
-    Icons.remove_red_eye,
-    'Оптика',
-    '/optics',
-    permissions: ['optics.read'],
-  ),
-  AppDestination(
     Icons.science_outlined,
     Icons.science,
     'Лаборатория',
     '/lab',
     permissions: ['lab.read'],
-  ),
-  AppDestination(
-    Icons.videocam_outlined,
-    Icons.videocam,
-    'Камеры',
-    '/cameras',
-    permissions: ['cameras.view'],
   ),
   AppDestination(
     Icons.face_outlined,
@@ -190,6 +207,15 @@ const kAppDestinations = <AppDestination>[
     'Уведомления',
     '/notifications',
     permissions: ['notifications.read'],
+  ),
+  AppDestination(
+    Icons.medical_services_outlined,
+    Icons.medical_services,
+    'Услуги',
+    '/services',
+    // Reception (services.create) manages the catalog from its own menu;
+    // director (superuser) sees it too. Diagnost (services.read only) doesn't.
+    permissions: ['services.create'],
   ),
   AppDestination(
     Icons.settings_outlined,
@@ -212,8 +238,13 @@ String _initialsOf(String name) {
 String _roleLabel(List<String> roles) {
   if (roles.isEmpty) return 'Сотрудник';
   const m = {
-    'Superadmin': 'Суперадмин', 'Director': 'Директор', 'Reception': 'Регистратура',
-    'Doctor': 'Врач', 'Diagnost': 'Диагност', 'Cashier': 'Касса', 'Warehouse': 'Склад',
+    'Superadmin': 'Суперадмин',
+    'Director': 'Директор',
+    'Reception': 'Регистратура',
+    'Doctor': 'Врач',
+    'Diagnost': 'Диагност',
+    'Cashier': 'Касса',
+    'Warehouse': 'Склад',
   };
   return m[roles.first] ?? roles.first;
 }
@@ -244,8 +275,10 @@ class AppShell extends ConsumerWidget {
       body: CallbackShortcuts(
         bindings: <ShortcutActivator, VoidCallback>{
           if (canSearch) ...{
-            const SingleActivator(LogicalKeyboardKey.keyK, control: true): openSearch,
-            const SingleActivator(LogicalKeyboardKey.keyF, control: true): openSearch,
+            const SingleActivator(LogicalKeyboardKey.keyK, control: true):
+                openSearch,
+            const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+                openSearch,
           },
         },
         // The Focus keeps a focused node inside the shell at all times, so the
@@ -305,7 +338,9 @@ class _Sidebar extends ConsumerWidget {
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [AppColors.mint, AppColors.tealDark]),
+                      gradient: const LinearGradient(
+                        colors: [AppColors.mint, AppColors.tealDark],
+                      ),
                       borderRadius: BorderRadius.circular(11),
                     ),
                     child: const KozIcon('eye', size: 22, color: Colors.white),
@@ -314,14 +349,19 @@ class _Sidebar extends ConsumerWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("KO'Z SHIFO",
-                          style: AppTypography.number(16.5, color: Colors.white)),
-                      const Text('CLINIC OS',
-                          style: TextStyle(
-                              color: AppColors.sidebarSub,
-                              fontSize: 10.5,
-                              letterSpacing: 2,
-                              fontWeight: FontWeight.w600)),
+                      Text(
+                        "KO'Z SHIFO",
+                        style: AppTypography.number(16.5, color: Colors.white),
+                      ),
+                      const Text(
+                        'CLINIC OS',
+                        style: TextStyle(
+                          color: AppColors.sidebarSub,
+                          fontSize: 10.5,
+                          letterSpacing: 2,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                   ),
                 ],
@@ -331,12 +371,15 @@ class _Sidebar extends ConsumerWidget {
               padding: EdgeInsets.fromLTRB(22, 4, 22, 6),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('МЕНЮ',
-                    style: TextStyle(
-                        color: Color(0xFF4F8278),
-                        fontSize: 11,
-                        letterSpacing: 1.5,
-                        fontWeight: FontWeight.w700)),
+                child: Text(
+                  'МЕНЮ',
+                  style: TextStyle(
+                    color: Color(0xFF4F8278),
+                    fontSize: 11,
+                    letterSpacing: 1.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ),
             Expanded(
@@ -370,30 +413,47 @@ class _Sidebar extends ConsumerWidget {
               ),
               child: Row(
                 children: [
-                  InitialsAvatar(_initialsOf(user?.fullName ?? '—'), size: 38, fontSize: 14),
+                  InitialsAvatar(
+                    _initialsOf(user?.fullName ?? '—'),
+                    size: 38,
+                    fontSize: 14,
+                  ),
                   const SizedBox(width: 11),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(user?.fullName ?? '—',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: AppColors.onDark,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 13.5)),
-                        Text(_roleLabel(user?.roles ?? const []),
-                            style: const TextStyle(color: AppColors.sidebarSub, fontSize: 11.5)),
+                        Text(
+                          user?.fullName ?? '—',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.onDark,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13.5,
+                          ),
+                        ),
+                        Text(
+                          _roleLabel(user?.roles ?? const []),
+                          style: const TextStyle(
+                            color: AppColors.sidebarSub,
+                            fontSize: 11.5,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   IconButton(
                     tooltip: 'Выйти',
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.logout, size: 18, color: AppColors.sidebarSub),
-                    onPressed: () => ref.read(authControllerProvider.notifier).logout(),
+                    icon: const Icon(
+                      Icons.logout,
+                      size: 18,
+                      color: AppColors.sidebarSub,
+                    ),
+                    onPressed: () =>
+                        ref.read(authControllerProvider.notifier).logout(),
                   ),
                 ],
               ),
@@ -429,8 +489,9 @@ class _NavItem extends StatelessWidget {
               // reserve the 2px accent always so the row never shifts.
               border: Border(
                 left: BorderSide(
-                    color: active ? AppColors.sidebarAccent : Colors.transparent,
-                    width: 2),
+                  color: active ? AppColors.sidebarAccent : Colors.transparent,
+                  width: 2,
+                ),
               ),
             ),
             padding: const EdgeInsets.fromLTRB(11, 11, 13, 11),
@@ -438,13 +499,23 @@ class _NavItem extends StatelessWidget {
               children: [
                 _navIconKey.containsKey(d.route)
                     ? KozIcon(_navIconKey[d.route]!, size: 19, color: color)
-                    : Icon(active ? d.selectedIcon : d.icon, size: 19, color: color),
+                    : Icon(
+                        active ? d.selectedIcon : d.icon,
+                        size: 19,
+                        color: color,
+                      ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Text(d.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: color, fontWeight: FontWeight.w600, fontSize: 14)),
+                  child: Text(
+                    d.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -456,7 +527,11 @@ class _NavItem extends StatelessWidget {
 }
 
 class _SideButton extends StatelessWidget {
-  const _SideButton({required this.icon, required this.label, required this.onTap});
+  const _SideButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
 
   final IconData icon;
   final String label;
@@ -480,9 +555,14 @@ class _SideButton extends StatelessWidget {
             children: [
               const KozIcon('search', size: 18, color: Color(0xFFC7DAD5)),
               const SizedBox(width: 11),
-              Text(label,
-                  style: const TextStyle(
-                      color: Color(0xFFC7DAD5), fontWeight: FontWeight.w600, fontSize: 13.5)),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Color(0xFFC7DAD5),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13.5,
+                ),
+              ),
             ],
           ),
         ),

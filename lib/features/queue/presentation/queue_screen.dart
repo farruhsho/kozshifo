@@ -3,11 +3,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/api_constants.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/url_opener.dart';
 import '../../../core/widgets/async_value_widget.dart';
+import '../../attachments/presentation/attachments_section.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../diagnoses/presentation/diagnostic_conclusion_card.dart';
+import '../../doctor/presentation/patient_info_card.dart';
 import '../data/queue_repository.dart';
 import '../domain/queue_ticket.dart';
 
@@ -16,8 +21,21 @@ import '../domain/queue_ticket.dart';
 /// пропуск. Завершение D-талона автоматически рождает V-талон на сервере.
 /// Автообновление каждые 5 секунд; ссылка на TV-табло — в шапке.
 /// Горячие клавиши: F2 — вызвать следующего на диагностику, F3 — к врачу.
+///
+/// В «личном» режиме ([personal]) экран сжимается до ОДНОЙ дорожки —
+/// рабочее место врача («Мой приём», V) или диагноста («Диагностика», D).
+/// Дорожка берётся из [track] либо выводится из прав (exams.write → врач).
+/// Кабинет для вызова подставляется из профиля (User.cabinet), врач забирает
+/// в первую очередь направленные лично ему талоны (for_user_id).
 class QueueScreen extends ConsumerStatefulWidget {
-  const QueueScreen({super.key});
+  const QueueScreen({super.key, this.personal = false, this.track});
+
+  /// Личное рабочее место (одна дорожка) вместо двухдорожечного табло ресепшена.
+  final bool personal;
+
+  /// Явная дорожка ('doctor' | 'diagnostic'); в личном режиме при null
+  /// выводится из прав пользователя.
+  final String? track;
 
   @override
   ConsumerState<QueueScreen> createState() => _QueueScreenState();
@@ -34,12 +52,33 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
 
   String? get _branchId => ref.read(authControllerProvider).user?.branchId;
 
+  /// Дорожка экрана: явная, либо (в личном режиме) выведенная из прав —
+  /// автор осмотров (exams.write) = врач (V), иначе диагност (D).
+  String? get _effectiveTrack {
+    if (widget.track != null) return widget.track;
+    if (!widget.personal) return null;
+    final canExam =
+        ref.read(authControllerProvider).user?.can('exams.write') ?? false;
+    return canExam ? 'doctor' : 'diagnostic';
+  }
+
   @override
   void initState() {
     super.initState();
+    // Личный режим: кабинет для вызова — из профиля сотрудника. Пусто, если не
+    // задан, тогда бэкенд подставит User.cabinet сам (а не затрёт «Каб. 1»).
+    if (widget.personal) {
+      final cab = ref.read(authControllerProvider).user?.cabinet;
+      _room.text = (cab != null && cab.trim().isNotEmpty) ? cab.trim() : '';
+    }
     _autoRefresh = Timer.periodic(const Duration(seconds: 5), (_) {
       final branchId = _branchId;
-      if (branchId != null) ref.invalidate(queueListProvider(branchId));
+      if (branchId == null) return;
+      // Не складывать запросы: пропускаем тик, пока предыдущая загрузка ещё в
+      // полёте (медленный бэкенд) — иначе периодические инвалидации копят GET-ы,
+      // а поздний ответ может затереть более свежий список.
+      if (ref.read(queueListProvider(branchId)).isLoading) return;
+      ref.invalidate(queueListProvider(branchId));
     });
     // Явный requestFocus вместо autofocus: оболочка (AppShell) уже держит
     // фокус, поэтому autofocus здесь игнорировался бы — а без фокуса внутри
@@ -61,66 +100,18 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
   /// При включённом «только мои» передаём for_user_id текущего пользователя.
   void _callNext(String branchId, String track) {
     final me = ref.read(authControllerProvider).user;
+    // Врач в личном режиме всегда забирает СВОИ направленные талоны (+ пул);
+    // ресепшен — по чекбоксу «Только мои».
+    final mine = _onlyMine || (widget.personal && track == 'doctor');
     _act(
-      () => ref.read(queueRepositoryProvider).callNext(
-        branchId: branchId,
-        room: _room.text.trim(),
-        track: track,
-        forUserId: _onlyMine ? me?.id : null,
-      ),
-    );
-  }
-
-  /// Диалог адресной маршрутизации ожидающего талона: выбрать специалиста или
-  /// снять маршрут (вернуть в общий пул). Список специалистов отдаётся под
-  /// правом queue.manage — отдельный users.read не нужен.
-  Future<void> _showRouteDialog(String branchId, QueueTicket t) async {
-    final List<Specialist> specialists;
-    try {
-      specialists =
-          await ref.read(queueRepositoryProvider).specialists(branchId);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('$e'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-      return;
-    }
-    if (!mounted) return;
-    final choice = await showDialog<_RouteChoice>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: Text('Направить талон ${t.ticketNumber}'),
-        children: [
-          SimpleDialogOption(
-            onPressed: () =>
-                Navigator.pop(context, const _RouteChoice.clear()),
-            child: const Text('— Снять маршрут (общий пул)'),
-          ),
-          const Divider(),
-          for (final s in specialists)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, _RouteChoice.user(s.id)),
-              child: Text(
-                s.roles.isEmpty
-                    ? s.fullName
-                    : '${s.fullName}  ·  ${s.roles.join(', ')}',
-              ),
-            ),
-        ],
-      ),
-    );
-    if (choice == null) return; // отмена
-    await _act(
       () => ref
           .read(queueRepositoryProvider)
-          .assign(t.id, assignedUserId: choice.userId),
-      successMessage:
-          choice.userId == null ? 'Маршрут снят' : 'Талон направлен',
+          .callNext(
+            branchId: branchId,
+            room: _room.text.trim(),
+            track: track,
+            forUserId: mine ? me?.id : null,
+          ),
     );
   }
 
@@ -204,10 +195,18 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     final user = ref.watch(authControllerProvider).user;
     final branchId = user?.branchId;
     final canManage = user?.can('queue.manage') ?? false;
+    final singleTrack = _effectiveTrack;
+    final screenTitle = singleTrack == 'doctor'
+        ? 'Мой приём'
+        : singleTrack == 'diagnostic'
+        ? 'Диагностика'
+        : singleTrack == 'treatment'
+        ? 'Лечение'
+        : 'Очередь';
 
     if (branchId == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Очередь')),
+        appBar: AppBar(title: Text(screenTitle)),
         body: const Center(
           child: Text('У пользователя не задан филиал — очередь недоступна.'),
         ),
@@ -216,7 +215,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
 
     final tickets = ref.watch(queueListProvider(branchId));
     // Имена специалистов для резолва assigned_user_id на плитках (id → ФИО).
-    // valueOrNull: пока список грузится, плитки просто не показывают имя.
+    // Пока ни один UI не пишет assigned_user_id (диалог «Направить» убран в
+    // Ф3a) — оставлено под предстоящую маршрутизацию услуга→врач (Ф3b).
     final specialistNames = {
       for (final s
           in ref.watch(queueSpecialistsProvider(branchId)).valueOrNull ??
@@ -226,18 +226,24 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
 
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.f2): () {
-          if (canManage && !_busy) _callNext(branchId, 'diagnostic');
-        },
-        const SingleActivator(LogicalKeyboardKey.f3): () {
-          if (canManage && !_busy) _callNext(branchId, 'doctor');
+        if (singleTrack != null)
+          const SingleActivator(LogicalKeyboardKey.f2): () {
+            if (canManage && !_busy) _callNext(branchId, singleTrack);
+          }
+        else ...{
+          const SingleActivator(LogicalKeyboardKey.f2): () {
+            if (canManage && !_busy) _callNext(branchId, 'diagnostic');
+          },
+          const SingleActivator(LogicalKeyboardKey.f3): () {
+            if (canManage && !_busy) _callNext(branchId, 'doctor');
+          },
         },
       },
       child: Focus(
         focusNode: _hotkeys,
         child: Scaffold(
           appBar: AppBar(
-            title: const Text('Очередь'),
+            title: Text(screenTitle),
             actions: [
               IconButton(
                 tooltip: 'TV-табло',
@@ -262,29 +268,38 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                         width: 160,
                         child: TextField(
                           controller: _room,
-                          decoration: const InputDecoration(
-                            labelText: 'Кабинет',
+                          decoration: InputDecoration(
+                            labelText: widget.personal
+                                ? 'Мой кабинет'
+                                : 'Кабинет',
                             isDense: true,
                           ),
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Tooltip(
-                        message:
-                            'Вызывать следующего только из направленных мне '
-                            '(+ общий пул)',
-                        child: FilterChip(
-                          selected: _onlyMine,
-                          label: const Text('Только мои'),
-                          onSelected: _busy
-                              ? null
-                              : (v) => setState(() => _onlyMine = v),
+                      // «Только мои» — только на общем табло ресепшена; в личном
+                      // режиме врач и так всегда забирает направленные ему.
+                      if (!widget.personal) ...[
+                        Tooltip(
+                          message:
+                              'Вызывать следующего только из направленных мне '
+                              '(+ общий пул)',
+                          child: FilterChip(
+                            selected: _onlyMine,
+                            label: const Text('Только мои'),
+                            onSelected: _busy
+                                ? null
+                                : (v) => setState(() => _onlyMine = v),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
+                        const SizedBox(width: 12),
+                      ],
                       Expanded(
                         child: Text(
-                          'F2/F3 — вызвать следующего',
+                          singleTrack != null
+                              ? 'F2 — вызвать следующего · кабинет берётся из '
+                                    'вашего профиля'
+                              : 'F2/F3 — вызвать следующего',
                           style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(
                                 color: Theme.of(context).colorScheme.outline,
@@ -299,6 +314,66 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                   value: tickets,
                   onRetry: () => ref.invalidate(queueListProvider(branchId)),
                   builder: (items) {
+                    // Личный режим «Приём»: на широком экране — 2 колонки (слева
+                    // очередь+«Вызвать следующего», справа карточка ТЕКУЩЕГО —
+                    // вызванного / на приёме — пациента: данные, файлы, переход в
+                    // полную карту). Узкий экран — только очередь.
+                    if (singleTrack != null) {
+                      final trackPane = _trackSection(
+                        context,
+                        branchId,
+                        title: singleTrack == 'doctor'
+                            ? 'К врачу (V)'
+                            : singleTrack == 'treatment'
+                            ? 'Лечение (Л)'
+                            : 'Диагностика (D)',
+                        track: singleTrack,
+                        items: items,
+                        canManage: canManage,
+                        specialistNames: specialistNames,
+                      );
+                      final wide = MediaQuery.sizeOf(context).width >= 1000;
+                      if (!wide) {
+                        return Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: trackPane,
+                        );
+                      }
+                      // Текущий пациент = тот, кого сейчас принимают (serving),
+                      // иначе первый вызванный (called) этой дорожки.
+                      final mineTickets = items
+                          .where((t) => t.track == singleTrack)
+                          .toList();
+                      QueueTicket? current;
+                      for (final t in mineTickets) {
+                        if (t.status == 'serving') {
+                          current = t;
+                          break;
+                        }
+                      }
+                      if (current == null) {
+                        for (final t in mineTickets) {
+                          if (t.isActive) {
+                            current = t;
+                            break;
+                          }
+                        }
+                      }
+                      return Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(flex: 2, child: trackPane),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 3,
+                              child: _patientPane(context, current),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
                     // Одна загрузка на обе дорожки: список делится по t.track.
                     final wide = MediaQuery.sizeOf(context).width >= 900;
                     final tracks = [
@@ -339,6 +414,69 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Правая колонка «Приёма»: карточка ТЕКУЩЕГО пациента (вызванного / на приёме)
+  /// — краткие данные, файлы/анализы (УЗИ, ВИЧ) и переход в полную медкарту.
+  /// Пусто, пока никто не вызван («вызвал → появились данные»).
+  Widget _patientPane(BuildContext context, QueueTicket? current) {
+    if (current == null) {
+      return Card(
+        margin: const EdgeInsets.all(4),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Вызовите пациента — здесь появятся его данные.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    final canSeeFiles =
+        ref.watch(authControllerProvider).user?.can('attachments.read') ?? false;
+    final patientId = current.patientId;
+    final visitId = current.visitId;
+    return Card(
+      margin: const EdgeInsets.all(4),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Текущий пациент · ${current.ticketNumber}',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: () => context.go('/patients/$patientId/card'),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Открыть карту'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            PatientInfoCard(patientId: patientId),
+            if (canSeeFiles)
+              AttachmentsSection(patientId: patientId, visitId: visitId),
+            if ((ref.watch(authControllerProvider).user?.can('diagnoses.record') ??
+                    false) &&
+                visitId != null)
+              DiagnosticConclusionCard(patientId: patientId, visitId: visitId),
+          ],
         ),
       ),
     );
@@ -399,7 +537,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             'Ожидают (${waiting.length})',
             waiting,
             canManage,
-            (t) => _waitingActions(t, branchId),
+            (t) => _waitingActions(t),
             specialistNames,
           ),
         ),
@@ -428,12 +566,46 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             ),
       child: const Text('Готово'),
     ),
+    // «Вызвать повторно» (переозвучить на табло) и «Оставить» (вернуть в
+    // ожидание) — вторичные действия, в меню, чтобы плитка не переполнялась.
+    PopupMenuButton<String>(
+      tooltip: 'Ещё',
+      enabled: !_busy,
+      onSelected: (v) => _act(
+        () => v == 'recall'
+            ? ref.read(queueRepositoryProvider).recall(t.id)
+            : ref.read(queueRepositoryProvider).leave(t.id),
+        successMessage: v == 'recall'
+            ? 'Талон ${t.ticketNumber} вызван повторно'
+            : 'Талон ${t.ticketNumber} возвращён в ожидание',
+      ),
+      itemBuilder: (_) => [
+        // «Вызвать повторно» — только для вызванного: на приёме (serving)
+        // переозвучка бессмысленна (табло объявляет лишь called-талоны).
+        if (t.status == 'called')
+          const PopupMenuItem(value: 'recall', child: Text('Вызвать повторно')),
+        const PopupMenuItem(
+          value: 'leave',
+          child: Text('Оставить (в ожидание)'),
+        ),
+      ],
+    ),
   ];
 
-  List<Widget> _waitingActions(QueueTicket t, String branchId) => [
+  List<Widget> _waitingActions(QueueTicket t) => [
     TextButton(
-      onPressed: _busy ? null : () => _showRouteDialog(branchId, t),
-      child: const Text('Направить'),
+      onPressed: _busy
+          ? null
+          : () => _act(
+              () => ref
+                  .read(queueRepositoryProvider)
+                  .call(
+                    t.id,
+                    room: _room.text.trim().isEmpty ? null : _room.text.trim(),
+                  ),
+              successMessage: 'Талон ${t.ticketNumber} вызван',
+            ),
+      child: const Text('Вызвать'),
     ),
     TextButton(
       onPressed: _busy
@@ -442,6 +614,16 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
       child: const Text('Пропустить'),
     ),
   ];
+
+  /// Цвет акцента талона из палитры «Clinic OS». Приоритетный (экстренный)
+  /// талон всегда красный, иначе цвет по статусу: ожидает → amber,
+  /// вызван/на приёме → teal-primary, завершён/пропущен → muted.
+  Color _accentColor(QueueTicket t) {
+    if (t.priority > 0) return AppColors.red;
+    if (t.isActive) return AppColors.accent;
+    if (t.isWaiting) return AppColors.amber;
+    return AppColors.muted; // done / skipped и прочие терминальные статусы
+  }
 
   Widget _panel(
     BuildContext context,
@@ -469,32 +651,60 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                       itemCount: items.length,
                       itemBuilder: (context, i) {
                         final t = items[i];
-                        return ListTile(
-                          dense: true,
-                          leading: CircleAvatar(
-                            radius: 22,
-                            child: Text(
-                              t.ticketNumber,
-                              style: const TextStyle(fontSize: 11),
+                        final accent = _accentColor(t);
+                        // Левая цветная полоса-акцент по статусу талона:
+                        // ожидает → amber, вызван/на приёме → teal,
+                        // завершён/пропущен → muted, приоритет → red.
+                        // Реализована как Border(left: …), а не отдельным
+                        // flex-сиблингом — чтобы не ломать раскладку Row.
+                        return Container(
+                          decoration: BoxDecoration(
+                            border: Border(
+                              left: BorderSide(color: accent, width: 4),
                             ),
                           ),
-                          title: Text(
-                            [
-                              t.statusLabel,
-                              if (t.room != null) t.room!,
-                              if (t.assignedUserId != null)
-                                '→ ${specialistNames[t.assignedUserId] ?? 'специалист'}',
-                            ].join(' · '),
+                          child: ListTile(
+                            dense: true,
+                            leading: CircleAvatar(
+                              radius: 22,
+                              // Номер талона (D-001 … V-0999) масштабируется под
+                              // кружок: без FittedBox длинный номер переносился на
+                              // две строки и обрезался ободом аватара («V-0 / 03»).
+                              child: Padding(
+                                padding: const EdgeInsets.all(3),
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    t.ticketNumber,
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    style: TextStyle(
+                                      fontSize: 21,
+                                      fontWeight: FontWeight.w800,
+                                      color: accent,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            title: Text(
+                              [
+                                t.statusLabel,
+                                if (t.room != null) t.room!,
+                                if (t.assignedUserId != null)
+                                  '→ ${specialistNames[t.assignedUserId] ?? 'специалист'}',
+                              ].join(' · '),
+                            ),
+                            subtitle: Text(
+                              'создан ${t.createdAt.replaceFirst('T', ' ').split('.').first}',
+                            ),
+                            trailing: canManage
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: actions(t),
+                                  )
+                                : null,
                           ),
-                          subtitle: Text(
-                            'создан ${t.createdAt.replaceFirst('T', ' ').split('.').first}',
-                          ),
-                          trailing: canManage
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: actions(t),
-                                )
-                              : null,
                         );
                       },
                     ),
@@ -504,12 +714,4 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
       ),
     );
   }
-}
-
-/// Результат диалога маршрутизации. `null` из showDialog = отмена;
-/// `_RouteChoice` с `userId == null` = снять маршрут (общий пул).
-class _RouteChoice {
-  const _RouteChoice.clear() : userId = null;
-  const _RouteChoice.user(this.userId);
-  final String? userId;
 }

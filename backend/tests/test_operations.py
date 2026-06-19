@@ -190,6 +190,78 @@ def test_perform_writes_off_fefo_and_blocks_on_shortage(client, auth):
         assert _on_hand(client, auth, branch_id, sku) == expected, sku
 
 
+def test_perform_with_adhoc_consumables(client, auth):
+    """Ф4a: reception logs EXTRA (ad-hoc) products used during a perform — they
+    are written off alongside the template via the same FEFO, atomically."""
+    branch_id = _branch_id(client, auth)
+    visit = _new_visit(client, auth, branch_id, "adhoc")
+    phaco = _operation_type(client, auth, "PHACO")
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"]}).json()
+    assert _schedule(client, auth, op["id"]).status_code == 200
+
+    # An ad-hoc product that is NOT in the PHACO template (an extra suture).
+    extra = client.post(f"{API}/inventory/products", headers=auth, json={
+        "sku": "ADHOC-SUTURE", "name": "Шов доп.", "unit": "шт",
+    })
+    assert extra.status_code == 201, extra.text
+    extra = extra.json()
+
+    # Stock the full template + 1 suture (the perform will ask for 2 → short).
+    _receipt(client, auth, branch_id, [
+        ("IOL-001", "1"), ("VISC-001", "5"), ("SYR-1", "20"),
+        ("GLOVES-ST", "20"), ("KNIFE-275", "1"), ("ADHOC-SUTURE", "1"),
+    ])
+    body = {"ad_hoc_consumables": [{"product_id": extra["id"], "quantity": "2"}]}
+
+    # Ad-hoc shortage blocks the WHOLE perform atomically (template untouched).
+    before = {sku: _on_hand(client, auth, branch_id, sku) for sku in _PHACO_CONSUMPTION}
+    denied = client.post(f"{API}/operations/{op['id']}/perform", headers=auth, json=body)
+    assert denied.status_code == 409, denied.text
+    assert "Шов доп." in denied.json()["detail"]
+    assert {sku: _on_hand(client, auth, branch_id, sku)
+            for sku in _PHACO_CONSUMPTION} == before
+
+    # Receive the missing suture → perform writes off template AND ad-hoc.
+    _receipt(client, auth, branch_id, [("ADHOC-SUTURE", "1")])
+    done = client.post(f"{API}/operations/{op['id']}/perform", headers=auth, json=body)
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "performed"
+    for sku, qty in _PHACO_CONSUMPTION.items():
+        assert _on_hand(client, auth, branch_id, sku) == before[sku] - qty, sku
+    assert _on_hand(client, auth, branch_id, "ADHOC-SUTURE") == Decimal("0")  # 2 used
+
+
+def test_perform_adhoc_aggregates_duplicate_product(client, auth):
+    """Two ad-hoc lines of the SAME product sum to one demand — the pre-check
+    409 reports the cumulative total, not a single line's quantity."""
+    branch_id = _branch_id(client, auth)
+    visit = _new_visit(client, auth, branch_id, "dup")
+    phaco = _operation_type(client, auth, "PHACO")
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": phaco["id"]}).json()
+    assert _schedule(client, auth, op["id"]).status_code == 200
+    _receipt(client, auth, branch_id, [
+        ("IOL-001", "1"), ("VISC-001", "5"), ("SYR-1", "20"),
+        ("GLOVES-ST", "20"), ("KNIFE-275", "1"),
+    ])
+    # A fresh ad-hoc product with only 3 on hand, requested twice (2 + 2 = 4).
+    dup = client.post(f"{API}/inventory/products", headers=auth, json={
+        "sku": "ADHOC-DUP", "name": "Дубль-расходник", "unit": "шт",
+    }).json()
+    _receipt(client, auth, branch_id, [("ADHOC-DUP", "3")])
+
+    body = {"ad_hoc_consumables": [
+        {"product_id": dup["id"], "quantity": "2"},
+        {"product_id": dup["id"], "quantity": "2"},
+    ]}
+    denied = client.post(f"{API}/operations/{op['id']}/perform", headers=auth, json=body)
+    assert denied.status_code == 409, denied.text
+    assert "Дубль-расходник" in denied.json()["detail"]
+    # Cumulative 2+2=4 is reported (not a single line's 2).
+    assert "requested 4" in denied.json()["detail"]
+
+
 def test_start_perform_complete_lifecycle(client, auth):
     """scheduled -> in_progress -> performed -> completed, with the outcome
     recorded on the operation (TZ Modul 6)."""
@@ -395,6 +467,37 @@ def test_operations_worklist(client, auth):
     assert op["id"] in [o["id"] for o in
                         client.get(f"{API}/operations", headers=auth,
                                    params={"status": "scheduled"}).json()]
+
+
+def test_operations_scheduled_window(client, auth):
+    """The calendar agenda windows the worklist by scheduled_at: a half-open
+    [from, to) UTC interval includes ops scheduled that day and excludes ops on
+    other days as well as bare (un-scheduled) referrals."""
+    branch_id = _branch_id(client, auth)
+    visit = _new_visit(client, auth, branch_id, "window")
+    ivi = _operation_type(client, auth, "IVI")
+    scheduled = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                            json={"operation_type_id": ivi["id"]}).json()
+    assert _schedule(client, auth, scheduled["id"]).status_code == 200  # 2026-07-01 09:00Z
+    # A second referral left un-scheduled — has no scheduled_at, so a windowed
+    # query must never surface it.
+    bare = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                       json={"operation_type_id": ivi["id"]}).json()
+
+    def _ids(frm, to):
+        resp = client.get(f"{API}/operations", headers=auth,
+                          params={"scheduled_from": frm, "scheduled_to": to})
+        assert resp.status_code == 200, resp.text
+        return [o["id"] for o in resp.json()]
+
+    # The day that contains 09:00Z → included; the bare referral → excluded.
+    same_day = _ids("2026-07-01T00:00:00+00:00", "2026-07-02T00:00:00+00:00")
+    assert scheduled["id"] in same_day
+    assert bare["id"] not in same_day
+    # The previous window is exclusive of its upper bound (09:00Z is not < 00:00Z).
+    assert scheduled["id"] not in _ids("2026-06-30T00:00:00+00:00", "2026-07-01T00:00:00+00:00")
+    # A later day does not contain it either.
+    assert scheduled["id"] not in _ids("2026-07-02T00:00:00+00:00", "2026-07-03T00:00:00+00:00")
 
 
 def test_operations_report_by_surgeon(client, auth):

@@ -18,17 +18,20 @@ from app.core.security import hash_password
 from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device
+from app.models.diagnosis import Diagnosis
 from app.models.inventory import InventoryCategory, Product, Supplier
 from app.models.operation import OperationType, OperationTypeConsumable
 from app.models.rbac import Permission, Role
 from app.models.user import User
 
+# (code, name, price, is_diagnostic). Diagnostic services route to a diagnostician
+# queue ticket; the consultation goes straight to the doctor track.
 _DEMO_SERVICES = [
-    ("CONS", "Консультация офтальмолога", 150000),
-    ("ARM", "Авторефрактометрия", 50000),
-    ("TONO", "Тонометрия", 40000),
-    ("BIO", "Биомикроскопия", 60000),
-    ("OCT", "ОКТ сетчатки", 250000),
+    ("CONS", "Консультация офтальмолога", 150000, False),
+    ("ARM", "Авторефрактометрия", 50000, True),
+    ("TONO", "Тонометрия", 40000, True),
+    ("BIO", "Биомикроскопия", 60000, True),
+    ("OCT", "ОКТ сетчатки", 250000, True),
 ]
 
 
@@ -83,6 +86,11 @@ def _seed_director(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
         director.roles = [roles["Director"]]
         db.add(director)
         db.flush()
+    elif settings.seed_demo_staff:
+        # Keep the director password in sync with the configured value so the
+        # quick-login «Директор» button always works (resets a randomized one).
+        director.hashed_password = hash_password(settings.seed_director_password)
+        db.flush()
 
 
 # Demo staff — ONE account per role for trying the system. DEV ONLY: these
@@ -107,19 +115,23 @@ _DEMO_STAFF: list[tuple[str, str, str, str, bool]] = [
 
 
 def _seed_demo_staff(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
-    if settings.environment != "development":
+    # Demo accounts power the one-click quick-login buttons. They are seeded in
+    # ANY environment while SEED_DEMO_STAFF is on, and the well-known password is
+    # made AUTHORITATIVE (reset on every startup) so the buttons always work even
+    # if an account already exists with a different/randomized password.
+    if not settings.seed_demo_staff:
         return
     for email, full_name, password, role_name, is_superuser in _DEMO_STAFF:
-        if db.execute(select(User).where(User.email == email)).scalar_one_or_none() is None:
-            user = User(
-                email=email,
-                full_name=full_name,
-                hashed_password=hash_password(password),
-                branch_id=branch.id,
-                is_superuser=is_superuser,
-            )
-            user.roles = [roles[role_name]]
+        user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+        if user is None:
+            user = User(email=email, branch_id=branch.id)
             db.add(user)
+        user.full_name = full_name
+        user.hashed_password = hash_password(password)
+        user.is_superuser = is_superuser
+        user.roles = [roles[role_name]]
+        if user.branch_id is None:
+            user.branch_id = branch.id
     db.flush()
 
 
@@ -131,9 +143,10 @@ def _seed_services(db: Session) -> None:
         category = ServiceCategory(name="Диагностика", description="Диагностические услуги")
         db.add(category)
         db.flush()
-    for code, name, price in _DEMO_SERVICES:
+    for code, name, price, is_diagnostic in _DEMO_SERVICES:
         if db.execute(select(Service).where(Service.code == code)).scalar_one_or_none() is None:
-            db.add(Service(code=code, name=name, price=Decimal(price), category_id=category.id))
+            db.add(Service(code=code, name=name, price=Decimal(price),
+                           category_id=category.id, is_diagnostic=is_diagnostic))
     db.flush()
 
 
@@ -259,6 +272,27 @@ def _seed_operations(db: Session) -> None:
     db.flush()
 
 
+# Starter diagnosis / conclusion catalog (справочник заключений). Idempotent by
+# code. (code, name, category, icd10) — heavy on УЗИ conclusions so a УЗИ-диагност
+# has a ready picker.
+_DEMO_DIAGNOSES: list[tuple[str, str, str, str | None]] = [
+    ("UZI-NORM", "УЗИ: без патологии", "УЗИ", None),
+    ("UZI-PVD", "УЗИ: задняя отслойка стекловидного тела", "УЗИ", None),
+    ("UZI-RD", "УЗИ: отслойка сетчатки", "УЗИ", "H33.0"),
+    ("UZI-VH", "УЗИ: гемофтальм", "УЗИ", "H43.1"),
+    ("CATARACT", "Катаракта", "Диагноз", "H25"),
+    ("GLAUCOMA", "Глаукома", "Диагноз", "H40"),
+    ("DR", "Диабетическая ретинопатия", "Диагноз", "H36.0"),
+]
+
+
+def _seed_diagnoses(db: Session) -> None:
+    for code, name, category, icd10 in _DEMO_DIAGNOSES:
+        if db.execute(select(Diagnosis).where(Diagnosis.code == code)).scalar_one_or_none() is None:
+            db.add(Diagnosis(code=code, name=name, category=category, icd10=icd10))
+    db.flush()
+
+
 def run_seed() -> None:
     db = SessionLocal()
     try:
@@ -271,6 +305,7 @@ def run_seed() -> None:
         _seed_devices(db, branch)
         _seed_inventory(db)
         _seed_operations(db)
+        _seed_diagnoses(db)
         db.commit()
     finally:
         db.close()

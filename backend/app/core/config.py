@@ -57,6 +57,25 @@ class Settings(BaseSettings):
     hikvision_allowed_ips: list[str] = []
     # Workday start "HH:MM" (clinic local time) — first punch-in after this is "late".
     work_day_start: str = "09:00"
+    # Workday end "HH:MM" (clinic local time). Bounds the "reception phone offline"
+    # call-monitoring alert to working hours — a phone is expected to be off at
+    # night, so a stale heartbeat then is normal, not an alert.
+    work_day_end: str = "20:00"
+
+    # Call monitoring — a reception-phone agent is "offline" if its last heartbeat
+    # is older than this many minutes (during working hours). The agent beats
+    # ~every 60s, so this tolerates a few missed beats before alarming.
+    call_device_offline_minutes: int = 5
+
+    # Cloud object storage (Firebase Storage / GCS) for staff face photos —
+    # optional. Local uploads on Cloud Run / Railway are ephemeral, so when a
+    # bucket is configured the Face ID face photos are mirrored to it as a
+    # durable backup under staff_faces/<employeeNo>.jpg. Unset = no-op (the
+    # clinic runs fine without it; photos still go to the device + local disk).
+    firebase_storage_bucket: str | None = None
+    # Path to the service-account JSON. If set, the storage client authenticates
+    # with it; otherwise it falls back to Application Default Credentials.
+    google_application_credentials: str | None = None
 
     # CORS — local dev ports only. In production the Firebase Hosting frontend
     # (kozshifo-prod, Blaze) reaches /api via same-origin rewrites to Cloud Run,
@@ -68,6 +87,12 @@ class Settings(BaseSettings):
     seed_director_email: str = "director@kozshifo.uz"
     seed_director_password: str = _DEV_DIRECTOR_PASSWORD
     seed_on_startup: bool = True
+    # Demo accounts (superadmin/vrach/reception/diagnost/kassa/sklad + the
+    # director password) are (re)seeded to KNOWN values on every startup so the
+    # one-click quick-login buttons always work — in any environment. Set
+    # SEED_DEMO_STAFF=false for a hardened deploy (then the owner manages real
+    # staff via /admin and only the director bootstrap account is created).
+    seed_demo_staff: bool = True
 
     @field_validator("cors_origins", "hikvision_allowed_ips", mode="before")
     @classmethod

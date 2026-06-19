@@ -157,6 +157,7 @@ class _FakeReceptionRepository extends ReceptionRepository {
     required String patientId,
     required String branchId,
     required List<({String serviceId, int quantity})> items,
+    String? doctorId,
   }) async =>
       _discountedVisit;
 

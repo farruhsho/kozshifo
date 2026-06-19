@@ -7,6 +7,13 @@
       "runtimeArgs": ["-m", "uvicorn", "--app-dir", "backend", "app.main:app", "--port", "8000"],
       "port": 8000,
       "autoPort": false
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "flutter",
+      "runtimeArgs": ["run", "-d", "web-server", "--web-port", "8090", "--web-hostname", "127.0.0.1"],
+      "port": 8090,
+      "autoPort": false
     }
   ]
 }

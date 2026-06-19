@@ -77,6 +77,7 @@ def read_me(user: CurrentUser) -> CurrentUserOut:
         full_name=user.full_name,
         is_superuser=user.is_superuser,
         branch_id=user.branch_id,
+        cabinet=user.cabinet,
         permissions=sorted(user.effective_permission_codes()),
         roles=[r.name for r in user.roles],
     )

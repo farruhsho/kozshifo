@@ -28,6 +28,13 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("patients.create", "patients", "Register patients"),
     ("patients.update", "patients", "Edit patients"),
     ("patients.delete", "patients", "Delete patients"),
+    # Patient document attachments (УЗИ-заключения, анализ на ВИЧ, прочие сканы)
+    ("attachments.read", "attachments", "View patient file attachments"),
+    ("attachments.write", "attachments", "Upload / delete patient attachments"),
+    # Diagnosis / conclusion catalog (справочник заключений)
+    ("diagnoses.read", "diagnoses", "View the diagnosis catalog"),
+    ("diagnoses.manage", "diagnoses", "Create / edit diagnoses"),
+    ("diagnoses.record", "diagnoses", "Record a diagnostic conclusion on a visit"),
     # Service catalog
     ("services.read", "catalog", "View services"),
     ("services.create", "catalog", "Create services & categories"),
@@ -77,25 +84,21 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("payroll.read", "finance", "View payroll calculations"),
     ("payroll.manage", "finance", "Post payroll payouts"),
     # IP telephony (TZ Modul 9)
-    ("calls.read", "calls", "View / search call records"),
+    ("calls.read", "calls", "View / search call records & KPIs"),
+    ("calls.manage", "calls", "Register reception phones / rotate device keys"),
     # Access control / Face ID terminals
     ("access_control.read", "access_control", "View face terminals, enrollment & events"),
     ("access_control.manage", "access_control", "Connect terminals, enroll staff faces"),
-    # IP cameras (live view by IP)
-    ("cameras.view", "cameras", "View cameras & live snapshots"),
-    ("cameras.manage", "cameras", "Connect / edit / remove cameras"),
     # Scheduling / appointments
     ("appointments.read", "scheduling", "View the appointments calendar"),
     ("appointments.create", "scheduling", "Book appointments"),
     ("appointments.update", "scheduling", "Reschedule / change appointment status"),
-    # Optics salon (glasses / lenses orders)
-    ("optics.read", "optics", "View optics orders"),
-    ("optics.manage", "optics", "Create / update optics orders"),
     # Lab / diagnostics referrals
     ("lab.read", "lab", "View lab referrals & results"),
     ("lab.manage", "lab", "Create referrals / enter results"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
+    ("reports.view", "reports", "View director reports (financial / clinical / CRM) + CSV export"),
     ("audit.read", "audit", "View audit log"),
 ]
 
@@ -111,12 +114,18 @@ ALL_CODES: list[str] = [code for code, _, _ in PERMISSIONS]
 # Cashier / Warehouse below remain as optional narrower roles the director can
 # assign when a larger clinic splits these duties (RBAC is fully dynamic).
 ROLE_TEMPLATES: dict[str, list[str]] = {
-    # Owner god-account: every permission (the account is also is_superuser, so
-    # it bypasses checks entirely — the role just makes the access explicit).
+    # Superadmin — owner tier: every permission AND is_superuser at the user
+    # level (bypasses checks). Only an account WITH this role may see/manage other
+    # Superadmins (see _is_owner in users.py).
     "Superadmin": ALL_CODES,
+    # Director — full clinic admin: every permission and is_superuser too, so it
+    # has the same broad bypass as the owner EXCEPT it is not a Superadmin, so the
+    # owner-visibility rule hides/locks the Superadmin account from the Director.
     "Director": ALL_CODES,
     "Reception": [
         "patients.read", "patients.create", "patients.update",
+        # front desk staples scanned analyses (анализ на ВИЧ перед операцией и т.п.)
+        "attachments.read", "attachments.write",
         "visits.read", "visits.create", "visits.update",
         # FULL till: front desk takes payments AND refunds (Reception = ресепшен
         # + касса by the owner's model). Payroll stays walled off — the front
@@ -127,19 +136,15 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "inventory.read", "inventory.manage", "inventory.write_off",
         # expenses (rashod)
         "expenses.read", "expenses.manage",
-        "services.read", "branches.read",
-        "exams.read",
+        # services: front desk maintains the price list — add / edit (per ТЗ).
+        "services.read", "services.create", "services.update", "branches.read",
+        "exams.read", "diagnoses.read",
         # Operations dept (TZ Modul 6): reception schedules referred operations
         # (date/surgeon/price) — the act of billing them onto the visit.
         "operations.read", "operations.schedule", "treatments.read",
         "devices.read", "notifications.read",
-        # cameras: front desk connects & watches the live view
-        "cameras.view", "cameras.manage",
         # scheduling: front desk books & manages the calendar
         "appointments.read", "appointments.create", "appointments.update",
-        # optics salon: front desk takes glasses/lenses orders (prototype:
-        # reception nav includes Оптика)
-        "optics.read", "optics.manage",
     ],
     "Cashier": [
         "patients.read", "visits.read",
@@ -149,18 +154,17 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     ],
     "Doctor": [
         "patients.read", "visits.read", "visits.update",
-        # queue.manage: TZ §3.3/§7.1.6 — the doctor calls the next patient
-        # («Вызвать следующего») from their own V-track worklist and presses
-        # «Yakunlandi» (done) to close the appointment, which hands the visit to
-        # the cashier. Without it walk-in patients (auto-queued after diagnostics,
-        # they have no calendar appointment) could never be served from Приём.
+        "attachments.read", "attachments.write",
+        # queue.manage: a doctor runs their OWN queue — calls the next patient
+        # into their cabinet, recalls, returns to waiting (the «Моя очередь·Приём»
+        # workstation). Reception keeps the full two-track board. Also finishes
+        # walk-in patients auto-queued after diagnostics → cashier (TZ §7.1.6).
         "queue.read", "queue.manage", "services.read",
-        "exams.read", "exams.write",
+        "exams.read", "exams.write", "diagnoses.read", "diagnoses.manage", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
         "treatments.read", "treatments.prescribe", "treatments.perform",
-        "cameras.view",
         # scheduling: a doctor sees their day and marks arrived/done
         "appointments.read", "appointments.update",
         # lab: a doctor refers tests and reads results (prototype: doctor nav
@@ -171,16 +175,14 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     # sees patients/visits. No clinical authoring (exams.write) or money.
     "Diagnost": [
         "patients.read", "visits.read",
+        # diagnost attaches УЗИ / scan conclusions to the patient card
+        "attachments.read", "attachments.write",
         "queue.read", "queue.manage",
-        "exams.read",
+        "exams.read", "diagnoses.read", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
-        "cameras.view",
     ],
     "Warehouse": [
         "inventory.read", "inventory.manage", "inventory.write_off",
         "branches.read", "notifications.read",
-        # optics salon belongs to the store side (prototype Settings groups
-        # «Склад / Оптика» under one role)
-        "optics.read", "optics.manage",
     ],
 }

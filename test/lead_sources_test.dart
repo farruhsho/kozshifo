@@ -14,8 +14,11 @@ import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/dashboard/data/dashboard_repository.dart';
 import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
+import 'package:kozshifo/features/dashboard/domain/director_analytics.dart';
 import 'package:kozshifo/features/dashboard/domain/insight.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
+import 'package:kozshifo/features/dashboard/domain/region_report.dart';
+import 'package:kozshifo/features/dashboard/domain/revenue_trend.dart';
 import 'package:kozshifo/features/dashboard/presentation/dashboard_screen.dart';
 
 void main() {
@@ -139,6 +142,48 @@ void main() {
         authControllerProvider.overrideWith(() => _FakeAuth(user)),
         dashboardSummaryProvider.overrideWith((ref) async => _summary),
         insightsProvider.overrideWith((ref) async => const <Insight>[]),
+        // The dashboard also renders the «Пациенты по регионам» panel; stub its
+        // provider with NON-empty data so it doesn't fire a real Dio call AND
+        // doesn't render its own «Пока нет данных» empty state (which would
+        // collide with the lead-sources zero-state assertion below).
+        patientsByRegionProvider.overrideWith((ref) async => RegionReport.fromJson(const {
+              'total': 1,
+              'regions': [
+                {'region': 'Ферганская', 'new_count': 1, 'returning_count': 0, 'total': 1},
+              ],
+            })),
+        // The dashboard also renders the revenue-trend chart; stub its provider
+        // so the screen doesn't fire a real Dio call in widget tests.
+        revenueTrendProvider.overrideWith((ref) async => RevenueTrend.fromJson(const {
+              'points': [
+                {'date': '2026-06-10', 'revenue': '100000'},
+                {'date': '2026-06-11', 'revenue': '120000'},
+              ],
+            })),
+        // Director-analytics panels (expenses / operations / by-doctor / region
+        // trend / districts) each watch their own provider — stub with NON-empty
+        // data so they don't fire real Dio calls and don't render their own empty
+        // state (which would collide with the lead-sources zero-state assertion).
+        expenseBreakdownProvider.overrideWith((ref) async => ExpenseBreakdown.fromJson(const {
+              'month': '2026-06', 'total': '100000',
+              'categories': [{'category': 'Аренда', 'amount': '100000'}],
+            })),
+        operationsSummaryProvider.overrideWith((ref) async => OperationsSummary.fromJson(const {
+              'month': '2026-06', 'scheduled': 1, 'performed': 1, 'cancelled': 0,
+              'revenue': '500000', 'cogs': '100000', 'expenses': '0', 'profit': '400000',
+            })),
+        revenueByDoctorProvider.overrideWith((ref) async => DoctorRevenueReport.fromJson(const {
+              'month': '2026-06', 'total': '500000',
+              'doctors': [{'doctor_id': 'd-1', 'doctor_name': 'Сарвар', 'revenue': '500000'}],
+            })),
+        regionTrendProvider.overrideWith((ref) async => RegionTrendReport.fromJson(const {
+              'month': '2026-06', 'previous_month': '2026-05',
+              'regions': [{'region': 'Ферганская', 'current_new': 2, 'previous_new': 1, 'delta': 1}],
+            })),
+        patientsByDistrictProvider.overrideWith((ref, region) async => DistrictReport.fromJson(const {
+              'region': 'Ферганская', 'total': 1,
+              'districts': [{'district': 'Маргилан', 'new_count': 1, 'returning_count': 0, 'total': 1}],
+            })),
       ];
 
   Widget harness({required List<Override> overrides}) => ProviderScope(

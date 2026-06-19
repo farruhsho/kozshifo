@@ -35,6 +35,17 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     faceid_employee_no: Mapped[str | None] = mapped_column(
         String(32), unique=True, index=True, nullable=True
     )
+    # The doctor's consulting room (e.g. "Каб. 1", "Офтальмолог"). When a doctor
+    # calls a queue ticket the patient is routed to THIS cabinet, so reception
+    # never picks a cabinet at payment time. NULL for non-clinical staff.
+    cabinet: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Queue-ticket prefix for THIS doctor's track (e.g. "С" for Сарвар → С-001).
+    # NULL = derive from the first letter of full_name at ticket-creation time.
+    queue_prefix: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Visiting / external surgeon (e.g. приезжает из Ташкента делать операции).
+    # Surfaced in surgeon pickers; such an account may exist only as a directory
+    # entry (no real login).
+    is_external_surgeon: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles, back_populates="users", lazy="selectin"
@@ -43,6 +54,18 @@ class User(UUIDPKMixin, TimestampMixin, Base):
         secondary=user_permissions, lazy="selectin"
     )
     branch: Mapped["Branch | None"] = relationship(lazy="joined")  # noqa: F821
+    # Services this doctor provides (M2M). A paid service's queue ticket is
+    # claimable by any of its eligible doctors; the cabinet then comes from the
+    # doctor (see `cabinet`). Empty = open pool.
+    services: Mapped[list["Service"]] = relationship(  # noqa: F821
+        secondary="service_doctors", back_populates="doctors", lazy="selectin"
+    )
+    # Diagnoses/conclusions this staff member is allowed to record (M2M). For a
+    # diagnostician this scopes the picker in the «Приём» form (e.g. a UZI
+    # diagnost only sees УЗИ conclusions). Empty = unrestricted.
+    diagnoses: Mapped[list["Diagnosis"]] = relationship(  # noqa: F821
+        secondary="user_diagnoses", lazy="selectin"
+    )
 
     def effective_permission_codes(self) -> set[str]:
         """Union of all role permissions and directly granted permissions."""

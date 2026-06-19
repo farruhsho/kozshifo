@@ -12,8 +12,9 @@ import '../../auth/application/auth_controller.dart';
 import '../data/calls_repository.dart';
 import '../domain/call_record.dart';
 
-/// Журнал звонков IP-телефонии. Read-only: записи приходят с webhook АТС,
-/// здесь только просмотр, поиск и переход к карте пациента.
+/// Мониторинг звонков ресепшена для директора: KPI ответов/пропусков/времени
+/// ответа сверху, затем журнал звонков с поиском. Данные приходят с агентов на
+/// телефонах ресепшена; экран сам обновляется ~раз в минуту.
 class CallsScreen extends ConsumerStatefulWidget {
   const CallsScreen({super.key});
 
@@ -24,13 +25,31 @@ class CallsScreen extends ConsumerStatefulWidget {
 class _CallsScreenState extends ConsumerState<CallsScreen> {
   final _searchController = TextEditingController();
   Timer? _debounce;
+  Timer? _autoRefresh;
   bool _loadingMore = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // «Почти реальное время»: раз в минуту тянем свежие KPI и журнал.
+    _autoRefresh = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (!mounted) return;
+      ref.invalidate(callsSummaryProvider);
+      ref.invalidate(callsListControllerProvider);
+    });
+  }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _autoRefresh?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _refreshNow() {
+    ref.invalidate(callsSummaryProvider);
+    ref.invalidate(callsListControllerProvider);
   }
 
   void _onSearchChanged(String value) {
@@ -117,8 +136,9 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canRead =
-        ref.watch(authControllerProvider).user?.can('calls.read') ?? false;
+    final user = ref.watch(authControllerProvider).user;
+    final canRead = user?.can('calls.read') ?? false;
+    final canManage = user?.can('calls.manage') ?? false;
     if (!canRead) {
       return Scaffold(
         appBar: AppBar(title: const Text('Звонки')),
@@ -131,11 +151,27 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     final calls = ref.watch(callsListControllerProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Звонки')),
+      appBar: AppBar(
+        title: const Text('Звонки'),
+        actions: [
+          IconButton(
+            tooltip: 'Обновить',
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshNow,
+          ),
+          if (canManage)
+            IconButton(
+              tooltip: 'Телефоны ресепшена',
+              icon: const Icon(Icons.smartphone),
+              onPressed: () => context.go('/calls/devices'),
+            ),
+        ],
+      ),
       body: Column(
         children: [
+          const _CallsKpiHeader(),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
             child: Row(
               children: [
                 Expanded(
@@ -241,8 +277,198 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
   }
 }
 
-/// Одна строка журнала: направление, номер, пациент, время, длительность,
-/// заметка и запись разговора.
+/// Полоса KPI над журналом: отвечено / пропущено / среднее время ответа +
+/// баннер офлайн-телефонов. Тихо ничего не показывает, пока грузится.
+class _CallsKpiHeader extends ConsumerWidget {
+  const _CallsKpiHeader();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final summary = ref.watch(callsSummaryProvider).valueOrNull;
+    if (summary == null) {
+      return const SizedBox(height: 4);
+    }
+    final active = ref.watch(callsStatusFilterProvider);
+    // Карточки-фильтры: повторное нажатие на активную сбрасывает фильтр.
+    void toggle(String status) =>
+        ref.read(callsStatusFilterProvider.notifier).state =
+            active == status ? null : status;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        children: [
+          if (summary.offlineDevices.isNotEmpty)
+            _OfflineBanner(devices: summary.offlineDevices.map((d) => d.label).toList()),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _KpiCard(
+                  label: 'Отвечено',
+                  value: '${summary.answered}',
+                  color: Colors.green,
+                  icon: Icons.call_received,
+                  selected: active == 'answered',
+                  onTap: () => toggle('answered'),
+                ),
+                _KpiCard(
+                  label: 'Пропущено',
+                  value: '${summary.missed}',
+                  sub: summary.incoming > 0 ? '${summary.missedPercent}%' : null,
+                  color: summary.missed > 0 ? Colors.red : Colors.grey,
+                  icon: Icons.phone_missed,
+                  selected: active == 'missed',
+                  onTap: () => toggle('missed'),
+                ),
+                _KpiCard(
+                  label: 'Ср. ответ',
+                  value: summary.avgWaitLabel,
+                  color: Colors.blue,
+                  icon: Icons.timer_outlined,
+                ),
+                _KpiCard(
+                  label: 'Исходящие',
+                  value: '${summary.outgoing}',
+                  color: Colors.indigo,
+                  icon: Icons.call_made,
+                  selected: active == 'outgoing',
+                  onTap: () => toggle('outgoing'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KpiCard extends StatelessWidget {
+  const _KpiCard({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.icon,
+    this.sub,
+    this.selected = false,
+    this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final String? sub;
+  final Color color;
+  final IconData icon;
+
+  /// Карточка-фильтр активна (подсвечена).
+  final bool selected;
+
+  /// Если задан — карточка работает как кнопка-фильтр.
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Container(
+      width: 132,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: selected ? 0.22 : 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withValues(alpha: selected ? 0.9 : 0.25),
+          width: selected ? 2 : 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(label,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.check_circle, size: 14, color: color),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(value,
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(color: color, fontWeight: FontWeight.bold)),
+              if (sub != null) ...[
+                const SizedBox(width: 4),
+                Text(sub!, style: TextStyle(color: color, fontSize: 12)),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final card = onTap == null
+        ? content
+        : Tooltip(
+            message: selected ? 'Сбросить фильтр' : 'Фильтр: $label',
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: content,
+            ),
+          );
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: card,
+    );
+  }
+}
+
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner({required this.devices});
+
+  final List<String> devices;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.red.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.red.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Не на связи: ${devices.join(', ')} — звонки могут теряться',
+              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Одна строка журнала: статус (отвечен/пропущен/исходящий), номер, пациент,
+/// время, время ответа и длительность, телефон-источник, запись.
 class _CallTile extends StatelessWidget {
   const _CallTile({required this.call, required this.onOpenRecording});
 
@@ -255,11 +481,8 @@ class _CallTile extends StatelessWidget {
     final patient = call.patient;
     return ListTile(
       leading: Tooltip(
-        message: call.isIncoming ? 'Входящий' : 'Исходящий',
-        child: Icon(
-          call.isIncoming ? Icons.call_received : Icons.call_made,
-          color: call.isIncoming ? Colors.green : Colors.blue,
-        ),
+        message: call.statusLabel,
+        child: Icon(call.statusIcon, color: call.statusColor),
       ),
       title: Row(
         children: [
@@ -291,17 +514,23 @@ class _CallTile extends StatelessWidget {
           ),
         ],
       ),
-      subtitle:
-          Text('${_timeLabel(call.startedAt)}  ·  ${call.durationLabel}'),
+      subtitle: Text(_subtitle()),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (call.note != null && call.note!.isNotEmpty)
+          if (call.device != null)
+            Tooltip(
+              message: 'Телефон: ${call.device!.label}',
+              child: Icon(Icons.smartphone, size: 18, color: muted),
+            ),
+          if (call.note != null && call.note!.isNotEmpty) ...[
+            const SizedBox(width: 6),
             Tooltip(
               message: call.note!,
               child:
                   Icon(Icons.sticky_note_2_outlined, size: 20, color: muted),
             ),
+          ],
           const SizedBox(width: 4),
           IconButton(
             tooltip:
@@ -314,6 +543,18 @@ class _CallTile extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _subtitle() {
+    final parts = <String>[_timeLabel(call.startedAt)];
+    // Время ответа важно для входящих (как быстро взяли трубку).
+    if (call.isIncoming && call.status == 'answered') {
+      parts.add('ответ ${call.waitLabel}');
+    } else if (call.isMissed) {
+      parts.add('звонил ${call.waitLabel}');
+    }
+    if (call.durationSeconds > 0) parts.add('длит. ${call.durationLabel}');
+    return parts.join('  ·  ');
   }
 }
 

@@ -6,12 +6,13 @@ import '../core/widgets/app_shell.dart';
 import '../features/access_control/presentation/access_control_screen.dart';
 import '../features/admin/presentation/admin_screen.dart';
 import '../features/analytics/presentation/analytics_screen.dart';
+import '../features/reports/presentation/reports_screen.dart';
 import '../features/attendance/presentation/attendance_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_user.dart';
 import '../features/auth/presentation/login_screen.dart';
+import '../features/calls/presentation/call_devices_screen.dart';
 import '../features/calls/presentation/calls_screen.dart';
-import '../features/camera/presentation/cameras_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
 import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
@@ -20,7 +21,7 @@ import '../features/inventory/presentation/inventory_screen.dart';
 import '../features/lab/presentation/lab_screen.dart';
 import '../features/notifications/presentation/notifications_screen.dart';
 import '../features/operations/presentation/operations_screen.dart';
-import '../features/optics/presentation/optics_screen.dart';
+import '../features/patients/presentation/patient_visits_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
@@ -41,31 +42,80 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, child) =>
             AppShell(location: state.matchedLocation, child: child),
         routes: [
-          GoRoute(path: '/dashboard', builder: (_, _) => const DashboardScreen()),
-          GoRoute(path: '/reception', builder: (_, _) => const ReceptionScreen()),
+          GoRoute(
+            path: '/dashboard',
+            builder: (_, _) => const DashboardScreen(),
+          ),
+          GoRoute(
+            path: '/reception',
+            builder: (_, _) => const ReceptionScreen(),
+          ),
           GoRoute(path: '/worklist', builder: (_, _) => const WorklistScreen()),
-          GoRoute(path: '/scheduling', builder: (_, _) => const SchedulingScreen()),
+          GoRoute(
+            path: '/scheduling',
+            builder: (_, _) => const SchedulingScreen(),
+          ),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
-          GoRoute(path: '/operations', builder: (_, _) => const OperationsScreen()),
-          GoRoute(path: '/analytics', builder: (_, _) => const AnalyticsScreen()),
-          GoRoute(path: '/optics', builder: (_, _) => const OpticsScreen()),
+          // Личное рабочее место очереди: одна дорожка (врач «Мой приём» /
+          // диагност «Диагностика»), кабинет из профиля. Дорожка выводится из
+          // прав внутри экрана (exams.write → врач, иначе диагност).
+          GoRoute(
+            path: '/my-queue',
+            builder: (_, _) => const QueueScreen(personal: true),
+          ),
+          // Процедурный кабинет: личная дорожка «Лечение» (Л-талоны) —
+          // вызвать/принять/завершить курс лечения. Бэкенд-lifecycle уже есть.
+          GoRoute(
+            path: '/treatment-queue',
+            builder: (_, _) =>
+                const QueueScreen(personal: true, track: 'treatment'),
+          ),
+          GoRoute(
+            path: '/operations',
+            builder: (_, _) => const OperationsScreen(),
+          ),
+          GoRoute(
+            path: '/analytics',
+            builder: (_, _) => const AnalyticsScreen(),
+          ),
+          GoRoute(path: '/reports', builder: (_, _) => const ReportsScreen()),
           GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),
-          GoRoute(path: '/notifications', builder: (_, _) => const NotificationsScreen()),
+          GoRoute(
+            path: '/notifications',
+            builder: (_, _) => const NotificationsScreen(),
+          ),
           GoRoute(path: '/patients', builder: (_, _) => const PatientsScreen()),
           GoRoute(
             path: '/patients/:id/card',
             builder: (_, state) =>
                 PatientCardScreen(patientId: state.pathParameters['id']!),
           ),
-          GoRoute(path: '/finance', builder: (_, _) => const FinanceScreen()),
-          GoRoute(path: '/attendance', builder: (_, _) => const AttendanceScreen()),
-          GoRoute(path: '/calls', builder: (_, _) => const CallsScreen()),
-          GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
-          GoRoute(path: '/cameras', builder: (_, _) => const CamerasScreen()),
-          GoRoute(path: '/inventory', builder: (_, _) => const InventoryScreen()),
+          // Standalone visit history (Ф5). Under the /patients prefix, so the
+          // redirect guard inherits the Пациенты destination's patients.read gate.
           GoRoute(
-              path: '/access-control',
-              builder: (_, _) => const AccessControlScreen()),
+            path: '/patients/:id/visits',
+            builder: (_, state) =>
+                PatientVisitsScreen(patientId: state.pathParameters['id']!),
+          ),
+          GoRoute(path: '/finance', builder: (_, _) => const FinanceScreen()),
+          GoRoute(
+            path: '/attendance',
+            builder: (_, _) => const AttendanceScreen(),
+          ),
+          GoRoute(path: '/calls', builder: (_, _) => const CallsScreen()),
+          GoRoute(
+              path: '/calls/devices',
+              builder: (_, _) => const CallDevicesScreen()),
+          GoRoute(path: '/devices', builder: (_, _) => const DevicesScreen()),
+          GoRoute(
+            path: '/inventory',
+            builder: (_, _) => const InventoryScreen(),
+          ),
+          GoRoute(
+            path: '/access-control',
+            builder: (_, _) => const AccessControlScreen(),
+          ),
+          GoRoute(path: '/services', builder: (_, _) => const ServicesScreen()),
           GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
         ],
       ),

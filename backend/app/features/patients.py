@@ -19,6 +19,7 @@ from app.models.exam import EyeExam
 from app.models.operation import Operation
 from app.models.patient import Patient
 from app.models.payment import Payment
+from app.models.user import User
 from app.models.visit import Visit
 from app.schemas.common import Page
 from app.schemas.patient import (
@@ -32,6 +33,12 @@ from app.schemas.patient import (
 router = APIRouter(prefix="/patients", tags=["Patients"])
 
 _OPEN_VISIT = ("open", "in_progress")
+
+
+def _check_doctor(db: Session, doctor_id: UUID | None) -> None:
+    """Reject an unknown primary_doctor_id (лечащий врач) before persisting it."""
+    if doctor_id is not None and db.get(User, doctor_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown primary_doctor_id")
 
 
 @router.get("", response_model=Page[PatientOut], dependencies=[Depends(require_permission("patients.read"))])
@@ -64,6 +71,7 @@ def create_patient(
     actor: Annotated[CurrentUser, Depends(require_permission("patients.create"))],
 ) -> Patient:
     data = payload.model_dump()
+    _check_doctor(db, data.get("primary_doctor_id"))
     mrn = data.pop("mrn") or next_mrn(db)
     if db.execute(select(Patient).where(Patient.mrn == mrn)).scalar_one_or_none():
         raise HTTPException(status.HTTP_409_CONFLICT, f"MRN {mrn} already exists")
@@ -155,7 +163,8 @@ def patient_summary(patient_id: UUID, db: Annotated[Session, Depends(get_db)]) -
 
     Reception-appropriate (no clinical detail beyond the last diagnosis label,
     which reception already sees via exams.read on the doctor card)."""
-    if db.get(Patient, patient_id) is None:
+    patient = db.get(Patient, patient_id)
+    if patient is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 
     visit_count = db.execute(
@@ -194,6 +203,14 @@ def patient_summary(patient_id: UUID, db: Annotated[Session, Depends(get_db)]) -
         .order_by(Visit.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
+    # Doctor-of-patient (Phase 2): persistent primary doctor + last-visit fallback,
+    # so reception can pre-fill the picker for a returning patient.
+    last_visit_doctor = (
+        db.get(User, last_visit.doctor_id)
+        if last_visit is not None and last_visit.doctor_id is not None
+        else None
+    )
+
     return PatientSummary(
         patient_id=patient_id,
         visit_count=visit_count,
@@ -205,6 +222,10 @@ def patient_summary(patient_id: UUID, db: Annotated[Session, Depends(get_db)]) -
         total_debt=str(total_debt.quantize(Decimal("0.01"))),
         last_discount_reason=last_disc,
         is_repeat=visit_count > 1,
+        primary_doctor_id=patient.primary_doctor_id,
+        primary_doctor_name=patient.primary_doctor_name,
+        last_visit_doctor_id=last_visit_doctor.id if last_visit_doctor else None,
+        last_visit_doctor_name=last_visit_doctor.full_name if last_visit_doctor else None,
     )
 
 
@@ -218,7 +239,10 @@ def update_patient(
     patient = db.get(Patient, patient_id)
     if patient is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "primary_doctor_id" in data:
+        _check_doctor(db, data["primary_doctor_id"])
+    for field, value in data.items():
         setattr(patient, field, value)
     record_audit(db, action="update", entity_type="patient", entity_id=patient.id, actor_id=actor.id,
                  summary=f"Updated patient {patient.full_name}")

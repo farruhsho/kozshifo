@@ -26,6 +26,8 @@ class PatientCreate(BaseModel):
     phone2: str | None = None
     email: str | None = None
     address: str | None = None
+    region: str | None = None
+    district: str | None = None
     passport: str | None = None
     pinfl: str | None = None
     lead_source: LeadSource | None = None
@@ -36,6 +38,7 @@ class PatientCreate(BaseModel):
     dispensary_other: str | None = None
     notes: str | None = None
     branch_id: UUID | None = None
+    primary_doctor_id: UUID | None = None  # лечащий врач
     mrn: str | None = None  # auto-generated if omitted
 
 
@@ -49,6 +52,8 @@ class PatientUpdate(BaseModel):
     phone2: str | None = None
     email: str | None = None
     address: str | None = None
+    region: str | None = None
+    district: str | None = None
     passport: str | None = None
     pinfl: str | None = None
     lead_source: LeadSource | None = None
@@ -58,6 +63,7 @@ class PatientUpdate(BaseModel):
     dispensary_here: str | None = None
     dispensary_other: str | None = None
     notes: str | None = None
+    primary_doctor_id: UUID | None = None
 
 
 class PatientOut(BaseModel):
@@ -76,6 +82,8 @@ class PatientOut(BaseModel):
     phone2: str | None
     email: str | None
     address: str | None
+    region: str | None = None
+    district: str | None = None
     passport: str | None
     pinfl: str | None
     lead_source: str | None
@@ -86,6 +94,8 @@ class PatientOut(BaseModel):
     dispensary_other: str | None
     notes: str | None
     branch_id: UUID | None
+    primary_doctor_id: UUID | None = None
+    primary_doctor_name: str | None = None
 
 
 class DuplicateCandidate(BaseModel):
@@ -115,3 +125,9 @@ class PatientSummary(BaseModel):
     total_debt: str  # decimal string across open visits
     last_discount_reason: str | None = None
     is_repeat: bool
+    # Doctor-of-patient (Phase 2): the persistent лечащий врач, plus the doctor on
+    # the most recent visit as a fallback so reception can pre-fill the picker.
+    primary_doctor_id: UUID | None = None
+    primary_doctor_name: str | None = None
+    last_visit_doctor_id: UUID | None = None
+    last_visit_doctor_name: str | None = None

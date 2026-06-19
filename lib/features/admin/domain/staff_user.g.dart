@@ -15,9 +15,18 @@ _StaffUser _$StaffUserFromJson(Map<String, dynamic> json) => _StaffUser(
   isSuperuser: json['is_superuser'] as bool? ?? false,
   branchId: json['branch_id'] as String?,
   salaryPercent: json['salary_percent'] as String?,
+  cabinet: json['cabinet'] as String?,
+  queuePrefix: json['queue_prefix'] as String?,
+  isExternalSurgeon: json['is_external_surgeon'] as bool? ?? false,
   roles: json['roles'] == null
       ? const <String>[]
       : roleNamesFromJson(json['roles']),
+  services: json['services'] == null
+      ? const <DoctorService>[]
+      : doctorServicesFromJson(json['services']),
+  diagnoses: json['diagnoses'] == null
+      ? const <DoctorDiagnosis>[]
+      : doctorDiagnosesFromJson(json['diagnoses']),
 );
 
 Map<String, dynamic> _$StaffUserToJson(_StaffUser instance) =>
@@ -30,5 +39,10 @@ Map<String, dynamic> _$StaffUserToJson(_StaffUser instance) =>
       'is_superuser': instance.isSuperuser,
       'branch_id': instance.branchId,
       'salary_percent': instance.salaryPercent,
+      'cabinet': instance.cabinet,
+      'queue_prefix': instance.queuePrefix,
+      'is_external_surgeon': instance.isExternalSurgeon,
       'roles': instance.roles,
+      'services': doctorServicesToJson(instance.services),
+      'diagnoses': doctorDiagnosesToJson(instance.diagnoses),
     };

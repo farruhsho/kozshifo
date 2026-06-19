@@ -121,6 +121,63 @@ def test_operations_counters_after_perform(client, auth):
     assert after["operations_month"] >= after["operations_today"]
 
 
+def test_extended_summary_fields_present_and_typed(client, auth):
+    """The expanded director KPIs: week/month new patients, returning, expenses,
+    profit and scheduled ops are all present with sane types."""
+    body = _summary(client, auth)
+    for field in ("new_patients_week", "new_patients_month", "returning_today",
+                  "operations_scheduled_today"):
+        assert field in body and isinstance(body[field], int), field
+    # Money fields serialize as decimal strings.
+    for field in ("expenses_today", "expenses_month", "profit_today", "profit_month"):
+        assert field in body, field
+        float(body[field])  # parses as a number
+
+
+def test_revenue_by_doctor_shape_and_month_validation(client, auth):
+    resp = client.get(f"{API}/dashboard/revenue-by-doctor", headers=auth)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert {"month", "total", "doctors"} <= set(body)
+    assert isinstance(body["doctors"], list)
+    # A malformed month is rejected.
+    bad = client.get(f"{API}/dashboard/revenue-by-doctor", headers=auth,
+                     params={"month": "2026/06"})
+    assert bad.status_code == 422, bad.text
+
+
+def test_operations_summary_funnel_shape(client, auth):
+    resp = client.get(f"{API}/dashboard/operations-summary", headers=auth)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    for key in ("scheduled", "performed", "cancelled", "revenue", "cogs",
+                "expenses", "profit"):
+        assert key in body, key
+
+
+def test_expense_breakdown_reflects_a_new_expense(client, auth):
+    branch_id = _branch_id(client, auth)
+    created = client.post(f"{API}/finance/expenses", headers=auth, json={
+        "branch_id": branch_id, "category": "Аренда КПИ",
+        "amount": "500000.00", "expense_date": date.today().isoformat()})
+    assert created.status_code == 201, created.text
+    resp = client.get(f"{API}/dashboard/expense-breakdown", headers=auth)
+    assert resp.status_code == 200, resp.text
+    cats = {c["category"]: c["amount"] for c in resp.json()["categories"]}
+    assert "Аренда КПИ" in cats
+
+
+def test_region_and_district_analytics_shape(client, auth):
+    trend = client.get(f"{API}/dashboard/region-trend", headers=auth)
+    assert trend.status_code == 200, trend.text
+    assert {"month", "previous_month", "regions"} <= set(trend.json())
+
+    district = client.get(f"{API}/dashboard/patients-by-district", headers=auth,
+                          params={"region": "Ферганская"})
+    assert district.status_code == 200, district.text
+    assert district.json()["region"] == "Ферганская"
+
+
 def test_low_stock_is_per_branch_not_cross_branch_sum(client, auth):
     """A branch deficit must count even when another branch is well stocked."""
     second = client.post(f"{API}/branches", headers=auth,

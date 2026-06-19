@@ -52,19 +52,40 @@ abstract class Operation with _$Operation {
   bool get isUrgent => priority == 'urgent';
 
   String get eyeLabel => switch (eye) {
-        'od' => 'правый глаз',
-        'os' => 'левый глаз',
-        'ou' => 'оба глаза',
-        _ => eye,
-      };
+    'od' => 'правый глаз',
+    'os' => 'левый глаз',
+    'ou' => 'оба глаза',
+    _ => eye,
+  };
 
   String get statusLabel => switch (status) {
-        'referred' => 'направлен',
-        'scheduled' => 'запланирована',
-        'in_progress' => 'идёт',
-        'performed' => 'выполнена',
-        'completed' => 'завершена',
-        'cancelled' => 'отменена',
-        _ => status,
-      };
+    'referred' => 'направлен',
+    'scheduled' => 'запланирована',
+    'in_progress' => 'идёт',
+    'performed' => 'выполнена',
+    'completed' => 'завершена',
+    'cancelled' => 'отменена',
+    _ => status,
+  };
+
+  /// `scheduledAt` как ЛОКАЛЬНОЕ время. Бэкенд хранит UTC; Postgres отдаёт его
+  /// со смещением, а SQLite (dev/fallback) — НАИВНО (без Z), из-за чего
+  /// `DateTime.parse(...).toLocal()` ничего не делал бы и смещал бы день. Здесь
+  /// наивную строку трактуем как UTC, поэтому день/время одинаковы на обеих БД.
+  DateTime? get scheduledAtLocal {
+    final s = scheduledAt;
+    if (s == null) return null;
+    final raw = DateTime.parse(s);
+    final utc = raw.isUtc
+        ? raw
+        : DateTime.utc(
+            raw.year,
+            raw.month,
+            raw.day,
+            raw.hour,
+            raw.minute,
+            raw.second,
+          );
+    return utc.toLocal();
+  }
 }

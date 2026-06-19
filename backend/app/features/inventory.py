@@ -31,6 +31,7 @@ from app.schemas.inventory import (
     ProductOut,
     ProductUpdate,
     ReceiptIn,
+    ReorderSuggestionOut,
     StockRowOut,
     SupplierCreate,
     SupplierOut,
@@ -259,6 +260,45 @@ def stock_overview(
             )
         )
     return rows
+
+
+@router.get("/reorder-suggestions", response_model=list[ReorderSuggestionOut],
+            dependencies=[Depends(require_permission("inventory.read"))])
+def reorder_suggestions(
+    db: Annotated[Session, Depends(get_db)],
+    branch_id: UUID,
+) -> list[ReorderSuggestionOut]:
+    """Active products at or below min_stock in the branch, with a suggested
+    reorder quantity (bring stock up to 2× min_stock). Powers a one-click restock
+    list — most-deficient first. on_hand counts only usable (non-expired) units,
+    matching what FEFO will actually consume."""
+    products = db.execute(
+        select(Product).where(Product.is_active.is_(True), Product.min_stock > 0)
+    ).scalars().all()
+    batches = db.execute(
+        select(StockBatch).where(StockBatch.branch_id == branch_id, StockBatch.quantity > 0)
+    ).scalars().all()
+    by_product: dict[UUID, list[StockBatch]] = defaultdict(list)
+    for batch in batches:
+        by_product[batch.product_id].append(batch)
+
+    out: list[ReorderSuggestionOut] = []
+    for product in products:
+        on_hand = sum(
+            (Decimal(b.quantity) for b in by_product.get(product.id, []) if not b.expired),
+            Decimal("0"),
+        )
+        min_stock = Decimal(product.min_stock)
+        if on_hand > min_stock:
+            continue
+        out.append(ReorderSuggestionOut(
+            product=ProductOut.model_validate(product),
+            on_hand=on_hand,
+            min_stock=min_stock,
+            suggested_qty=min_stock * 2 - on_hand,  # restock up to 2× min
+        ))
+    out.sort(key=lambda r: r.on_hand - r.min_stock)  # most-deficient first
+    return out
 
 
 # ── Write-off ─────────────────────────────────────────────────────────────────

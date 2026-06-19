@@ -6,7 +6,7 @@ Performing it consumes the template consumables via the FEFO stock engine.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -17,14 +17,21 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
+from app.core.dates import local_day_bounds_utc
 from app.core.deps import CurrentUser, require_any_permission, require_permission
 from app.core.flow import advance_flow, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, on_hand, write_off_fefo
 from app.features.visits import _make_item, _recompute_total
 from app.models.catalog import Service
-from app.models.inventory import Product
-from app.models.operation import Operation, OperationType, OperationTypeConsumable
+from app.models.finance import Expense
+from app.models.inventory import Product, StockBatch, StockMovement
+from app.models.operation import (
+    ADHOC_REASON_SUFFIX,
+    Operation,
+    OperationType,
+    OperationTypeConsumable,
+)
 from app.models.user import User
 from app.models.visit import Visit, VisitItem
 from app.schemas.operation import (
@@ -32,12 +39,15 @@ from app.schemas.operation import (
     AvailabilityOut,
     OperationComplete,
     OperationCreate,
+    OperationDaySummary,
     OperationOut,
     OperationReport,
     OperationSchedule,
     OperationTypeCreate,
     OperationTypeOut,
+    PerformOperationRequest,
     SurgeonOperationStat,
+    SurgeonOut,
 )
 
 router = APIRouter(tags=["Operations"])
@@ -152,11 +162,14 @@ def refer_operation(
     op_type = db.get(OperationType, payload.operation_type_id)
     if op_type is None or not op_type.is_active:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown or inactive operation type")
+    if payload.surgeon_id is not None and db.get(User, payload.surgeon_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown surgeon")
 
     operation = Operation(
         visit_id=visit.id,
         patient_id=visit.patient_id,
         referring_doctor_id=actor.id,
+        surgeon_id=payload.surgeon_id,
         operation_type_id=op_type.id,
         eye=payload.eye,
         priority=payload.priority,
@@ -174,6 +187,25 @@ def refer_operation(
     db.commit()
     db.refresh(operation)
     return operation
+
+
+@router.get("/operations/surgeons", response_model=list[SurgeonOut],
+            dependencies=[Depends(require_permission("operations.read"))])
+def list_surgeons(db: Annotated[Session, Depends(get_db)]) -> list[User]:
+    """Staff eligible to operate — for the referral / schedule surgeon picker.
+
+    A surgeon is an active user who can perform operations (operations.perform via
+    role or direct grant) OR is flagged as a visiting/external surgeon (e.g.
+    приезжает из Ташкента). Gated operations.read so the referring doctor can pick
+    without identity-module (users.read) access; external surgeons are flagged so
+    the UI can mark «приезжий»."""
+    users = db.execute(
+        select(User).where(User.is_active.is_(True)).order_by(User.full_name)
+    ).scalars().all()
+    return [
+        u for u in users
+        if u.is_external_surgeon or "operations.perform" in u.effective_permission_codes()
+    ]
 
 
 @router.get("/visits/{visit_id}/operations", response_model=list[OperationOut],
@@ -197,11 +229,19 @@ def list_operations(
     status_filter: str | None = Query(None, alias="status"),
     branch_id: UUID | None = None,
     surgeon_id: UUID | None = None,
+    scheduled_from: datetime | None = None,
+    scheduled_to: datetime | None = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ) -> list[Operation]:
     """The Operations-department worklist: referrals waiting to be scheduled,
-    scheduled/in-progress surgeries, and (filtered) history. Branch-scoped."""
+    scheduled/in-progress surgeries, and (filtered) history. Branch-scoped.
+
+    `scheduled_from`/`scheduled_to` window the result by `scheduled_at` (a
+    half-open [from, to) interval of absolute UTC instants — the calendar passes
+    the selected local day's UTC bounds). This lets the agenda fetch just one
+    day instead of pulling every scheduled op and capping at 500 client-side;
+    rows with no `scheduled_at` (bare referrals) drop out of a windowed query."""
     stmt = select(Operation).join(Visit, Operation.visit_id == Visit.id)
     # Branch isolation mirrors visits.list_visits: a single-branch user only
     # sees their branch; the director (superuser) sees all.
@@ -213,6 +253,13 @@ def list_operations(
         stmt = stmt.where(Operation.status == status_filter)
     if surgeon_id is not None:
         stmt = stmt.where(Operation.surgeon_id == surgeon_id)
+    # Mirror operation_report's raw-datetime comparison: scheduled_at is stored
+    # UTC (client sends `.toUtc()`), so an absolute-instant window is correct on
+    # both Postgres (aware) and SQLite (naive UTC wall-clock).
+    if scheduled_from is not None:
+        stmt = stmt.where(Operation.scheduled_at >= scheduled_from)
+    if scheduled_to is not None:
+        stmt = stmt.where(Operation.scheduled_at < scheduled_to)
     # Urgent first, then by referral time (oldest waiting at the top).
     stmt = stmt.order_by(
         (Operation.priority == "urgent").desc(), Operation.created_at.asc()
@@ -264,6 +311,74 @@ def operation_report(
     return OperationReport(
         date_from=date_from, date_to=date_to,
         count=count, total_amount=Decimal(total), by_surgeon=by_surgeon,
+    )
+
+
+# Operation day-expenses are logged via the finance module under this category;
+# the day-summary subtracts exactly these from the day's operation revenue.
+OPERATIONS_EXPENSE_CATEGORY = "Операции"
+
+
+@router.get("/operations/day-summary", response_model=OperationDaySummary,
+            dependencies=[Depends(require_permission("operations.read"))])
+def operation_day_summary(
+    db: Annotated[Session, Depends(get_db)],
+    actor: CurrentUser,
+    d: date = Query(..., alias="date"),
+    branch_id: UUID | None = None,
+) -> OperationDaySummary:
+    """End-of-day operations P&L for the director: revenue (Σ price of operations
+    PERFORMED that local day) − COGS (consumables written off for them, qty ×
+    batch unit_cost) − the day's operation expenses (finance Expense category
+    «Операции»). Branch scope: explicit param, else the caller's own branch."""
+    start, end = local_day_bounds_utc(d)
+    branch = branch_id if branch_id is not None else (
+        None if actor.is_superuser else actor.branch_id)
+
+    op_stmt = (
+        select(Operation.id, Operation.price)
+        .join(Visit, Operation.visit_id == Visit.id)
+        .where(
+            Operation.status.in_(Operation.DONE_STATUSES),
+            Operation.performed_at >= start,
+            Operation.performed_at < end,
+        )
+    )
+    if branch is not None:
+        op_stmt = op_stmt.where(Visit.branch_id == branch)
+    op_rows = db.execute(op_stmt).all()
+    op_ids = [r[0] for r in op_rows]
+    revenue = sum((r[1] if r[1] is not None else Decimal("0") for r in op_rows), Decimal("0"))
+
+    cogs = Decimal("0")
+    if op_ids:
+        cogs = Decimal(db.execute(
+            select(func.coalesce(
+                func.sum(func.abs(StockMovement.quantity) * StockBatch.unit_cost), 0))
+            .select_from(StockMovement)
+            .join(StockBatch, StockBatch.id == StockMovement.batch_id)
+            .where(
+                StockMovement.ref_type == "operation",
+                StockMovement.ref_id.in_(op_ids),
+                StockMovement.movement_type == "write_off",
+            )
+        ).scalar_one())
+
+    exp_stmt = select(func.coalesce(func.sum(Expense.amount), 0)).where(
+        Expense.expense_date == d,
+        Expense.category == OPERATIONS_EXPENSE_CATEGORY,
+    )
+    if branch is not None:
+        exp_stmt = exp_stmt.where(Expense.branch_id == branch)
+    expenses = Decimal(db.execute(exp_stmt).scalar_one())
+
+    return OperationDaySummary(
+        date=d,
+        operations_count=len(op_ids),
+        revenue=revenue,
+        cogs=cogs,
+        expenses=expenses,
+        profit=revenue - cogs - expenses,
     )
 
 
@@ -328,6 +443,46 @@ def schedule_operation(
     return operation
 
 
+@router.post("/operations/{operation_id}/unschedule", response_model=OperationOut)
+def unschedule_operation(
+    operation_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("operations.schedule"))],
+) -> Operation:
+    """Detach a SCHEDULED operation from its day, back to the referred pool
+    (force-majeure: the patient can't make that day, so reception frees the slot
+    for another from the pool). De-bills the visit (scheduling had added the
+    linked service) unless it was already paid — then a refund is required first.
+    The operation stays alive (status → referred) so it can be re-scheduled for
+    another day; the chosen surgeon is kept."""
+    operation = _get_or_404(db, operation_id)
+    if operation.status != "scheduled":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Only a scheduled operation can be detached (status: {operation.status})")
+    visit = db.get(Visit, operation.visit_id)
+    if operation.visit_item_id is not None:
+        item = db.get(VisitItem, operation.visit_item_id)
+        if item is not None:
+            if item.status != "ordered":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The billed item is already paid — refund the payment before detaching")
+            visit.items.remove(item)  # delete-orphan cascade removes the row
+            _recompute_total(visit)
+        operation.visit_item_id = None
+    operation.status = "referred"
+    operation.scheduled_at = None
+    operation.price = None
+    record_audit(db, action="unschedule", entity_type="operation", entity_id=operation.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Detached operation {operation.type_name} from its day (back to pool)")
+    db.flush()
+    recompute_plan(db, visit)  # the lifecycle stops advertising a fixed surgery date
+    db.commit()
+    db.refresh(operation)
+    return operation
+
+
 @router.post("/operations/{operation_id}/start", response_model=OperationOut)
 def start_operation(
     operation_id: UUID,
@@ -356,6 +511,8 @@ def perform_operation(
     operation_id: UUID,
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(require_permission("operations.perform"))],
+    # Optional body — omitted = template only (keeps existing no-body callers working).
+    payload: PerformOperationRequest | None = None,
 ) -> Operation:
     operation = _get_or_404(db, operation_id)
     if operation.status not in ("scheduled", "in_progress"):
@@ -369,28 +526,46 @@ def perform_operation(
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Cannot perform an operation on a {visit.status} visit")
     op_type = operation.operation_type
+    ad_hoc = payload.ad_hoc_consumables if payload is not None else []
 
-    # Pre-check availability of EVERY template consumable before writing anything
-    # off. write_off_fefo checks its own product, but a multi-line loop could
-    # otherwise consume the first products and fail midway — pre-checking keeps
-    # the whole perform atomic: on shortage nothing has been mutated.
-    for line in op_type.consumables:
-        available = on_hand(db, line.product_id, visit.branch_id)
-        if available < line.quantity:
+    # Consumables actually written off = the type's TEMPLATE plus any AD-HOC
+    # extras the operating team picked from the warehouse (reception logs what
+    # was really used). Both go through the same FEFO; ad-hoc lines are tagged in
+    # the movement reason for traceability. (product_id, quantity, reason) tuples.
+    lines = [
+        (c.product_id, c.quantity, f"Операция {op_type.name}")
+        for c in op_type.consumables
+    ]
+    lines += [
+        (a.product_id, a.quantity, f"Операция {op_type.name}{ADHOC_REASON_SUFFIX}")
+        for a in ad_hoc
+    ]
+
+    # Pre-check per PRODUCT (summing duplicate lines — a product can be both a
+    # template consumable AND an ad-hoc extra, or listed twice) before writing
+    # anything off. Keeps the whole perform atomic AND makes the 409 report the
+    # TRUE cumulative demand, not one line's quantity.
+    demand: dict = {}
+    for product_id, quantity, _ in lines:
+        demand[product_id] = (demand.get(product_id) or 0) + quantity
+    for product_id, needed in demand.items():
+        available = on_hand(db, product_id, visit.branch_id)
+        if available < needed:
+            product = db.get(Product, product_id)
+            label = f"{product.name} ({product.sku})" if product else str(product_id)
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"Insufficient stock for {line.product.name} ({line.product.sku}): "
-                f"requested {line.quantity}, available {available}",
+                f"Insufficient stock for {label}: requested {needed}, available {available}",
             )
 
     try:
-        for line in op_type.consumables:
+        for product_id, quantity, reason in lines:
             write_off_fefo(
                 db,
-                product_id=line.product_id,
+                product_id=product_id,
                 branch_id=visit.branch_id,
-                quantity=line.quantity,
-                reason=f"Операция {op_type.name}",
+                quantity=quantity,
+                reason=reason,
                 ref_type="operation",
                 ref_id=operation.id,
                 actor_id=actor.id,
@@ -411,12 +586,13 @@ def perform_operation(
     if operation.surgeon_id is None:
         operation.surgeon_id = actor.id
     advance_flow(db, visit, "surgery_performed")  # workflow engine (same transaction)
+    n_adhoc = len(ad_hoc)
     record_audit(db, action="perform", entity_type="operation", entity_id=operation.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
-                 summary=f"Performed operation {op_type.name} ({operation.eye}); "
-                         f"auto write-off: {len(op_type.consumables)} positions")
+                 summary=f"Performed operation {op_type.name} ({operation.eye}); write-off: "
+                         f"{len(op_type.consumables)} template + {n_adhoc} ad-hoc positions")
     db.commit()
-    check_low_stock(db, [l.product_id for l in op_type.consumables], visit.branch_id)  # post-commit
+    check_low_stock(db, [pid for pid, _, _ in lines], visit.branch_id)  # post-commit
     db.refresh(operation)
     return operation
 

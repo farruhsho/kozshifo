@@ -1,7 +1,7 @@
 """Operations & treatments DTOs."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -66,15 +66,16 @@ class AvailabilityOut(BaseModel):
 
 # ── Operations (instances on a visit) ─────────────────────────────────────────
 class OperationCreate(BaseModel):
-    """Doctor's referral to surgery (TZ Modul 6): type + recommendation only.
-
-    No price/date/surgeon here — reception fills those in at schedule time.
+    """Doctor's referral to surgery (TZ Modul 6): type, recommendation and,
+    optionally, the chosen surgeon (incl. a visiting/external one). Reception
+    still fixes price/date at schedule time and may change the surgeon then.
     """
 
     operation_type_id: UUID
     eye: Literal["od", "os", "ou"] = "ou"
     priority: Literal["normal", "urgent"] = "normal"
     notes: str | None = None  # doctor's recommendation
+    surgeon_id: UUID | None = None  # chosen surgeon (optional)
 
 
 class OperationSchedule(BaseModel):
@@ -85,6 +86,21 @@ class OperationSchedule(BaseModel):
     # Optional price override; absent -> the linked service's catalog price.
     price: Decimal | None = Field(default=None, ge=0)
     notes: str | None = None
+
+
+class AdHocConsumable(BaseModel):
+    """One extra (non-template) product actually used during a perform — picked
+    from the warehouse by the operating team; written off via the same FEFO."""
+
+    product_id: UUID
+    quantity: Decimal = Field(gt=0)
+
+
+class PerformOperationRequest(BaseModel):
+    """Perform payload: consumables ACTUALLY used beyond the type's template.
+    Empty list = template only (backwards compatible)."""
+
+    ad_hoc_consumables: list[AdHocConsumable] = []
 
 
 class OperationComplete(BaseModel):
@@ -118,6 +134,18 @@ class OperationOut(BaseModel):
     created_at: datetime
 
 
+class SurgeonOut(BaseModel):
+    """Staff eligible to operate, for the referral/schedule surgeon picker —
+    a surgeon (operations.perform) or a visiting/external one (из Ташкента)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    full_name: str
+    is_external_surgeon: bool = False
+    cabinet: str | None = None
+
+
 # ── Operations report (TZ Modul 6: period totals, by surgeon) ─────────────────
 class SurgeonOperationStat(BaseModel):
     surgeon_id: UUID | None
@@ -132,6 +160,17 @@ class OperationReport(BaseModel):
     count: int
     total_amount: Decimal
     by_surgeon: list[SurgeonOperationStat]
+
+
+class OperationDaySummary(BaseModel):
+    """End-of-day operations P&L: profit = revenue − COGS − day expenses."""
+
+    date: date
+    operations_count: int
+    revenue: Decimal   # Σ price of operations performed that day
+    cogs: Decimal      # Σ consumables cost (qty × batch unit_cost)
+    expenses: Decimal  # Σ day operation-expenses (Expense category «Операции»)
+    profit: Decimal
 
 
 # ── Treatments ────────────────────────────────────────────────────────────────

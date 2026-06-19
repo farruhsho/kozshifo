@@ -112,10 +112,265 @@ on every mutation · multi-branch**.
   `cameras.view` to Doctor, all to Director. Migration `a650ccc3e510`. The RMK-700
   serial / CAS-2000BER file adapters remain deferred (hardware path TBD).
 
-**Verified green:** backend `pytest` = 217 passed · Flutter `flutter test` = 139 passed
-· `flutter analyze` = no issues · `flutter build web` = builds ·
-`alembic upgrade head` + `alembic check` = clean (head `a1c4e7f9d2b0`; this round
-added the operations TZ-Modul-6 referral flow).
+- **Структурированная «История визитов»: ✅ done** — the doctor's patient card
+  (ПАЦИЕНТ column) now lists every visit as an expandable row: billed services,
+  Итого/Скидка/К оплате/Оплачено/Долг, flow status and an ЭКСТРЕННО badge, with
+  the form's current visit highlighted and «Открыть осмотр» to switch to it.
+  Pure frontend — reuses the existing `GET /visits?patient_id=` payload (no extra
+  request, no backend change); the client `VisitSummary` gained optional
+  money/items fields (defaulted, so the picker + const fixtures still parse).
+- **Queue auto-refresh hardened: ✅** — the live queue's 5s refresh now skips a
+  tick while the previous fetch is still in flight, so a slow backend can't
+  stack GETs or let a late response clobber a newer list (`queue_screen.dart`;
+  regression test `test/queue_screen_test.dart` also pins clean timer disposal).
+- **Queue ticket number no longer clips: ✅** — a longer number (V-0003) overflowed
+  the round avatar and wrapped/clipped («V-0 / 03»); now FittedBox-scaled to one
+  line (`queue_screen.dart`, regression test in `test/queue_screen_test.dart`).
+- **Receipt чек — no-tofu font + pretty layout + auto-print: ✅** — the real root
+  cause of the «чёрные квадратики» was that Docker slim / Cloud Run ship **no
+  system font**, so `_register_fonts()` fell back to Helvetica (zero Cyrillic) and
+  the whole receipt tofu'd. We now **bundle DejaVuSans** (Cyrillic-complete,
+  redistributable) under `backend/app/assets/fonts/` and register it first, so
+  rendering is identical on every host (`COPY app/` already ships it into the
+  image — no Dockerfile change). With a guaranteed font the receipt restored real
+  `⚠`/`−`/`×` glyphs and got a polished layout (solid header rule, framed ИТОГО,
+  framed ЭКСТРЕННЫЙ banner, boxed talon number). Regression guard:
+  `tests/test_print_forms.py` fails if FONT ever drops back to Helvetica. Flutter:
+  new `printBytes` (web → hidden-iframe print dialog; desktop → OS viewer) and the
+  reception flow **auto-prints чек+талон on full payment** (the «Печать чека»
+  button stays for re-print).
+- **Patient-journey epic — Ф1 foundation (doctor · cabinet · services): ✅ done** —
+  groundwork for service-based queue routing and the reception payment flow. A
+  doctor now has a `cabinet` (their consulting room) and a many-to-many set of
+  `services` they provide; a `Service` exposes its eligible `doctors`. The cabinet
+  lives on the doctor — reception never picks one at payment time; the queue will
+  route a paid ticket to an eligible doctor, into that doctor's cabinet. Backend:
+  `User.cabinet` + `service_doctors` M2M; `/users` accepts `cabinet`/`service_ids`,
+  `/services` accepts `doctor_ids`; migration `d3a7c1f4b920`. Flutter `/admin`:
+  «Кабинет» + «Услуги врача» on the staff create/edit dialogs, «Принимающие врачи»
+  on the service create/edit dialogs (one `_asyncMultiPick` helper; an inactive
+  but still-linked item stays visible/removable).
+- **Patient-journey Ф2 — reception payment & services: ✅ done** — the reception
+  **payment dialog dropped its cabinet field** (amount + method only; the ticket
+  gets its room from the doctor who calls it). **«Услуги добавляет рецепшен»**:
+  service management is now its own screen `/services` + «Услуги» nav, because
+  reception has services.* but not users.read (so /admin was unreachable). New
+  backend `GET /services/assignable-doctors` (services.read) feeds the service
+  form's doctor picker without users.read; `/admin` dropped its Services tab.
+- **Patient-journey Ф3a — queue call/recall/leave actions: ✅ done** — removed the
+  «Направить» button; queue management now has `POST /queue/{id}/call` («Вызвать»
+  a specific waiting ticket), `/recall` («Вызвать повторно» — bumps called_at so
+  the TV re-announces; **called-only**, else it would hijack the board's headline
+  slot), `/leave` («Оставить» — called/serving → waiting, clears the call fields
+  + reverts the visit's flow claim). Flutter tiles: «Вызвать»/«Пропустить» on
+  waiting; «Принят»/«Готово» + a ⋮ menu (recall/leave) on called.
+- **Patient-journey Ф3b — service routing + personal queue workstations: ✅ done** —
+  when diagnostics complete and the system auto-issues the doctor (V-) ticket, it
+  now **routes by service**: if the visit's service maps to exactly one active
+  eligible doctor (`service_doctors`), the ticket is pre-assigned to them and
+  pre-filled with **their** `User.cabinet` (TV board shows the room at once);
+  several/zero eligible → open pool. `call-next`/`call` now **default the room to
+  the caller's own cabinet** (`CallNextRequest.room` made optional), so a doctor
+  needn't retype it. **Doctor role gained `queue.manage`** (runs their own queue).
+  Flutter: `QueueScreen` got a `personal` single-track mode — a new `/my-queue`
+  nav «Моя очередь» (gated `device_results.create`, placed before «Очередь» so a
+  diagnost lands there) renders one track derived from rights (`exams.write` →
+  doctor «Мой приём», else diagnost «Диагностика»), prefills the room from the
+  user's cabinet, and a doctor auto-pulls their routed tickets first. `/auth/me`
+  + client `AuthUser` now carry `cabinet`. No migration (service routing reuses
+  the existing `assigned_user_id`; the permission grant re-seeds idempotently).
+  Tests: `test_queue_service_routing.py` (3) + queue personal-mode widget test.
+- **Patient-journey Ф4a — ad-hoc consumables at perform: ✅ done** — at PERFORM,
+  reception/surgeon logs the consumables ACTUALLY used beyond the OperationType
+  template; backend `perform` gained an optional `PerformOperationRequest`
+  {`ad_hoc_consumables:[{product_id,quantity}]`} (omitted = template only — last
+  param so existing no-body callers keep working). Template + ad-hoc write off via
+  the same FEFO atomically; the pre-check aggregates demand **per product** so a
+  product in both lists reports the true cumulative 409. Timeline
+  `operation_completed` now carries the clinical result. Flutter: «Выполнить» opens
+  a debounced product picker (gated on `inventory.read`, instruments filtered out)
+  with validated quantities.
+- **Patient-journey Ф4b — operations calendar (agenda): ✅ done** — the Operations
+  screen gained a «Список / Календарь» toggle; the calendar shows the selected day's
+  SCHEDULED operations (date nav) each tapping through to the patient card.
+  Frontend-only; `Operation.scheduledAtLocal` force-reads naive SQLite datetimes as
+  UTC (correct day on dev + prod); a dedicated `scheduledOperationsProvider` fetched
+  at the 500 cap.
+- **Patient-journey Ф4 leftovers: ✅ done** — (1) **backend date-window**: GET
+  `/operations` gained `scheduled_from`/`scheduled_to` (half-open `[from,to)` UTC
+  window on `scheduled_at`, mirrors `operation_report`'s raw-datetime compare; bare
+  referrals drop out). `scheduledOperationsProvider` became a `.family` keyed on the
+  local day, sending that day's `[00:00,next-00:00)` bounds as UTC instants — the
+  calendar now fetches **one day** instead of relying on the 500-row cap; client
+  `_sameDay` stays as a belt-and-suspenders guard. (2) **consumables in history**:
+  the consumables actually written off at perform (template + ad-hoc) now ride on the
+  patient timeline's `operation_performed` event detail (`"ИОЛ ×1 … · доп.: Шприц
+  ×1"`), built by `timeline._operation_consumables` (one bulk ledger query keyed by
+  `ref_id`, template/ad-hoc split by the shared `ADHOC_REASON_SUFFIX` constant in
+  `models.operation`). **Not billed** — operations are already billed at the
+  operation price; consumables are clinic COGS, so this records/surfaces them (no
+  cost shown → no finance leak; gated by `operations.read`).
+- **Patient-journey Ф5 — standalone visit-history screen: ✅ done** — a dedicated
+  `/patients/:id/visits` screen (`PatientVisitsScreen`) lists ALL of a patient's
+  visits with a filter bar: date range, status chips, «С долгом» (debt-only). It is
+  reception/registrar-friendly — distinct from the doctor's exam card — reached from
+  the patients list via an «История визитов» action (gated `visits.read`); the route
+  is a deep route under the `/patients` prefix so the redirect guard inherits
+  `patients.read`. Backend: GET `/visits` gained `opened_from`/`opened_to` (half-open
+  `[from,to)` UTC window on `opened_at`, which is `UTCDateTime` → aware on both DBs),
+  mirroring the `/operations` date-window. Flutter: `visitsForPatient` gained optional
+  `{openedFrom,openedTo,status,owing}`; a new `patientVisitsFilteredProvider` keyed on
+  a `VisitHistoryQuery` record powers the screen, leaving the doctor card's unfiltered
+  `patientVisitsProvider` untouched; the screen reuses `VisitSummary` (money/items/debt
+  getters) and taps through to the med card.
+
+- **Patient-flow overhaul (owner brief 2026-06-18) — Phase 0 removals: ✅ done** — a
+  new 7-phase wave reshaping the clinic flow (attachments, doctor-of-patient,
+  queue-by-service + load balancing, «Приём» screen, operations P&L, dashboard
+  charts; see the approved plan). **Phase 0** removed two verticals entirely:
+  **Оптика** (frontend `lib/features/optics/` + backend feature/model/schema/seq/
+  tests + `optics.*` perms) and the **«Видео»/Камеры** screen (frontend
+  `lib/features/camera/` + backend feature/model/schema/tests + `cameras.*` perms).
+  Migration `b2f7c0a91d34` drops `optics_orders` + `cameras` (keeps `lab_orders`).
+  The shared `HikvisionClient` (face terminals) is untouched.
+
+- **Patient-flow overhaul — Phase 1 attachments: ✅ done** — a general patient
+  document store (model `attachments`, migration `c4d8e1f0a2b6`): `POST/GET
+  /patients/{id}/attachments` (multipart, kind = uzi|hiv|lab|other, optional
+  visit_id/operation_id that must belong to the patient), `GET /attachments/{id}/file`
+  (auth-gated download), `DELETE /attachments/{id}` — all reusing `core.files`
+  (20 MB cap, ext whitelist incl. .pdf; bytes under a random name, original name =
+  metadata only). New perms `attachments.read`/`.write` granted to
+  Reception/Doctor/Diagnost; documents surface on the patient timeline as an
+  `attachment` event. Flutter: `lib/features/attachments/` (plain model + Dio repo +
+  reusable `AttachmentsSection`: list / upload PDF via FilePicker / download via
+  `saveBytes`), embedded in the doctor card's ПАЦИЕНТ column (gated `attachments.read`).
+  Storage caveat: Cloud Run disk is ephemeral (same as device files) — GCS is the
+  prod follow-up.
+
+- **Patient-flow overhaul — Phase 2 data model: ✅ done** — (1) `patients.primary_doctor_id`
+  (лечащий врач, FK users): POST/PATCH /patients accept it (unknown id → 422); GET
+  /patients/{id}/summary also returns `primary_doctor_id`/`_name` plus
+  `last_visit_doctor_id`/`_name` (from the most recent visit) so reception can pre-fill
+  the picker with a fallback. (2) `users.queue_prefix` (ticket prefix, Сарвар → С-001;
+  defaulted from full_name's first letter at create, director-editable) and
+  `users.is_external_surgeon` (visiting Tashkent surgeon, shown in surgeon pickers).
+  (3) Diagnosis catalog (справочник заключений): model `diagnoses` + M2M `user_diagnoses`,
+  `GET/POST/PATCH /diagnoses` (perms `diagnoses.read`/`.manage`; read → Reception/Doctor/
+  Diagnost, manage → Doctor); `/users` accept `diagnosis_ids` to scope a diagnostician's
+  allowed conclusions; seed adds 7 starter УЗИ/diagnosis entries. Migration `a7e3c9b15d28`.
+  Flutter admin: `StaffUser` carries the 3 fields; the create/edit user dialogs gained a
+  queue-prefix field, an «Внешний хирург» switch and a «Разрешённые заключения» multipick;
+  a new «Диагнозы» admin tab manages the catalog.
+
+- **Patient-flow overhaul — Region analytics: ✅ done** — owner marketing add-on. Patients now carry
+  `region` (one of Uzbekistan's 14 oblasts) + `district` (Fergana raion/city, shown only when region =
+  Ферганская — the clinic's home region). `POST/PATCH /patients` + `PatientOut` carry both; reception's
+  `RegisterPatientDialog` got a «Регион» dropdown (+ conditional «Район / город»); list lives in
+  `lib/features/reception/domain/regions.dart`. New `GET /dashboard/patients-by-region` (dashboard.view)
+  groups patients by region split **new vs returning** (returning = >1 visit; NULL → «Не указано»),
+  sorted by total; a «Пациенты по регионам» dashboard panel renders each region's new/returning split as
+  a two-segment bar (so the director sees which audience to market to). Migration `d5b1f3a86c47`.
+  **Next:** **Phase 3** — per-doctor ticket numbers (С-001) + queue-by-service routing + load-balancing
+  + «Приём» screen + a **TREATMENT queue track** (лечение) on the TV board with flexible payment
+  (per-day / 10-day / deferred-pay-at-end / partial, reusing the Visit+Payment balance model).
+
+- **Patient-flow overhaul — Phase 3a per-doctor ticket numbers: ✅ done** — the doctor-track queue
+  ticket now takes the assigned doctor's `queue_prefix` (Сарвар → С-001) instead of a fixed «V».
+  `next_ticket_number(db, branch, prefix)` is now PREFIX-based — a per-branch, per-prefix daily counter
+  (`ticket_number LIKE '<prefix>-%'`, "-"-anchored so С-% never matches Сд-001) — so each doctor has
+  their own С-001… series while diagnostic keeps D-001. The doctor for a paid visit resolves in priority
+  order (`queue._doctor_for_visit`): `visit.doctor_id` (reception's choice) → `patient.primary_doctor_id`
+  (returning patient's лечащий) → the service's single eligible doctor → open pool («V»); the resolved
+  doctor also pre-fills cabinet+assignment. No-doctor visits still mint V-001 (existing queue tests green).
+  No migration; 3 tests.
+
+- **Patient-flow overhaul — Phase 3b diagnostic queue-by-service: ✅ done** — `Service.is_diagnostic`
+  flag (migration `e8c2a4f9b73d`; ServiceCreate/Update/Out carry it; seed marks ARM/TONO/BIO/OCT
+  diagnostic, CONS stays doctor-track; Flutter admin service dialogs got a «Диагностическая услуга»
+  switch). On payment the diagnostic ticket is tagged with the visit's first `is_diagnostic` service
+  (NULL = open to any diagnostician). `call-next` on the diagnostic track filters waiting tickets to the
+  caller's assigned services (`service_doctors`) OR untagged — a caller with no services
+  (reception/director) stays unrestricted. So a УЗИ-диагност pulls only УЗИ work. 1 test.
+- **Patient-flow overhaul — Phase 3c load-balancing + «принят» history: ✅ done** — when several doctors
+  are eligible for a paid visit, `queue._eligible_doctor_for_visit` now routes the doctor-track ticket to
+  the **least-loaded** doctor (`_least_loaded_doctor`: fewest waiting doctor tickets today, ties by name)
+  instead of the open pool, so the 2nd doctor doesn't sit idle. Zero eligible = open pool (call-next fills
+  caller cabinet, kept as its own test); one eligible unchanged. Timeline gained a `seen` event
+  («Принят: ФИО · Диагностика/Приём врача · каб») from called tickets (gated `queue.read`). Query-only,
+  no migration; 2 tests + reworked routing test. **«Вызванных не гонять повторно»** is already satisfied
+  by the state machine (called/serving tickets aren't `waiting`, so call-next never re-pulls them; payment
+  dedupes active tickets).
+
+- **Patient-flow overhaul — Phase 3d treatment queue track: ✅ done** — a third queue track «Лечение»
+  (track="treatment", prefix «Л») for a patient here for a course of treatment. `POST /queue/treatment-ticket`
+  (queue.manage) issues a Л-… ticket for a patient (+ optional visit/room/assignee), deliberately NOT gated
+  on payment — лечение is paid per-day / prepaid / deferred / partial via the visit's normal balance.
+  Flow-engine guard: treatment tickets never drive the diagnostic→doctor visit flow and never auto-advance
+  to a doctor ticket. The public TV board (`tv-board` endpoint + the standalone `tv_board.html`) is now a
+  **3-column** layout (Врач / Диагностика / Лечение, purple section, voice+chime wired). No migration;
+  3 tests. A reception «Талон на лечение» button completes the front-desk side.
+
+- **Patient-flow overhaul — Phase 3e card-centric «Приём» screen: ✅ done (Phase 3 COMPLETE)** — the
+  personal queue (`/my-queue` `QueueScreen(personal)`) becomes a 2-pane intake workspace on wide screens
+  (≥1000px): the queue + «Вызвать следующего» on the left, and the CURRENT patient (the serving ticket,
+  else the first called ticket) on the right — `PatientInfoCard` + `AttachmentsSection` (УЗИ/ВИЧ files) +
+  an «Открыть карту» button into the full med-card. Calling a patient immediately surfaces their data.
+  Narrow screens keep the original single-pane queue. No backend change; 1 widget test. **Phase 3 of the
+  overhaul is fully done** (3a per-doctor numbers, 3b diagnostic-by-service, 3c load-balancing + «принят»
+  history, 3d treatment track, 3e «Приём» screen).
+
+- **Patient-flow overhaul — Phase 4a doctor refers to operation with surgeon: ✅ done** — the referral
+  `POST /visits/{id}/operations` now accepts an optional `surgeon_id` (validated; set on the operation),
+  so the doctor picks the surgeon when sending the patient to surgery (reception can still change it at
+  schedule). New `GET /operations/surgeons` (operations.read) lists active staff eligible to operate —
+  `operations.perform` OR `is_external_surgeon` (visiting Tashkent surgeons, flagged). Flutter:
+  `clinical_repository.surgeons()` + `surgeonsProvider`; the referral dialog (`OperationsSection`) got a
+  «Хирург» dropdown (external ones labelled «· приезжий»), optional. No migration (surgeon_id already on
+  Operation); 2 tests.
+
+- **Patient-flow overhaul — Phase 4b diagnostician conclusion: ✅ done (Phase 4 COMPLETE)** — a
+  diagnostician (УЗИ etc.) records a conclusion (заключение) scoped to the diagnoses the director allowed
+  them (`user_diagnoses`). New perm `diagnoses.record` (Doctor + Diagnost); `GET /diagnoses/mine` (the
+  user's allowed list — empty = unrestricted → all active) feeds the picker; `POST
+  /visits/{id}/diagnostic-conclusion` records a `VisitDiagnosis` authored by the recorder (catalog pick
+  validated against the allowed set; a restricted user can't free-type) — separate from `exams.write` so
+  the diagnost doesn't author the full 025-8 exam. Shows on the doctor card + timeline next to the УЗИ PDF.
+  Flutter: `lib/features/diagnoses/` (model + repo + `DiagnosticConclusionCard`) embedded in the «Приём»
+  pane (gated `diagnoses.record` + a visit). No migration (perm is seed data); 3 tests. **Phase 4 done**
+  (4a surgeon-at-referral, 4b diagnostician conclusion). Optional follow-up: structure «лечение N дней» on
+  `Treatment`.
+
+- **Patient-flow overhaul — Phase 5a operations day P&L: ✅ done** — `GET /operations/day-summary?date=&
+  branch_id=` (operations.read): the director's daily operations profit/loss — revenue (Σ price of
+  operations PERFORMED that local day) − COGS (consumables written off for them, Σ |qty|×batch unit_cost
+  from the stock ledger, joined StockMovement→StockBatch) − that day's operation expenses (finance
+  `Expense` category «Операции») = profit; branch-scoped. `OperationDaySummary` DTO; 2 tests; no migration.
+  Flutter: `operationDayPnlProvider` + a «P&L дня» card in the operations calendar day-view
+  (Выручка/Себестоимость/Расходы/Прибыль).
+
+- **Patient-flow overhaul — Phase 5b/5c schedule board: ✅ done (Phase 5 COMPLETE)** — (5b) `POST
+  /operations/{id}/unschedule` (operations.schedule) detaches a scheduled op back to the referred pool
+  (de-bills unless paid → refund first); status → referred, scheduled_at/price/visit_item cleared, surgeon
+  kept; 3 tests. (5c, Flutter) the operations **calendar** is now a day-scheduling board: the time column
+  is DROPPED; wide screens show a 2-pane Row (the day's scheduled ops | a «Направлены на операцию» pool
+  from `GET /operations?status=referred`); «Поставить на dd.MM» schedules a pool op onto the selected day
+  with an optional surgeon + price override (flexible cost); «Открепить» unschedules; a soft cap badge
+  «N / 15 на день» warns (never blocks). The HIV-analysis attach already works via Phase 1 (kind=hiv +
+  operation_id; shows in the timeline) — a missing-analysis badge would be optional polish.
+- **Patient-flow overhaul — Phase 6 warehouse + dashboard charts: ✅ done** — (6a) `GET
+  /inventory/reorder-suggestions?branch_id=` (inventory.read): active products at/below min_stock with a
+  suggested restock qty (up to 2× min), most-deficient first; 1 test. (6b) `GET /dashboard/revenue-trend
+  ?days=N` (dashboard.view) + an **fl_chart** «Выручка (14 дней)» LineChart on the dashboard (the first
+  chart; fl_chart ^1.2.0 added); 2 tests. (6c, Flutter) a «К заказу» inventory tab lists the suggestions
+  and turns them into a one-click goods-in via the (generalized, prefill-aware) receipt dialog. **The
+  patient-flow & operations overhaul is COMPLETE — Phases 0–6 + region analytics all shipped.**
+
+**Verified green:** backend `pytest` = 262 passed · Flutter `flutter test` = 160 passed
+· `flutter analyze` = no issues ·
+`alembic upgrade head` = clean (head `e8c2a4f9b73d`; Phase 0 drops optics/cameras,
+Phase 1 `attachments`, Phase 2 primary_doctor/queue_prefix/diagnoses, Region adds region/district,
+Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
 
 - **Operations → full TZ Modul 6 flow: ✅ done** — the surgery module now matches
   the clinic's ТЗ: the **doctor refers** a patient to surgery («Operatsiyaga

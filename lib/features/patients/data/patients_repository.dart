@@ -52,6 +52,8 @@ class PatientsRepository {
     String? workplace,
     String? profession,
     String? address,
+    String? region,
+    String? district,
     String? notes,
     String? branchId,
   }) async {
@@ -76,6 +78,8 @@ class PatientsRepository {
         if (clean(leadSource) != null) 'lead_source': clean(leadSource),
         if (clean(workplace) != null) 'workplace': clean(workplace),
         if (clean(profession) != null) 'profession': clean(profession),
+        'region': ?clean(region),
+        'district': ?clean(district),
         if (clean(notes) != null) 'notes': clean(notes),
         'branch_id': ?branchId,
       });

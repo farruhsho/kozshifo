@@ -17,6 +17,7 @@ import '../../patients/presentation/patients_screen.dart'
     show RegisterPatientDialog;
 import '../data/reception_draft_store.dart';
 import '../data/reception_repository.dart';
+import '../domain/patient_summary.dart';
 import '../domain/payment_result.dart';
 import '../domain/reception_visit.dart';
 import '../domain/service.dart';
@@ -47,6 +48,10 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   // EMERGENCY intake state (mirrors the visit's server-side priority).
   bool _emergency = false;
   String? _emergencyReason;
+  // Лечащий врач для ЭТОГО визита, выбранный вручную («Назначить другого врача»).
+  // null → берём предложенного из summary (лечащий, иначе врач последнего визита).
+  String? _overrideDoctorId;
+  String? _overrideDoctorName;
 
   // Autosave: persist the in-progress draft (patient + cart, before the visit is
   // opened) every 3s; offer to restore it after a crash/refresh.
@@ -137,6 +142,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       if (mounted) {
         setState(() {
           _patient = patient;
+          _overrideDoctorId = null;
+          _overrideDoctorName = null;
           _cart
             ..clear()
             ..addAll(cart);
@@ -198,7 +205,13 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       context: context,
       builder: (_) => RegisterPatientDialog(initialPhone: initialPhone),
     );
-    if (created != null) setState(() => _patient = created);
+    if (created != null) {
+      setState(() {
+        _patient = created;
+        _overrideDoctorId = null;
+        _overrideDoctorName = null;
+      });
+    }
   }
 
   // ── Визит и оплата ─────────────────────────────────────────────────────────
@@ -214,6 +227,12 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       _snack('У пользователя не задан филиал', error: true);
       return;
     }
+    // Лечащий врач визита: ручной выбор имеет приоритет, иначе предложенный из
+    // истории (закреплённый лечащий, иначе врач последнего визита). Бэкенд всё
+    // равно падает на patient.primary_doctor_id, если ничего не передано.
+    final suggested =
+        ref.read(patientSummaryProvider(patient.id)).valueOrNull?.suggestedDoctorId;
+    final doctorId = _overrideDoctorId ?? suggested;
     setState(() => _busy = true);
     try {
       final visit = await ref
@@ -221,6 +240,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           .createVisit(
             patientId: patient.id,
             branchId: branchId,
+            doctorId: doctorId,
             items: [
               for (final e in _cart.entries)
                 (serviceId: e.key.id, quantity: e.value),
@@ -418,6 +438,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       _result = null;
       _emergency = false;
       _emergencyReason = null;
+      _overrideDoctorId = null;
+      _overrideDoctorName = null;
       _restorable = null;
       _found = const [];
       _lastQuery = '';
@@ -589,7 +611,11 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             subtitle: Text(
               [p.mrn, if (p.phone != null) p.phone!].join('  ·  '),
             ),
-            onTap: () => setState(() => _patient = p),
+            onTap: () => setState(() {
+              _patient = p;
+              _overrideDoctorId = null;
+              _overrideDoctorName = null;
+            }),
           ),
         // Телефон набран, пациента нет → регистрация в один тап с этим номером.
         if (canRegister &&
@@ -620,7 +646,11 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
               ? IconButton(
                   tooltip: 'Сменить пациента',
                   icon: const Icon(Icons.close),
-                  onPressed: () => setState(() => _patient = null),
+                  onPressed: () => setState(() {
+                    _patient = null;
+                    _overrideDoctorId = null;
+                    _overrideDoctorName = null;
+                  }),
                 )
               : null,
         ),
@@ -689,11 +719,95 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                   'Посл. операция: ${s.lastOperation}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+              const SizedBox(height: 6),
+              _doctorRow(s),
             ],
           ),
         );
       },
     );
+  }
+
+  /// Строка лечащего врача: автоопределённый (закреплённый / врач последнего
+  /// визита) показывается и подставляется по умолчанию; кнопка «Назначить
+  /// другого врача» открывает пикер (ручной выбор имеет приоритет для визита).
+  Widget _doctorRow(PatientSummary s) {
+    final cs = Theme.of(context).colorScheme;
+    final name = _overrideDoctorName ?? s.suggestedDoctorName;
+    final hasDoctor = _overrideDoctorId != null || s.hasSuggestedDoctor;
+    final manual = _overrideDoctorId != null;
+    return Row(
+      children: [
+        Icon(Icons.medical_services_outlined, size: 15, color: cs.primary),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            hasDoctor
+                ? 'Лечащий врач: $name${manual ? ' (выбран)' : ''}'
+                : 'Лечащий врач не назначен',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: hasDoctor ? cs.primary : cs.onSurfaceVariant,
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: _visit == null ? _pickDoctor : null,
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(hasDoctor ? 'Назначить другого' : 'Назначить врача'),
+        ),
+      ],
+    );
+  }
+
+  /// Пикер активных врачей для назначения визиту (services.read).
+  Future<void> _pickDoctor() async {
+    List<({String id, String fullName, bool isActive})> doctors;
+    try {
+      doctors = await ref.read(receptionDoctorsProvider.future);
+    } catch (e) {
+      if (mounted) _snack('Не удалось загрузить список врачей: $e', error: true);
+      return;
+    }
+    if (!mounted) return;
+    final active = [for (final d in doctors) if (d.isActive) d];
+    final chosen =
+        await showDialog<({String id, String fullName, bool isActive})>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Выберите врача'),
+        children: [
+          for (final d in active)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, d),
+              child: Text(d.fullName),
+            ),
+          if (active.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Нет активных врачей'),
+            ),
+          if (_overrideDoctorId != null)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, (id: '', fullName: '', isActive: false)),
+              child: const Text('— Сбросить выбор —'),
+            ),
+        ],
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    setState(() {
+      // Пустой id — это «сбросить» → вернуться к предложенному из истории.
+      _overrideDoctorId = chosen.id.isEmpty ? null : chosen.id;
+      _overrideDoctorName = chosen.id.isEmpty ? null : chosen.fullName;
+    });
   }
 
   Widget _miniChip(IconData icon, String label, {Color? color}) {

@@ -28,6 +28,18 @@ _VisitSummary _$VisitSummaryFromJson(Map<String, dynamic> json) =>
               ?.map((e) => VisitItemSummary.fromJson(e as Map<String, dynamic>))
               .toList() ??
           const <VisitItemSummary>[],
+      doctorName: json['doctor_name'] as String?,
+      doctorCabinet: json['doctor_cabinet'] as String?,
+      diagnoses:
+          (json['diagnoses'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const <String>[],
+      treatments:
+          (json['treatments'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const <String>[],
     );
 
 Map<String, dynamic> _$VisitSummaryToJson(_VisitSummary instance) =>
@@ -48,6 +60,10 @@ Map<String, dynamic> _$VisitSummaryToJson(_VisitSummary instance) =>
       'discount_reason': instance.discountReason,
       'priority': instance.priority,
       'items': instance.items.map((e) => e.toJson()).toList(),
+      'doctor_name': instance.doctorName,
+      'doctor_cabinet': instance.doctorCabinet,
+      'diagnoses': instance.diagnoses,
+      'treatments': instance.treatments,
     };
 
 _VisitItemSummary _$VisitItemSummaryFromJson(Map<String, dynamic> json) =>

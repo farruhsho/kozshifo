@@ -55,7 +55,7 @@ class CallsRepository {
         'label': label,
         if (phoneNumber != null && phoneNumber.isNotEmpty)
           'phone_number': phoneNumber,
-        if (branchId != null) 'branch_id': branchId,
+        'branch_id': ?branchId,
       });
       return CreatedDevice.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -71,8 +71,8 @@ class CallsRepository {
   }) async {
     try {
       final resp = await _dio.patch('/calls/devices/$id', data: {
-        if (label != null) 'label': label,
-        if (isActive != null) 'is_active': isActive,
+        'label': ?label,
+        'is_active': ?isActive,
       });
       return CallDevice.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {

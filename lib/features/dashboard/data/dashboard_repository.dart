@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
 import '../domain/dashboard_summary.dart';
+import '../domain/director_analytics.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
@@ -79,6 +80,61 @@ class DashboardRepository {
     }
   }
 
+  /// «Доход по врачам» за месяц (по умолчанию — текущий). Право `dashboard.view`.
+  Future<DoctorRevenueReport> revenueByDoctor({String? month}) async {
+    try {
+      final resp = await _dio.get('/dashboard/revenue-by-doctor',
+          queryParameters: {'month': ?month});
+      return DoctorRevenueReport.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// «Операции за месяц» — воронка назначено/выполнено/отменено + P&L.
+  Future<OperationsSummary> operationsSummary({String? month}) async {
+    try {
+      final resp = await _dio.get('/dashboard/operations-summary',
+          queryParameters: {'month': ?month});
+      return OperationsSummary.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// «Структура расходов» за месяц — по категориям (с payroll).
+  Future<ExpenseBreakdown> expenseBreakdown({String? month}) async {
+    try {
+      final resp = await _dio.get('/dashboard/expense-breakdown',
+          queryParameters: {'month': ?month});
+      return ExpenseBreakdown.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// «Рост/падение регионов» — новые пациенты этот месяц vs прошлый.
+  Future<RegionTrendReport> regionTrend({String? month}) async {
+    try {
+      final resp = await _dio.get('/dashboard/region-trend',
+          queryParameters: {'month': ?month});
+      return RegionTrendReport.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// «Пациенты по районам» одного региона (по умолчанию — домашний, Ферганская).
+  Future<DistrictReport> patientsByDistrict({String? region}) async {
+    try {
+      final resp = await _dio.get('/dashboard/patients-by-district',
+          queryParameters: {'region': ?region});
+      return DistrictReport.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   static String? _date(DateTime? d) {
     if (d == null) return null;
     String two(int n) => n.toString().padLeft(2, '0');
@@ -115,4 +171,35 @@ final patientsByRegionProvider =
 /// графика на дашборде директора.
 final revenueTrendProvider = FutureProvider.autoDispose<RevenueTrend>((ref) {
   return ref.watch(dashboardRepositoryProvider).revenueTrend(days: 14);
+});
+
+/// «Доход по врачам» за текущий месяц.
+final revenueByDoctorProvider =
+    FutureProvider.autoDispose<DoctorRevenueReport>((ref) {
+  return ref.watch(dashboardRepositoryProvider).revenueByDoctor();
+});
+
+/// «Операции за месяц» — воронка + P&L (текущий месяц).
+final operationsSummaryProvider =
+    FutureProvider.autoDispose<OperationsSummary>((ref) {
+  return ref.watch(dashboardRepositoryProvider).operationsSummary();
+});
+
+/// «Структура расходов» за текущий месяц.
+final expenseBreakdownProvider =
+    FutureProvider.autoDispose<ExpenseBreakdown>((ref) {
+  return ref.watch(dashboardRepositoryProvider).expenseBreakdown();
+});
+
+/// «Рост/падение регионов» — текущий месяц vs прошлый.
+final regionTrendProvider =
+    FutureProvider.autoDispose<RegionTrendReport>((ref) {
+  return ref.watch(dashboardRepositoryProvider).regionTrend();
+});
+
+/// «Пациенты по районам» — детализация по выбранному региону (домашний по
+/// умолчанию). Ключ — название региона.
+final patientsByDistrictProvider =
+    FutureProvider.autoDispose.family<DistrictReport, String?>((ref, region) {
+  return ref.watch(dashboardRepositoryProvider).patientsByDistrict(region: region);
 });

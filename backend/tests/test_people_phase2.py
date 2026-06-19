@@ -101,6 +101,39 @@ def test_patient_primary_doctor_and_last_visit_fallback(client, auth):
     assert summary["last_visit_doctor_name"] == "Доктор Бобур"
 
 
+def test_first_visit_doctor_becomes_primary(client, auth):
+    """A patient with no лечащий врач: the first visit's doctor auto-becomes the
+    primary doctor, so a returning patient routes back to «their» doctor."""
+    branch_id = _branch(client, auth)
+    doc = _make_user(client, auth, email="doc.first@kozshifo.uz",
+                     full_name="Доктор Первый")
+
+    patient = client.post(
+        f"{API}/patients", headers=auth,
+        json={"first_name": "Тест", "last_name": "Безврача", "branch_id": branch_id},
+    ).json()
+    assert patient["primary_doctor_id"] is None
+
+    client.post(
+        f"{API}/visits", headers=auth,
+        json={"patient_id": patient["id"], "branch_id": branch_id, "doctor_id": doc["id"]},
+    )
+    summary = client.get(f"{API}/patients/{patient['id']}/summary", headers=auth).json()
+    assert summary["primary_doctor_id"] == doc["id"]
+    assert summary["primary_doctor_name"] == "Доктор Первый"
+
+    # A second visit by a DIFFERENT doctor must NOT overwrite the established
+    # лечащий врач (only the empty→first transition auto-assigns).
+    other = _make_user(client, auth, email="doc.second@kozshifo.uz",
+                       full_name="Доктор Второй")
+    client.post(
+        f"{API}/visits", headers=auth,
+        json={"patient_id": patient["id"], "branch_id": branch_id, "doctor_id": other["id"]},
+    )
+    summary2 = client.get(f"{API}/patients/{patient['id']}/summary", headers=auth).json()
+    assert summary2["primary_doctor_id"] == doc["id"]
+
+
 def test_unknown_primary_doctor_rejected(client, auth):
     branch_id = _branch(client, auth)
     resp = client.post(

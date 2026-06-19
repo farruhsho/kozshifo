@@ -98,6 +98,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("lab.manage", "lab", "Create referrals / enter results"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
+    ("reports.view", "reports", "View director reports (financial / clinical / CRM) + CSV export"),
     ("audit.read", "audit", "View audit log"),
 ]
 

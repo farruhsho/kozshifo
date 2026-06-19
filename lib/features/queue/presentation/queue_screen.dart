@@ -200,6 +200,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
         ? 'Мой приём'
         : singleTrack == 'diagnostic'
         ? 'Диагностика'
+        : singleTrack == 'treatment'
+        ? 'Лечение'
         : 'Очередь';
 
     if (branchId == null) {
@@ -322,6 +324,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                         branchId,
                         title: singleTrack == 'doctor'
                             ? 'К врачу (V)'
+                            : singleTrack == 'treatment'
+                            ? 'Лечение (Л)'
                             : 'Диагностика (D)',
                         track: singleTrack,
                         items: items,

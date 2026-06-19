@@ -80,6 +80,13 @@ class VisitOut(BaseModel):
     patient_id: UUID
     branch_id: UUID
     doctor_id: UUID | None
+    # Clinical context for the visit-history view (resolved by list_visits; other
+    # VisitOut producers leave these at their defaults). doctor_name / cabinet name
+    # the attending doctor; diagnoses / treatments are the per-visit clinical record.
+    doctor_name: str | None = None
+    doctor_cabinet: str | None = None
+    diagnoses: list[str] = Field(default_factory=list)
+    treatments: list[str] = Field(default_factory=list)
     visit_type: str
     status: str
     # Read-only by design: produced by the Smart Workflow Engine (core/flow.py);

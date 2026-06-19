@@ -1248,7 +1248,7 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                   ),
                 Expanded(
                   child: Text(
-                    '${v.visitNo} · ${v.openedAt.split('T').first}',
+                    '${v.visitNo} · ${v.openedDateTime}',
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontWeight: v.id == _visitId
@@ -1262,6 +1262,9 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
             subtitle: Text(
               [
                 flowStatusLabel(v.flowStatus),
+                if (v.doctorName != null)
+                  'Врач: ${v.doctorName}'
+                      '${v.doctorCabinet != null ? ' · каб. ${v.doctorCabinet}' : ''}',
                 'Итого ${formatMoney(v.totalAmount)}',
                 if (v.hasDebt) 'долг ${formatMoney(v.balance)}',
               ].join(' · '),
@@ -1299,6 +1302,24 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
               if (v.hasDiscount) _moneyRow('К оплате', v.payable),
               _moneyRow('Оплачено', v.paidAmount),
               _moneyRow('Долг', v.balance, danger: v.hasDebt),
+              if (v.diagnoses.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Диагноз: ${v.diagnoses.join('; ')}',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                ),
+              if (v.treatments.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Лечение: ${v.treatments.join('; ')}',
+                        style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                ),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,

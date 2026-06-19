@@ -6,6 +6,7 @@ import '../core/widgets/app_shell.dart';
 import '../features/access_control/presentation/access_control_screen.dart';
 import '../features/admin/presentation/admin_screen.dart';
 import '../features/analytics/presentation/analytics_screen.dart';
+import '../features/reports/presentation/reports_screen.dart';
 import '../features/attendance/presentation/attendance_screen.dart';
 import '../features/auth/application/auth_controller.dart';
 import '../features/auth/domain/auth_user.dart';
@@ -62,6 +63,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/my-queue',
             builder: (_, _) => const QueueScreen(personal: true),
           ),
+          // Процедурный кабинет: личная дорожка «Лечение» (Л-талоны) —
+          // вызвать/принять/завершить курс лечения. Бэкенд-lifecycle уже есть.
+          GoRoute(
+            path: '/treatment-queue',
+            builder: (_, _) =>
+                const QueueScreen(personal: true, track: 'treatment'),
+          ),
           GoRoute(
             path: '/operations',
             builder: (_, _) => const OperationsScreen(),
@@ -70,6 +78,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/analytics',
             builder: (_, _) => const AnalyticsScreen(),
           ),
+          GoRoute(path: '/reports', builder: (_, _) => const ReportsScreen()),
           GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),
           GoRoute(
             path: '/notifications',

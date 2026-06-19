@@ -91,18 +91,6 @@ class HikvisionClient:
             timeout=timeout,
         )
 
-    @classmethod
-    def from_camera(cls, camera: Any, *, timeout: float = 5.0) -> "HikvisionClient":
-        """Build a client from a Camera ORM row (same connection shape as a terminal)."""
-        return cls(
-            camera.host,
-            camera.port,
-            camera.username,
-            camera.password,
-            use_https=camera.use_https,
-            timeout=timeout,
-        )
-
     # ----------------------------------------------------------------- transport
 
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:

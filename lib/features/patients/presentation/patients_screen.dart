@@ -461,39 +461,47 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
                   initialValue: _region,
                   isExpanded: true,
                   decoration: const InputDecoration(
-                    labelText: 'Регион',
+                    labelText: 'Регион *',
                     helperText: 'Откуда географически пациент — для аналитики',
                   ),
                   items: [
                     const DropdownMenuItem<String?>(
                       value: null,
-                      child: Text('— не указан —'),
+                      child: Text('— выберите регион —'),
                     ),
                     for (final r in kUzRegions)
                       DropdownMenuItem<String?>(value: r, child: Text(r)),
                   ],
+                  // Регион обязателен — это ключевой маркетинговый сигнал
+                  // (откуда приходят пациенты), директор строит на нём решения.
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Выберите регион' : null,
                   onChanged: (v) => setState(() {
                     _region = v;
-                    // Покидаем Фергану — сбрасываем район, чтобы не уехал «хвост».
-                    if (v != kFerganaRegion) _district = null;
+                    // Сменили регион — сбрасываем район, чтобы не уехал «хвост»
+                    // от прошлого региона.
+                    _district = null;
                   }),
                 ),
-                if (_region == kFerganaRegion) ...[
+                if (districtsForRegion(_region).isNotEmpty) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String?>(
                     initialValue: _district,
                     isExpanded: true,
                     decoration: const InputDecoration(
-                      labelText: 'Район / город',
+                      labelText: 'Район / город *',
                     ),
                     items: [
                       const DropdownMenuItem<String?>(
                         value: null,
-                        child: Text('— не указан —'),
+                        child: Text('— выберите район / город —'),
                       ),
-                      for (final d in kFerganaDistricts)
+                      for (final d in districtsForRegion(_region))
                         DropdownMenuItem<String?>(value: d, child: Text(d)),
                     ],
+                    // Район обязателен, если у выбранного региона есть детализация.
+                    validator: (v) =>
+                        (v == null || v.isEmpty) ? 'Выберите район / город' : null,
                     onChanged: (v) => setState(() => _district = v),
                   ),
                 ],

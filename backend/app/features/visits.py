@@ -17,8 +17,11 @@ from app.core.flow import advance_flow
 from app.core.sequences import next_ticket_number, next_visit_no
 from app.models.branch import Branch
 from app.models.catalog import Service
+from app.models.diagnosis import VisitDiagnosis
+from app.models.operation import Treatment
 from app.models.patient import Patient
 from app.models.queue import QueueTicket
+from app.models.user import User
 from app.models.visit import Visit, VisitItem
 from app.schemas.common import Page
 from app.schemas.visit import (
@@ -106,7 +109,46 @@ def list_visits(
         stmt = stmt.where(Visit.total_amount - discount > Visit.paid_amount)
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = db.execute(stmt.order_by(Visit.opened_at.desc()).offset(offset).limit(limit)).scalars().all()
-    return Page(items=[VisitOut.model_validate(v) for v in rows], total=total, offset=offset, limit=limit)
+    return Page(items=_clinical_visit_outs(db, rows), total=total, offset=offset, limit=limit)
+
+
+def _clinical_visit_outs(db: Session, rows: list[Visit]) -> list[VisitOut]:
+    """VisitOut list enriched with each visit's clinical context — attending doctor
+    name + cabinet, recorded diagnoses and treatments — in 3 bulk queries, so the
+    visit-history view shows the full clinical record with no N+1."""
+    if not rows:
+        return []
+    visit_ids = [v.id for v in rows]
+    doctor_ids = {v.doctor_id for v in rows if v.doctor_id is not None}
+    docs = {
+        u.id: u for u in db.execute(
+            select(User).where(User.id.in_(doctor_ids))
+        ).scalars().all()
+    } if doctor_ids else {}
+    diag_map: dict[UUID, list[str]] = {}
+    for vid, name in db.execute(
+        select(VisitDiagnosis.visit_id, VisitDiagnosis.diagnosis)
+        .where(VisitDiagnosis.visit_id.in_(visit_ids))
+        .order_by(VisitDiagnosis.created_at)
+    ).all():
+        diag_map.setdefault(vid, []).append(name)
+    treat_map: dict[UUID, list[str]] = {}
+    for vid, name in db.execute(
+        select(Treatment.visit_id, Treatment.name)
+        .where(Treatment.visit_id.in_(visit_ids))
+        .order_by(Treatment.created_at)
+    ).all():
+        treat_map.setdefault(vid, []).append(name)
+    out: list[VisitOut] = []
+    for v in rows:
+        doc = docs.get(v.doctor_id)
+        out.append(VisitOut.model_validate(v).model_copy(update={
+            "doctor_name": doc.full_name if doc else None,
+            "doctor_cabinet": doc.cabinet if doc else None,
+            "diagnoses": diag_map.get(v.id, []),
+            "treatments": treat_map.get(v.id, []),
+        }))
+    return out
 
 
 @router.post("", response_model=VisitOut, status_code=status.HTTP_201_CREATED)
@@ -115,7 +157,8 @@ def create_visit(
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(require_permission("visits.create"))],
 ) -> Visit:
-    if db.get(Patient, payload.patient_id) is None:
+    patient = db.get(Patient, payload.patient_id)
+    if patient is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown patient")
     if db.get(Branch, payload.branch_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown branch")
@@ -128,6 +171,14 @@ def create_visit(
         visit_type=payload.visit_type,
         notes=payload.notes,
     )
+    # Авто-назначение лечащего врача: первый врач, назначенный визиту, становится
+    # постоянным лечащим пациента, если тот ещё не закреплён — так повторный
+    # пациент в будущем автоматически возвращается к «своему» врачу (очередь
+    # маршрутизирует V-талон по patient.primary_doctor_id).
+    if (payload.doctor_id is not None
+            and patient.primary_doctor_id is None
+            and db.get(User, payload.doctor_id) is not None):
+        patient.primary_doctor_id = payload.doctor_id
     visit.items = [_make_item(db, it.service_id, it.quantity) for it in payload.items]
     _recompute_total(visit)
     db.add(visit)

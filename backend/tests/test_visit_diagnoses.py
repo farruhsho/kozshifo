@@ -92,6 +92,37 @@ def test_frequent_diagnoses_aggregates_per_doctor(client, auth):
     assert freq[0]["diagnosis"] == "Миопия"  # ordered by count desc
 
 
+def test_visit_list_carries_clinical_context(client, auth):
+    """The /visits list enriches each visit with the attending doctor's name +
+    cabinet and the per-visit diagnoses & treatments (the «История посещений»)."""
+    branch_id = client.get(f"{API}/branches", headers=auth).json()[0]["id"]
+    doc = client.post(
+        f"{API}/users", headers=auth,
+        json={"email": "vh.doc@kozshifo.uz", "full_name": "Доктор История",
+              "password": "Passw0rd!", "role_names": ["Doctor"], "cabinet": "Каб. 9"},
+    ).json()
+    patient = client.post(
+        f"{API}/patients", headers=auth,
+        json={"first_name": "Тест", "last_name": "Контекст", "branch_id": branch_id},
+    ).json()
+    visit = client.post(
+        f"{API}/visits", headers=auth,
+        json={"patient_id": patient["id"], "branch_id": branch_id, "doctor_id": doc["id"]},
+    ).json()
+    client.post(f"{API}/visits/{visit['id']}/diagnoses", headers=auth,
+                json={"diagnosis": "Катаракта OD"})
+    client.post(f"{API}/visits/{visit['id']}/treatments", headers=auth,
+                json={"kind": "procedure", "name": "Промывание слёзных путей"})
+
+    rows = client.get(f"{API}/visits", headers=auth,
+                      params={"patient_id": patient["id"]}).json()["items"]
+    row = next(v for v in rows if v["id"] == visit["id"])
+    assert row["doctor_name"] == "Доктор История"
+    assert row["doctor_cabinet"] == "Каб. 9"
+    assert "Катаракта OD" in row["diagnoses"]
+    assert "Промывание слёзных путей" in row["treatments"]
+
+
 def test_card_pdf_lists_all_diagnoses(client, auth):
     _, visit_id = _make_visit(client, auth, last_name="ПечатьДиаг")
     client.put(f"{API}/visits/{visit_id}/exam", headers=auth,

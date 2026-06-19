@@ -225,6 +225,34 @@ void main() {
   );
 
   testWidgets(
+    'treatment track: explicit track «Лечение» renders the Л workstation',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(_FakeDoctorAuthController.new),
+            queueRepositoryProvider.overrideWithValue(_EmptyQueueRepository()),
+          ],
+          child: const MaterialApp(
+            home: QueueScreen(personal: true, track: 'treatment'),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // The procedure-room workstation is titled «Лечение» and runs one track.
+      expect(find.text('Лечение'), findsOneWidget);
+      expect(find.text('Вызвать следующего'), findsOneWidget);
+      // Not the doctor/diagnostic titles.
+      expect(find.text('Мой приём'), findsNothing);
+      expect(find.text('Диагностика'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'personal «Приём» on a wide screen shows the patient-card pane (empty state '
     'until someone is called)',
     (tester) async {

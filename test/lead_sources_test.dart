@@ -14,6 +14,7 @@ import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/dashboard/data/dashboard_repository.dart';
 import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
+import 'package:kozshifo/features/dashboard/domain/director_analytics.dart';
 import 'package:kozshifo/features/dashboard/domain/insight.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
 import 'package:kozshifo/features/dashboard/domain/region_report.dart';
@@ -158,6 +159,30 @@ void main() {
                 {'date': '2026-06-10', 'revenue': '100000'},
                 {'date': '2026-06-11', 'revenue': '120000'},
               ],
+            })),
+        // Director-analytics panels (expenses / operations / by-doctor / region
+        // trend / districts) each watch their own provider — stub with NON-empty
+        // data so they don't fire real Dio calls and don't render their own empty
+        // state (which would collide with the lead-sources zero-state assertion).
+        expenseBreakdownProvider.overrideWith((ref) async => ExpenseBreakdown.fromJson(const {
+              'month': '2026-06', 'total': '100000',
+              'categories': [{'category': 'Аренда', 'amount': '100000'}],
+            })),
+        operationsSummaryProvider.overrideWith((ref) async => OperationsSummary.fromJson(const {
+              'month': '2026-06', 'scheduled': 1, 'performed': 1, 'cancelled': 0,
+              'revenue': '500000', 'cogs': '100000', 'expenses': '0', 'profit': '400000',
+            })),
+        revenueByDoctorProvider.overrideWith((ref) async => DoctorRevenueReport.fromJson(const {
+              'month': '2026-06', 'total': '500000',
+              'doctors': [{'doctor_id': 'd-1', 'doctor_name': 'Сарвар', 'revenue': '500000'}],
+            })),
+        regionTrendProvider.overrideWith((ref) async => RegionTrendReport.fromJson(const {
+              'month': '2026-06', 'previous_month': '2026-05',
+              'regions': [{'region': 'Ферганская', 'current_new': 2, 'previous_new': 1, 'delta': 1}],
+            })),
+        patientsByDistrictProvider.overrideWith((ref, region) async => DistrictReport.fromJson(const {
+              'region': 'Ферганская', 'total': 1,
+              'districts': [{'district': 'Маргилан', 'new_count': 1, 'returning_count': 0, 'total': 1}],
             })),
       ];
 

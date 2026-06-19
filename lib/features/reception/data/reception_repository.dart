@@ -48,17 +48,39 @@ class ReceptionRepository {
     required String patientId,
     required String branchId,
     required List<({String serviceId, int quantity})> items,
+    String? doctorId,
   }) async {
     try {
       final resp = await _dio.post('/visits', data: {
         'patient_id': patientId,
         'branch_id': branchId,
+        // Лечащий/выбранный врач: V-талон маршрутизируется к нему (бэкенд также
+        // падает обратно на patient.primary_doctor_id, если не передан).
+        'doctor_id': ?doctorId,
         'items': [
           for (final it in items)
             {'service_id': it.serviceId, 'quantity': it.quantity},
         ],
       });
       return ReceptionVisit.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Врачи, которых ресепшен может назначить визиту (services.read — без
+  /// users.read). Используется пикером «Назначить другого врача».
+  Future<List<({String id, String fullName, bool isActive})>> doctors() async {
+    try {
+      final resp = await _dio.get('/services/assignable-doctors');
+      return [
+        for (final e in resp.data as List<dynamic>)
+          (
+            id: (e as Map<String, dynamic>)['id'] as String,
+            fullName: e['full_name'] as String,
+            isActive: e['is_active'] as bool,
+          ),
+      ];
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -208,6 +230,11 @@ class ReceptionRepository {
 final patientSummaryProvider = FutureProvider.autoDispose
     .family<PatientSummary, String>((ref, patientId) =>
         ref.watch(receptionRepositoryProvider).patientSummary(patientId));
+
+/// Врачи для пикера «Назначить другого врача» (services.read).
+final receptionDoctorsProvider = FutureProvider.autoDispose<
+        List<({String id, String fullName, bool isActive})>>(
+    (ref) => ref.watch(receptionRepositoryProvider).doctors());
 
 final activeServicesProvider = FutureProvider.autoDispose<List<Service>>(
     (ref) => ref.watch(receptionRepositoryProvider).services());

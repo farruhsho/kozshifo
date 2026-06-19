@@ -15,6 +15,8 @@ one alert per insight code per 24h.
 from __future__ import annotations
 
 import logging
+import re
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Literal, get_args
@@ -30,17 +32,39 @@ from app.core.dates import (
     current_business_month,
     local_day_bounds_utc,
     local_month_bounds_utc,
+    local_month_date_range,
 )
 from app.core.deps import require_permission
 from app.core.notify import notify
-from app.models.inventory import Product, StockBatch
+from app.models.finance import Expense
+from app.models.inventory import Product, StockBatch, StockMovement
 from app.models.notification import Notification
 from app.models.operation import Operation
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
+from app.models.user import User
 from app.models.visit import Visit, VisitItem
 from app.schemas.patient import LeadSource
+
+# Operation day-expenses are logged under this finance category (mirrors
+# app.features.operations.OPERATIONS_EXPENSE_CATEGORY) — the operations P&L
+# subtracts exactly these from operation revenue. Kept as a local constant to
+# avoid a feature→feature import.
+_OPERATIONS_EXPENSE_CATEGORY = "Операции"
+
+# YYYY-MM month parameter validation (shared by the monthly analytics endpoints).
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _resolve_month(month: str | None) -> str:
+    """Validate an optional ``YYYY-MM`` query param, defaulting to this month."""
+    if month is None:
+        return current_business_month()
+    if not _MONTH_RE.match(month):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "month must be YYYY-MM")
+    return month
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +74,22 @@ router = APIRouter(prefix="/dashboard", tags=["Director Dashboard"])
 class DashboardSummary(BaseModel):
     revenue_today: Decimal
     revenue_month: Decimal
+    expenses_today: Decimal
+    expenses_month: Decimal
+    profit_today: Decimal
+    profit_month: Decimal
     payments_today: int
     average_check_today: Decimal
     visits_today: int
     new_patients_today: int
+    new_patients_week: int
+    new_patients_month: int
+    returning_today: int
     patients_total: int
     queue_waiting: int
     operations_today: int
     operations_month: int
+    operations_scheduled_today: int
     low_stock_count: int
     expiring_soon_count: int
 
@@ -116,8 +148,13 @@ def _usable_per_branch(today: date):
             dependencies=[Depends(require_permission("dashboard.view"))])
 def summary(db: Annotated[Session, Depends(get_db)]) -> DashboardSummary:
     day, month = _day_start(), _month_start()
+    today = business_today()
+    day_end = local_day_bounds_utc(today)[1]
+    # "За неделю" — последние 7 локальных дней включая сегодня.
+    week_start = local_day_bounds_utc(today - timedelta(days=6))[0]
 
     revenue_today = _sum_payments(db, day)
+    revenue_month = _sum_payments(db, month)
     payments_today = db.execute(
         select(func.count()).select_from(Payment)
         .where(Payment.status == "completed", Payment.created_at >= day)
@@ -128,16 +165,49 @@ def summary(db: Annotated[Session, Depends(get_db)]) -> DashboardSummary:
     new_patients_today = db.execute(
         select(func.count()).select_from(Patient).where(Patient.created_at >= day)
     ).scalar_one()
+    new_patients_week = db.execute(
+        select(func.count()).select_from(Patient).where(Patient.created_at >= week_start)
+    ).scalar_one()
+    new_patients_month = db.execute(
+        select(func.count()).select_from(Patient).where(Patient.created_at >= month)
+    ).scalar_one()
+    # Повторные сегодня: пациенты с визитом сегодня, у которых есть визит и РАНЬШЕ
+    # сегодняшнего дня (т.е. вернулись, а не первичные).
+    prior_visit_patients = (
+        select(Visit.patient_id).where(Visit.opened_at < day).distinct()
+    )
+    returning_today = db.execute(
+        select(func.count(func.distinct(Visit.patient_id)))
+        .where(Visit.opened_at >= day, Visit.patient_id.in_(prior_visit_patients))
+    ).scalar_one()
     patients_total = db.execute(select(func.count()).select_from(Patient)).scalar_one()
     queue_waiting = db.execute(
         select(func.count()).select_from(QueueTicket).where(QueueTicket.status == "waiting")
     ).scalar_one()
+    # Назначено операций на сегодня (по scheduled_at, не отменённые).
+    operations_scheduled_today = db.execute(
+        select(func.count()).select_from(Operation).where(
+            Operation.scheduled_at >= day,
+            Operation.scheduled_at < day_end,
+            Operation.status != "cancelled",
+        )
+    ).scalar_one()
+
+    # ── Расходы и прибыль (касса): Expense.expense_date — локальная ДАТА ──
+    month_first, month_next = local_month_date_range(current_business_month())
+    expenses_today = Decimal(db.execute(
+        select(func.coalesce(func.sum(Expense.amount), 0))
+        .where(Expense.expense_date == today)
+    ).scalar_one())
+    expenses_month = Decimal(db.execute(
+        select(func.coalesce(func.sum(Expense.amount), 0))
+        .where(Expense.expense_date >= month_first, Expense.expense_date < month_next)
+    ).scalar_one())
 
     # ── Warehouse alerts (system-wide, matching the rest of the summary's scope) ──
     # "Usable" mirrors the FEFO engine's predicate in app.core.stock._usable_filter,
-    # including the SAME business date (server-local) — a UTC date here disagreed
-    # with the engine for ~5h/day on UTC+5 hosts.
-    today = business_today()
+    # including the SAME business date (server-local, `today` above) — a UTC date
+    # here disagreed with the engine for ~5h/day on UTC+5 hosts.
     # Count products that are low in ANY stocked branch, plus active products
     # with no usable stock anywhere (the outerjoin NULL row) — see _usable_per_branch.
     usable_qty = _usable_per_branch(today)
@@ -163,15 +233,23 @@ def summary(db: Annotated[Session, Depends(get_db)]) -> DashboardSummary:
 
     return DashboardSummary(
         revenue_today=revenue_today,
-        revenue_month=_sum_payments(db, month),
+        revenue_month=revenue_month,
+        expenses_today=expenses_today,
+        expenses_month=expenses_month,
+        profit_today=revenue_today - expenses_today,
+        profit_month=revenue_month - expenses_month,
         payments_today=payments_today,
         average_check_today=avg_check.quantize(Decimal("0.01")),
         visits_today=visits_today,
         new_patients_today=new_patients_today,
+        new_patients_week=new_patients_week,
+        new_patients_month=new_patients_month,
+        returning_today=returning_today,
         patients_total=patients_total,
         queue_waiting=queue_waiting,
         operations_today=_count_operations_done(db, day),
         operations_month=_count_operations_done(db, month),
+        operations_scheduled_today=operations_scheduled_today,
         low_stock_count=low_stock_count,
         expiring_soon_count=expiring_soon_count,
     )
@@ -637,3 +715,334 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
     found.sort(key=lambda i: _SEVERITY_RANK[i.severity])
     _notify_critical_insights(db, [i for i in found if i.severity == "critical"])
     return found
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Revenue by doctor — completed-payment revenue per лечащий врач (this month).
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class DoctorRevenueRow(BaseModel):
+    doctor_id: uuid.UUID
+    doctor_name: str
+    revenue: Decimal
+
+
+class DoctorRevenueReport(BaseModel):
+    month: str
+    total: Decimal
+    doctors: list[DoctorRevenueRow]
+
+
+@router.get("/revenue-by-doctor", response_model=DoctorRevenueReport,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def revenue_by_doctor(
+    db: Annotated[Session, Depends(get_db)],
+    month: str | None = Query(None, description="YYYY-MM (default: current month)"),
+) -> DoctorRevenueReport:
+    """Completed-payment revenue attributed to each visit's doctor over a LOCAL
+    month, busiest first — the director's «доход по врачам» chart. Same source as
+    the payroll revenue base (Visit.doctor_id × completed Payments), so the
+    dashboard and payroll agree."""
+    month = _resolve_month(month)
+    start, end = local_month_bounds_utc(month)
+    rows = db.execute(
+        select(Visit.doctor_id, func.coalesce(func.sum(Payment.amount), 0))
+        .join(Visit, Visit.id == Payment.visit_id)
+        .where(
+            Payment.status == "completed",
+            Payment.created_at >= start,
+            Payment.created_at < end,
+            Visit.doctor_id.is_not(None),
+        )
+        .group_by(Visit.doctor_id)
+    ).all()
+    names = {
+        u.id: u.full_name
+        for u in db.execute(
+            select(User).where(User.id.in_([r[0] for r in rows]))
+        ).scalars().all()
+    } if rows else {}
+    doctors = [
+        DoctorRevenueRow(
+            doctor_id=doctor_id,
+            doctor_name=names.get(doctor_id, "—"),
+            revenue=Decimal(total),
+        )
+        for doctor_id, total in rows
+    ]
+    doctors.sort(key=lambda d: d.revenue, reverse=True)
+    return DoctorRevenueReport(
+        month=month,
+        total=sum((d.revenue for d in doctors), Decimal("0")),
+        doctors=doctors,
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Operations summary — month funnel (назначено / выполнено / отменено) + P&L.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class OperationsSummary(BaseModel):
+    month: str
+    scheduled: int   # назначено (status scheduled/in_progress with a date this month)
+    performed: int   # выполнено (performed/completed this month)
+    cancelled: int   # отменено (cancelled, had been scheduled for this month)
+    revenue: Decimal
+    cogs: Decimal
+    expenses: Decimal
+    profit: Decimal
+
+
+@router.get("/operations-summary", response_model=OperationsSummary,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def operations_summary(
+    db: Annotated[Session, Depends(get_db)],
+    month: str | None = Query(None, description="YYYY-MM (default: current month)"),
+) -> OperationsSummary:
+    """Operations funnel + P&L for a LOCAL month: назначено/выполнено/отменено
+    counts and revenue − COGS − expenses = profit. Performed is counted by
+    performed_at; scheduled & cancelled by scheduled_at (the planned month)."""
+    month = _resolve_month(month)
+    start, end = local_month_bounds_utc(month)
+
+    performed = db.execute(
+        select(func.count()).select_from(Operation).where(
+            Operation.status.in_(Operation.DONE_STATUSES),
+            Operation.performed_at >= start,
+            Operation.performed_at < end,
+        )
+    ).scalar_one()
+    scheduled = db.execute(
+        select(func.count()).select_from(Operation).where(
+            Operation.status.in_(("scheduled", "in_progress")),
+            Operation.scheduled_at >= start,
+            Operation.scheduled_at < end,
+        )
+    ).scalar_one()
+    cancelled = db.execute(
+        select(func.count()).select_from(Operation).where(
+            Operation.status == "cancelled",
+            Operation.scheduled_at >= start,
+            Operation.scheduled_at < end,
+        )
+    ).scalar_one()
+
+    # Revenue = Σ price of PERFORMED ops this month; COGS = their FEFO write-offs.
+    op_rows = db.execute(
+        select(Operation.id, Operation.price).where(
+            Operation.status.in_(Operation.DONE_STATUSES),
+            Operation.performed_at >= start,
+            Operation.performed_at < end,
+        )
+    ).all()
+    op_ids = [r[0] for r in op_rows]
+    revenue = sum((r[1] for r in op_rows if r[1] is not None), Decimal("0"))
+    cogs = Decimal("0")
+    if op_ids:
+        cogs = Decimal(db.execute(
+            select(func.coalesce(
+                func.sum(func.abs(StockMovement.quantity) * StockBatch.unit_cost), 0))
+            .select_from(StockMovement)
+            .join(StockBatch, StockBatch.id == StockMovement.batch_id)
+            .where(
+                StockMovement.ref_type == "operation",
+                StockMovement.ref_id.in_(op_ids),
+                StockMovement.movement_type == "write_off",
+            )
+        ).scalar_one())
+
+    month_first, month_next = local_month_date_range(month)
+    expenses = Decimal(db.execute(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.category == _OPERATIONS_EXPENSE_CATEGORY,
+            Expense.expense_date >= month_first,
+            Expense.expense_date < month_next,
+        )
+    ).scalar_one())
+
+    return OperationsSummary(
+        month=month,
+        scheduled=scheduled,
+        performed=performed,
+        cancelled=cancelled,
+        revenue=revenue,
+        cogs=cogs,
+        expenses=expenses,
+        profit=revenue - cogs - expenses,
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Expense breakdown — this month's expenses grouped by category.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class ExpenseCategoryRow(BaseModel):
+    category: str
+    amount: Decimal
+
+
+class ExpenseBreakdown(BaseModel):
+    month: str
+    total: Decimal
+    categories: list[ExpenseCategoryRow]
+
+
+@router.get("/expense-breakdown", response_model=ExpenseBreakdown,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def expense_breakdown(
+    db: Annotated[Session, Depends(get_db)],
+    month: str | None = Query(None, description="YYYY-MM (default: current month)"),
+) -> ExpenseBreakdown:
+    """This LOCAL month's expenses grouped by category, biggest first — the
+    director's «структура расходов» chart (includes payroll payouts as their
+    own «kind=payroll» rows under their category)."""
+    month = _resolve_month(month)
+    first, nxt = local_month_date_range(month)
+    rows = db.execute(
+        select(Expense.category, func.coalesce(func.sum(Expense.amount), 0))
+        .where(Expense.expense_date >= first, Expense.expense_date < nxt)
+        .group_by(Expense.category)
+        .order_by(func.coalesce(func.sum(Expense.amount), 0).desc())
+    ).all()
+    categories = [
+        ExpenseCategoryRow(category=cat, amount=Decimal(amount)) for cat, amount in rows
+    ]
+    return ExpenseBreakdown(
+        month=month,
+        total=sum((c.amount for c in categories), Decimal("0")),
+        categories=categories,
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Region trend — new patients per region this month vs last (growing/declining).
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def _prev_month(month: str) -> str:
+    year, mon = int(month[:4]), int(month[5:7])
+    if mon == 1:
+        return f"{year - 1:04d}-12"
+    return f"{year:04d}-{mon - 1:02d}"
+
+
+class RegionTrendRow(BaseModel):
+    region: str
+    current_new: int       # новые пациенты этого месяца
+    previous_new: int      # новые пациенты прошлого месяца
+    delta: int             # current − previous (растёт/падает)
+
+
+class RegionTrendReport(BaseModel):
+    month: str
+    previous_month: str
+    regions: list[RegionTrendRow]
+
+
+@router.get("/region-trend", response_model=RegionTrendReport,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def region_trend(
+    db: Annotated[Session, Depends(get_db)],
+    month: str | None = Query(None, description="YYYY-MM (default: current month)"),
+) -> RegionTrendReport:
+    """New-patient acquisition per region this LOCAL month vs the previous month —
+    so the director sees which regions are GROWING (positive delta) or DECLINING
+    (negative). «New» = patients registered (created_at) in that month."""
+    month = _resolve_month(month)
+    prev = _prev_month(month)
+    cur_start, cur_end = local_month_bounds_utc(month)
+    prev_start, prev_end = local_month_bounds_utc(prev)
+
+    def _by_region(start: datetime, end: datetime) -> dict[str, int]:
+        rows = db.execute(
+            select(Patient.region, func.count())
+            .where(Patient.created_at >= start, Patient.created_at < end)
+            .group_by(Patient.region)
+        ).all()
+        return {(r if r else _UNKNOWN_REGION): int(c) for r, c in rows}
+
+    cur = _by_region(cur_start, cur_end)
+    old = _by_region(prev_start, prev_end)
+    regions = [
+        RegionTrendRow(
+            region=region,
+            current_new=cur.get(region, 0),
+            previous_new=old.get(region, 0),
+            delta=cur.get(region, 0) - old.get(region, 0),
+        )
+        for region in sorted(set(cur) | set(old))
+    ]
+    # Busiest-this-month first; ties keep the larger swing on top.
+    regions.sort(key=lambda r: (r.current_new, abs(r.delta)), reverse=True)
+    return RegionTrendReport(month=month, previous_month=prev, regions=regions)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Patients by district — drill-down within one region (new vs returning).
+# ════════════════════════════════════════════════════════════════════════════
+
+# The clinic's home region — the default district drill-down (most patients).
+_HOME_REGION = "Ферганская"
+_UNKNOWN_DISTRICT = "Не указано"
+
+
+class DistrictCount(BaseModel):
+    district: str
+    new_count: int
+    returning_count: int
+    total: int
+
+
+class DistrictReport(BaseModel):
+    region: str
+    total: int
+    districts: list[DistrictCount]
+
+
+@router.get("/patients-by-district", response_model=DistrictReport,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def patients_by_district(
+    db: Annotated[Session, Depends(get_db)],
+    region: str = Query(_HOME_REGION, description="Region to drill into (default: home region)"),
+) -> DistrictReport:
+    """Patients of ONE region grouped by district, split new vs returning — the
+    district drill-down for the director's geographic view. Mirrors
+    /patients-by-region but scoped to a single region's districts."""
+    visit_counts = (
+        select(Visit.patient_id, func.count().label("vc"))
+        .group_by(Visit.patient_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(
+            Patient.district,
+            func.count(Patient.id),
+            func.coalesce(
+                func.sum(case((func.coalesce(visit_counts.c.vc, 0) > 1, 1), else_=0)), 0
+            ),
+        )
+        .select_from(Patient)
+        .outerjoin(visit_counts, visit_counts.c.patient_id == Patient.id)
+        .where(Patient.region == region)
+        .group_by(Patient.district)
+    ).all()
+
+    districts: list[DistrictCount] = []
+    for district, total, returning in rows:
+        total = int(total)
+        returning = int(returning)
+        districts.append(DistrictCount(
+            district=district if district else _UNKNOWN_DISTRICT,
+            new_count=total - returning,
+            returning_count=returning,
+            total=total,
+        ))
+    districts.sort(key=lambda d: d.total, reverse=True)
+    return DistrictReport(
+        region=region,
+        total=sum(d.total for d in districts),
+        districts=districts,
+    )

@@ -275,8 +275,6 @@ class _PatientVisitsScreenState extends ConsumerState<PatientVisitsScreen> {
       'cancelled' => BadgeKind.neutral,
       _ => BadgeKind.info,
     };
-    final dt = DateTime.tryParse(v.openedAt);
-    final date = dt == null ? v.openedAt.split('T').first : _date.format(dt.toLocal());
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -299,7 +297,7 @@ class _PatientVisitsScreenState extends ConsumerState<PatientVisitsScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        '${v.visitNo}  ·  $date',
+                        '${v.visitNo}  ·  ${v.openedDateTime}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -320,6 +318,17 @@ class _PatientVisitsScreenState extends ConsumerState<PatientVisitsScreen> {
                     StatusBadge(v.statusLabel, kind: kind),
                   ],
                 ),
+                // Врач + кабинет (клинический контекст «Истории посещений»).
+                if (v.doctorName != null || v.doctorCabinet != null) ...[
+                  const SizedBox(height: 6),
+                  _infoLine(
+                    Icons.medical_services_outlined,
+                    [
+                      if (v.doctorName != null) 'Врач: ${v.doctorName}',
+                      if (v.doctorCabinet != null) 'каб. ${v.doctorCabinet}',
+                    ].join('  ·  '),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 if (v.items.isEmpty)
                   const Text(
@@ -351,6 +360,16 @@ class _PatientVisitsScreenState extends ConsumerState<PatientVisitsScreen> {
                         ],
                       ),
                     ),
+                if (v.diagnoses.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  _infoLine(Icons.assignment_turned_in_outlined,
+                      'Диагноз: ${v.diagnoses.join('; ')}'),
+                ],
+                if (v.treatments.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  _infoLine(Icons.healing_outlined,
+                      'Лечение: ${v.treatments.join('; ')}'),
+                ],
                 const Divider(height: 18),
                 _moneyRow('Итого', v.totalAmount),
                 if (v.hasDiscount)
@@ -364,6 +383,22 @@ class _PatientVisitsScreenState extends ConsumerState<PatientVisitsScreen> {
       ),
     );
   }
+
+  /// Строка клинического контекста (врач/кабинет/диагноз/лечение) с иконкой.
+  Widget _infoLine(IconData icon, String text) => Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 14, color: AppColors.muted),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(text,
+                  style: const TextStyle(fontSize: 12.5, color: AppColors.sub)),
+            ),
+          ],
+        ),
+      );
 
   Widget _moneyRow(
     String label,

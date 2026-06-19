@@ -116,7 +116,7 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
             // Fill the scroll viewport width (tight constraint) — a
             // Center+ConstrainedBox here gives the Column LOOSE width, so a
             // stretch Column shrink-wraps to intrinsic width and every row
-            // overflows. Full-width matches the Optics/Lab screens.
+            // overflows. Full-width matches the Lab screen.
             return SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(

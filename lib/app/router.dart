@@ -61,6 +61,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/my-queue',
             builder: (_, _) => const QueueScreen(personal: true),
           ),
+          // Процедурный кабинет: личная дорожка «Лечение» (Л-талоны) —
+          // вызвать/принять/завершить курс лечения. Бэкенд-lifecycle уже есть.
+          GoRoute(
+            path: '/treatment-queue',
+            builder: (_, _) =>
+                const QueueScreen(personal: true, track: 'treatment'),
+          ),
           GoRoute(
             path: '/operations',
             builder: (_, _) => const OperationsScreen(),

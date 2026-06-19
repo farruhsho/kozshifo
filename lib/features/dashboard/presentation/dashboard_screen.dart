@@ -10,6 +10,7 @@ import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
 import '../data/dashboard_repository.dart';
 import '../domain/dashboard_summary.dart';
+import '../domain/director_analytics.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
@@ -48,6 +49,11 @@ class DashboardScreen extends ConsumerWidget {
             ref.invalidate(revenueTrendProvider);
             ref.invalidate(leadSourcesProvider);
             ref.invalidate(patientsByRegionProvider);
+            ref.invalidate(revenueByDoctorProvider);
+            ref.invalidate(operationsSummaryProvider);
+            ref.invalidate(expenseBreakdownProvider);
+            ref.invalidate(regionTrendProvider);
+            ref.invalidate(patientsByDistrictProvider);
           },
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -59,8 +65,13 @@ class DashboardScreen extends ConsumerWidget {
                 const SizedBox(height: 20),
                 _KpiGrid(data: data),
                 const _RevenueTrendPanel(),
+                const _ExpenseBreakdownPanel(),
+                const _OperationsFunnelPanel(),
+                const _RevenueByDoctorPanel(),
                 const _LeadSourcesPanel(),
                 const _RegionsPanel(),
+                const _RegionTrendPanel(),
+                const _DistrictsPanel(),
               ],
             ),
           ),
@@ -158,24 +169,38 @@ class _KpiGrid extends StatelessWidget {
     final cards = <Widget>[
       KpiCard(label: 'Выручка сегодня', value: formatMoney(data.revenueToday),
           iconKey: 'finance', accent: true, onTap: () => go('/finance')),
+      KpiCard(label: 'Расходы сегодня', value: formatMoney(data.expensesToday),
+          iconKey: 'finance', onTap: () => go('/finance')),
+      KpiCard(label: 'Прибыль сегодня', value: formatMoney(data.profitToday),
+          iconKey: 'analytics', accent: true),
       KpiCard(label: 'Выручка за месяц', value: formatMoney(data.revenueMonth),
           iconKey: 'schedule', onTap: () => go('/finance')),
+      KpiCard(label: 'Прибыль за месяц', value: formatMoney(data.profitMonth),
+          iconKey: 'analytics'),
       KpiCard(label: 'Средний чек', value: formatMoney(data.averageCheckToday),
           iconKey: 'analytics'),
       KpiCard(label: 'Оплат сегодня', value: formatInt(data.paymentsToday),
           iconKey: 'finance', onTap: () => go('/finance')),
       KpiCard(label: 'Визитов сегодня', value: formatInt(data.visitsToday),
           iconKey: 'reception'),
-      KpiCard(label: 'Новых пациентов', value: formatInt(data.newPatientsToday),
+      KpiCard(label: 'Новых сегодня', value: formatInt(data.newPatientsToday),
+          iconKey: 'patients', onTap: () => go('/patients')),
+      KpiCard(label: 'Повторных сегодня', value: formatInt(data.returningToday),
+          iconKey: 'patients', onTap: () => go('/patients')),
+      KpiCard(label: 'Пациентов за неделю', value: formatInt(data.newPatientsWeek),
+          iconKey: 'patients', onTap: () => go('/patients')),
+      KpiCard(label: 'Пациентов за месяц', value: formatInt(data.newPatientsMonth),
           iconKey: 'patients', onTap: () => go('/patients')),
       KpiCard(label: 'Всего пациентов', value: formatInt(data.patientsTotal),
           iconKey: 'patients', onTap: () => go('/patients')),
       KpiCard(label: 'В очереди', value: formatInt(data.queueWaiting),
           iconKey: 'queue', onTap: () => go('/queue')),
+      KpiCard(label: 'Операций назначено', value: formatInt(data.operationsScheduledToday),
+          iconKey: 'worklist', onTap: () => go('/operations')),
       KpiCard(label: 'Операций сегодня', value: formatInt(data.operationsToday),
-          iconKey: 'worklist'),
+          iconKey: 'worklist', onTap: () => go('/operations')),
       KpiCard(label: 'Операций за месяц', value: formatInt(data.operationsMonth),
-          iconKey: 'worklist'),
+          iconKey: 'worklist', onTap: () => go('/operations')),
       KpiCard(label: 'Дефицит склада', value: formatInt(data.lowStockCount),
           iconKey: 'inventory', onTap: () => go('/inventory')),
       KpiCard(label: 'Партии: срок ≤30 дней', value: formatInt(data.expiringSoonCount),
@@ -609,6 +634,426 @@ class _RegionBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared building blocks for the director analytics panels below.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Заголовок секции дашборда (директор-аналитика). Видно только директору.
+Widget _sectionHeader(BuildContext context, String title, {Widget? trailing}) {
+  final style = Theme.of(context)
+      .textTheme
+      .titleMedium
+      ?.copyWith(fontWeight: FontWeight.bold);
+  return Padding(
+    padding: const EdgeInsets.only(top: 28, bottom: 12),
+    child: Row(
+      children: [
+        Expanded(child: Text(title, style: style)),
+        ?trailing,
+      ],
+    ),
+  );
+}
+
+/// Карточка-обёртка для панели аналитики (одинаковый отступ/радиус).
+class _PanelCard extends StatelessWidget {
+  const _PanelCard({required this.child});
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(padding: const EdgeInsets.all(18), child: child),
+      );
+}
+
+class _PanelEmpty extends StatelessWidget {
+  const _PanelEmpty();
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      children: [
+        Icon(Icons.insights_outlined,
+            color: scheme.onSurface.withValues(alpha: 0.5)),
+        const SizedBox(width: 12),
+        Text('Пока нет данных',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurface.withValues(alpha: 0.7))),
+      ],
+    );
+  }
+}
+
+/// Горизонтальная полоска «метка — значение — доля от максимума».
+class _AnalyticsBar extends StatelessWidget {
+  const _AnalyticsBar({
+    required this.label,
+    required this.valueText,
+    required this.fraction,
+    this.color,
+  });
+
+  final String label;
+  final String valueText;
+  final double fraction; // 0..1 от максимума
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium),
+              ),
+              const SizedBox(width: 8),
+              Text(valueText,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: scheme.onSurface.withValues(alpha: 0.78))),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: fraction.clamp(0.0, 1.0),
+              minHeight: 8,
+              backgroundColor: scheme.surfaceContainerHighest,
+              valueColor:
+                  AlwaysStoppedAnimation<Color>(color ?? scheme.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Базовый каркас панели: проверка права + заголовок + AsyncValueWidget + карточка.
+class _AnalyticsPanel<T> extends ConsumerWidget {
+  const _AnalyticsPanel({
+    required this.title,
+    required this.provider,
+    required this.isEmpty,
+    required this.builder,
+    this.trailing,
+    super.key,
+  });
+
+  final String title;
+  final AutoDisposeFutureProvider<T> provider;
+  final bool Function(T) isEmpty;
+  final Widget Function(BuildContext, T) builder;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authControllerProvider).user;
+    if (!(user?.can('dashboard.view') ?? false)) return const SizedBox.shrink();
+    final value = ref.watch(provider);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionHeader(context, title, trailing: trailing),
+        AsyncValueWidget<T>(
+          value: value,
+          onRetry: () => ref.invalidate(provider),
+          builder: (data) => _PanelCard(
+            child: isEmpty(data) ? const _PanelEmpty() : builder(context, data),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// «Структура расходов (месяц)» — расходы по категориям, крупнейшие сверху.
+class _ExpenseBreakdownPanel extends StatelessWidget {
+  const _ExpenseBreakdownPanel();
+  @override
+  Widget build(BuildContext context) {
+    return _AnalyticsPanel<ExpenseBreakdown>(
+      title: 'Структура расходов (месяц)',
+      provider: expenseBreakdownProvider,
+      isEmpty: (d) => d.isEmpty,
+      builder: (context, d) {
+        final max = d.categories.fold<double>(
+            0, (m, c) => c.amountValue > m ? c.amountValue : m);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final c in d.categories)
+              _AnalyticsBar(
+                label: c.category,
+                valueText: formatMoney(c.amount),
+                fraction: max <= 0 ? 0 : c.amountValue / max,
+                color: AppColors.amber,
+              ),
+            const Divider(height: 22),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Итого расходы',
+                    style: Theme.of(context).textTheme.bodyMedium),
+                Text(formatMoney(d.total),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// «Операции (месяц)» — воронка назначено/выполнено/отменено + P&L.
+class _OperationsFunnelPanel extends StatelessWidget {
+  const _OperationsFunnelPanel();
+  @override
+  Widget build(BuildContext context) {
+    return _AnalyticsPanel<OperationsSummary>(
+      title: 'Операции (месяц)',
+      provider: operationsSummaryProvider,
+      isEmpty: (d) =>
+          d.scheduled == 0 && d.performed == 0 && d.cancelled == 0 &&
+          d.revenueValue == 0,
+      builder: (context, d) {
+        final scheme = Theme.of(context).colorScheme;
+        Widget stat(String label, int v, Color c) => Expanded(
+              child: Column(
+                children: [
+                  Text('$v',
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.bold, color: c)),
+                  const SizedBox(height: 2),
+                  Text(label,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.7))),
+                ],
+              ),
+            );
+        Widget pnl(String label, String value, {bool bold = false}) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(label, style: Theme.of(context).textTheme.bodyMedium),
+                  Text(value,
+                      style: TextStyle(
+                          fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
+                ],
+              ),
+            );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                stat('Назначено', d.scheduled, AppColors.blue),
+                stat('Выполнено', d.performed, AppColors.green),
+                stat('Отменено', d.cancelled, scheme.error),
+              ],
+            ),
+            const Divider(height: 22),
+            pnl('Выручка', formatMoney(d.revenue)),
+            pnl('Себестоимость', '− ${formatMoney(d.cogs)}'),
+            pnl('Расходы', '− ${formatMoney(d.expenses)}'),
+            const Divider(height: 14),
+            pnl('Чистая прибыль', formatMoney(d.profit), bold: true),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// «Доход по врачам (месяц)» — выручка завершённых оплат по лечащему врачу.
+class _RevenueByDoctorPanel extends StatelessWidget {
+  const _RevenueByDoctorPanel();
+  @override
+  Widget build(BuildContext context) {
+    return _AnalyticsPanel<DoctorRevenueReport>(
+      title: 'Доход по врачам (месяц)',
+      provider: revenueByDoctorProvider,
+      isEmpty: (d) => d.isEmpty,
+      builder: (context, d) {
+        final max = d.doctors.fold<double>(
+            0, (m, r) => r.revenueValue > m ? r.revenueValue : m);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final r in d.doctors)
+              _AnalyticsBar(
+                label: r.doctorName,
+                valueText: formatMoney(r.revenue),
+                fraction: max <= 0 ? 0 : r.revenueValue / max,
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// «Динамика регионов» — новые пациенты этот месяц vs прошлый (рост/падение).
+class _RegionTrendPanel extends StatelessWidget {
+  const _RegionTrendPanel();
+  @override
+  Widget build(BuildContext context) {
+    return _AnalyticsPanel<RegionTrendReport>(
+      title: 'Динамика регионов (новые vs прошлый месяц)',
+      provider: regionTrendProvider,
+      isEmpty: (d) => d.isEmpty,
+      builder: (context, d) {
+        final scheme = Theme.of(context).colorScheme;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final r in d.regions)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(r.region,
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium),
+                    ),
+                    Text('${r.currentNew}',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 4),
+                    Text('(пр. ${r.previousNew})',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurface.withValues(alpha: 0.55))),
+                    const SizedBox(width: 10),
+                    _DeltaChip(delta: r.delta),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Чип-дельта: ▲ зелёный рост, ▼ красный спад, «—» без изменений.
+class _DeltaChip extends StatelessWidget {
+  const _DeltaChip({required this.delta});
+  final int delta;
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final (IconData icon, Color color, String text) = delta > 0
+        ? (Icons.arrow_upward, AppColors.green, '+$delta')
+        : delta < 0
+            ? (Icons.arrow_downward, scheme.error, '$delta')
+            : (Icons.remove, AppColors.muted, '0');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 3),
+          Text(text,
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+/// «Пациенты по районам (Ферганская)» — детализация домашнего региона
+/// с разбивкой новые/посещавшие.
+class _DistrictsPanel extends StatelessWidget {
+  const _DistrictsPanel();
+  @override
+  Widget build(BuildContext context) {
+    return _AnalyticsPanel<DistrictReport>(
+      key: const ValueKey('districts-home'),
+      title: 'Пациенты по районам (Ферганская)',
+      provider: patientsByDistrictProvider(null),
+      isEmpty: (d) => d.isEmpty,
+      builder: (context, d) {
+        final scheme = Theme.of(context).colorScheme;
+        final max = d.districts.fold<int>(
+            0, (m, c) => c.total > m ? c.total : m);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final c in d.districts)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(c.district,
+                              maxLines: 1, overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium),
+                        ),
+                        Text('${c.total} (${c.newCount}/${c.returningCount})',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: scheme.onSurface.withValues(alpha: 0.75))),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: SizedBox(
+                        height: 8,
+                        child: max <= 0
+                            ? ColoredBox(color: scheme.surfaceContainerHighest)
+                            : Row(
+                                children: [
+                                  Expanded(
+                                    flex: c.newCount,
+                                    child: ColoredBox(color: scheme.primary),
+                                  ),
+                                  Expanded(
+                                    flex: c.returningCount,
+                                    child: const ColoredBox(color: AppColors.muted),
+                                  ),
+                                  // спейсер до доли от максимума района
+                                  Expanded(
+                                    flex: (max - c.total).clamp(0, max),
+                                    child: ColoredBox(
+                                        color: scheme.surfaceContainerHighest),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

@@ -13,6 +13,10 @@ class PatientSummary {
     required this.totalDebt, // decimal string
     this.lastDiscountReason,
     required this.isRepeat,
+    this.primaryDoctorId,
+    this.primaryDoctorName,
+    this.lastVisitDoctorId,
+    this.lastVisitDoctorName,
   });
 
   final String patientId;
@@ -26,7 +30,21 @@ class PatientSummary {
   final String? lastDiscountReason;
   final bool isRepeat;
 
+  /// Лечащий врач, закреплённый за пациентом (primary_doctor_id).
+  final String? primaryDoctorId;
+  final String? primaryDoctorName;
+
+  /// Врач последнего визита — fallback, если лечащий не закреплён.
+  final String? lastVisitDoctorId;
+  final String? lastVisitDoctorName;
+
   bool get hasDebt => (double.tryParse(totalDebt) ?? 0) > 0;
+
+  /// Врач, которого ресепшен предложит по умолчанию: закреплённый лечащий,
+  /// иначе врач последнего визита (повторный пациент возвращается к «своему»).
+  String? get suggestedDoctorId => primaryDoctorId ?? lastVisitDoctorId;
+  String? get suggestedDoctorName => primaryDoctorName ?? lastVisitDoctorName;
+  bool get hasSuggestedDoctor => suggestedDoctorId != null;
 
   factory PatientSummary.fromJson(Map<String, dynamic> json) => PatientSummary(
         patientId: json['patient_id'].toString(),
@@ -39,6 +57,10 @@ class PatientSummary {
         totalDebt: (json['total_debt'] ?? '0').toString(),
         lastDiscountReason: json['last_discount_reason']?.toString(),
         isRepeat: json['is_repeat'] == true,
+        primaryDoctorId: json['primary_doctor_id']?.toString(),
+        primaryDoctorName: json['primary_doctor_name']?.toString(),
+        lastVisitDoctorId: json['last_visit_doctor_id']?.toString(),
+        lastVisitDoctorName: json['last_visit_doctor_name']?.toString(),
       );
 }
 

@@ -121,6 +121,15 @@ const kAppDestinations = <AppDestination>[
     '/queue',
     permissions: ['queue.read'],
   ),
+  // Процедурный кабинет: дорожка «Лечение» (Л-талоны). Виден тем, кто
+  // проводит лечение (treatments.perform) — врач/процедурная сестра.
+  AppDestination(
+    Icons.medication_outlined,
+    Icons.medication,
+    'Лечение',
+    '/treatment-queue',
+    permissions: ['treatments.perform'],
+  ),
   AppDestination(
     Icons.healing_outlined,
     Icons.healing,

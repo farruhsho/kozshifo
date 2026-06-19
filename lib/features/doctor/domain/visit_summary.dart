@@ -33,6 +33,11 @@ abstract class VisitSummary with _$VisitSummary {
     String? discountReason,
     @Default(0) int priority,
     @Default(<VisitItemSummary>[]) List<VisitItemSummary> items,
+    // ── Clinical context («История посещений»): врач/кабинет/диагнозы/лечение ──
+    String? doctorName,
+    String? doctorCabinet,
+    @Default(<String>[]) List<String> diagnoses,
+    @Default(<String>[]) List<String> treatments,
   }) = _VisitSummary;
 
   factory VisitSummary.fromJson(Map<String, dynamic> json) => _$VisitSummaryFromJson(json);
@@ -44,6 +49,26 @@ abstract class VisitSummary with _$VisitSummary {
         'in_progress' => 'в работе',
         _ => status,
       };
+
+  /// Дата визита `dd.MM.yyyy` из ISO `opened_at` (без времени).
+  String get openedDate {
+    final d = DateTime.tryParse(openedAt)?.toLocal();
+    if (d == null) return openedAt.split('T').first;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(d.day)}.${two(d.month)}.${d.year}';
+  }
+
+  /// Время визита `HH:mm` из ISO `opened_at` (локальное).
+  String get openedTime {
+    final d = DateTime.tryParse(openedAt)?.toLocal();
+    if (d == null) return '';
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(d.hour)}:${two(d.minute)}';
+  }
+
+  /// Дата + время для шапки строки истории (`dd.MM.yyyy · HH:mm`).
+  String get openedDateTime =>
+      openedTime.isEmpty ? openedDate : '$openedDate · $openedTime';
 
   /// Closed/cancelled visits must be distinguishable in the picker — the
   /// backend rejects prescribing on them with 409.

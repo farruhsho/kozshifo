@@ -151,6 +151,14 @@ const kAppDestinations = <AppDestination>[
     '/analytics',
     permissions: ['dashboard.view'],
   ),
+  // Отчёты директора (финансы/врачи/диагносты/операции/регионы/пациенты + CSV).
+  AppDestination(
+    Icons.summarize_outlined,
+    Icons.summarize,
+    'Отчёты',
+    '/reports',
+    permissions: ['reports.view'],
+  ),
   AppDestination(
     Icons.badge_outlined,
     Icons.badge,

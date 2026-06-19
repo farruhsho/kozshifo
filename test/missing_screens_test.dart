@@ -156,6 +156,7 @@ void main() {
               visitId: 'v1', status: 'waiting', createdAt: '2026-06-14T05:00:00Z',
             ),
           ]),
+      doctorServedTodayProvider.overrideWith((ref, arg) async => 3),
       // A scheduled appointment shows in the secondary «Записи на сегодня» card.
       scheduleProvider.overrideWith((ref, arg) async => [
             Appointment(

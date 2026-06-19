@@ -83,6 +83,18 @@ class QueueRepository {
     }
   }
 
+  /// Count of today's completed tickets of [track] in [branchId]. Powers the
+  /// doctor worklist «принято сегодня» stat (TZ §7.1.6).
+  Future<int> servedToday(String branchId, {String track = 'doctor'}) async {
+    try {
+      final resp = await _dio.get('/queue/served-today',
+          queryParameters: {'branch_id': branchId, 'track': track});
+      return (resp.data as Map<String, dynamic>)['count'] as int;
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Active branch staff for the routing picker (guarded by queue.manage).
   Future<List<Specialist>> specialists(String branchId) async {
     try {
@@ -109,3 +121,8 @@ final queueListProvider = FutureProvider.autoDispose
 final queueSpecialistsProvider = FutureProvider.autoDispose
     .family<List<Specialist>, String>((ref, branchId) =>
         ref.watch(queueRepositoryProvider).specialists(branchId));
+
+/// Today's completed doctor-track tickets for the worklist «принято» stat.
+final doctorServedTodayProvider = FutureProvider.autoDispose
+    .family<int, String>((ref, branchId) =>
+        ref.watch(queueRepositoryProvider).servedToday(branchId));

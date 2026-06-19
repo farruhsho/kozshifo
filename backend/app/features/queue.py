@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
@@ -77,6 +77,33 @@ def list_queue(
                           QueueTicket.created_at >= _today_start())
     stmt = stmt.order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc())
     return list(db.execute(stmt).scalars().all())
+
+
+@router.get(
+    "/served-today",
+    dependencies=[Depends(require_permission("queue.read"))],
+)
+def served_today(
+    db: Annotated[Session, Depends(get_db)],
+    branch_id: UUID,
+    track: QueueTrack = Query("doctor"),
+) -> dict[str, int]:
+    """Count of today's COMPLETED tickets of a track in a branch.
+
+    Powers the doctor worklist «принято сегодня» stat (TZ §7.1.6 — patients the
+    doctor finished today). Day-scoped by created_at, mirroring every other
+    active view in this module (numbers restart daily)."""
+    count = db.execute(
+        select(func.count())
+        .select_from(QueueTicket)
+        .where(
+            QueueTicket.branch_id == branch_id,
+            QueueTicket.track == track,
+            QueueTicket.status == "done",
+            QueueTicket.created_at >= _today_start(),
+        )
+    ).scalar_one()
+    return {"count": int(count)}
 
 
 @router.get(

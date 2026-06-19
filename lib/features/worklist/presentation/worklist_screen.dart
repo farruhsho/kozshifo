@@ -48,7 +48,10 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
     // patient finishing diagnostics surfaces here without a manual refresh.
     _autoRefresh = Timer.periodic(const Duration(seconds: 5), (_) {
       final branchId = ref.read(authControllerProvider).user?.branchId;
-      if (branchId != null) ref.invalidate(queueListProvider(branchId));
+      if (branchId != null) {
+        ref.invalidate(queueListProvider(branchId));
+        ref.invalidate(doctorServedTodayProvider(branchId));
+      }
     });
   }
 
@@ -61,6 +64,7 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
 
   void _refresh(String branchId) {
     ref.invalidate(queueListProvider(branchId));
+    ref.invalidate(doctorServedTodayProvider(branchId));
     ref.invalidate(scheduleProvider((branchId: branchId, date: _dateKey)));
   }
 
@@ -118,6 +122,7 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
 
     final queueAsync = ref.watch(queueListProvider(branchId));
     final apptAsync = ref.watch(scheduleProvider((branchId: branchId, date: _dateKey)));
+    final servedToday = ref.watch(doctorServedTodayProvider(branchId)).valueOrNull ?? 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -164,6 +169,7 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
                     doctorName: user?.fullName ?? 'Врач',
                     waiting: waiting.length,
                     onCall: serving.length,
+                    served: servedToday,
                   ),
                   const SizedBox(height: 16),
                   if (canManageQueue) ...[
@@ -232,6 +238,7 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
     required String doctorName,
     required int waiting,
     required int onCall,
+    required int served,
   }) {
     return LayoutBuilder(
       builder: (context, c) {
@@ -273,6 +280,7 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
 
         final waitingCard = _countCard(waiting, 'в очереди');
         final onCallCard = _countCard(onCall, 'на приёме');
+        final servedCard = _countCard(served, 'принято');
 
         if (stack) {
           return Column(
@@ -285,6 +293,8 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
                   Expanded(child: waitingCard),
                   const SizedBox(width: 12),
                   Expanded(child: onCallCard),
+                  const SizedBox(width: 12),
+                  Expanded(child: servedCard),
                 ],
               ),
             ],
@@ -300,6 +310,8 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
               Expanded(child: waitingCard),
               const SizedBox(width: 12),
               Expanded(child: onCallCard),
+              const SizedBox(width: 12),
+              Expanded(child: servedCard),
             ],
           ),
         );

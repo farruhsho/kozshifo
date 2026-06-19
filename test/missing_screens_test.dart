@@ -20,6 +20,8 @@ import 'package:kozshifo/features/lab/presentation/lab_screen.dart';
 import 'package:kozshifo/features/notifications/data/notifications_repository.dart';
 import 'package:kozshifo/features/notifications/domain/app_notification.dart';
 import 'package:kozshifo/features/notifications/presentation/notifications_screen.dart';
+import 'package:kozshifo/features/queue/data/queue_repository.dart';
+import 'package:kozshifo/features/queue/domain/queue_ticket.dart';
 import 'package:kozshifo/features/scheduling/data/scheduling_repository.dart';
 import 'package:kozshifo/features/scheduling/domain/appointment.dart';
 import 'package:kozshifo/features/worklist/presentation/worklist_screen.dart';
@@ -29,7 +31,12 @@ const _user = AuthUser(
   email: 'doc@kozshifo.uz',
   fullName: 'Доктор Тест',
   branchId: 'b1',
-  permissions: ['lab.manage', 'dashboard.view', 'exams.write'],
+  permissions: [
+    'lab.manage', 'dashboard.view', 'exams.write',
+    // queue.manage: the doctor calls the next patient / finishes the V-ticket
+    // from the queue-driven Приём worklist (TZ §3.3/§7.1.6).
+    'queue.read', 'queue.manage',
+  ],
 );
 
 Widget _host(Widget screen, List<Override> overrides) => ProviderScope(
@@ -115,12 +122,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Worklist renders the doctor day list', (tester) async {
+  testWidgets('Worklist renders the queue-driven doctor day list', (tester) async {
     _desktop(tester);
     await tester.pumpWidget(_host(const WorklistScreen(), [
+      // Live V-track queue (the TZ core flow: walk-in patient auto-queued after
+      // diagnostics). The worklist's primary source.
+      queueListProvider.overrideWith((ref, arg) async => const [
+            QueueTicket(
+              id: 'q1', ticketNumber: 'V-001', track: 'doctor',
+              patientId: 'p1', patientName: 'Каримов Азиз', branchId: 'b1',
+              visitId: 'v1', status: 'waiting', createdAt: '2026-06-14T05:00:00Z',
+            ),
+          ]),
+      doctorServedTodayProvider.overrideWith((ref, arg) async => 3),
+      // A scheduled appointment shows in the secondary «Записи на сегодня» card.
       scheduleProvider.overrideWith((ref, arg) async => [
             Appointment(
-              id: 'a1', appointmentNo: 'AP-1', branchId: 'b1', patientId: 'p1',
+              id: 'a1', appointmentNo: 'AP-1', branchId: 'b1', patientId: 'p2',
               patientName: 'Тошматова Зухра', doctorId: 'u-doc', service: 'Консультация',
               startsAt: '2026-06-14T05:00:00Z', endsAt: '2026-06-14T05:30:00Z',
               status: 'arrived', createdAt: '2026-06-14T05:00:00Z',
@@ -130,9 +148,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Приём'), findsOneWidget);
-    expect(find.text('Тошматова Зухра'), findsOneWidget);
-    expect(find.text('Начать осмотр'), findsOneWidget); // primary CTA
-    expect(find.byTooltip('Завершить приём'), findsOneWidget); // arrived → done
+    expect(find.text('Каримов Азиз'), findsOneWidget); // queue patient
+    expect(find.text('Тошматова Зухра'), findsOneWidget); // appointment patient
+    expect(find.text('Начать осмотр'), findsOneWidget); // waiting-row CTA
+    expect(find.text('Вызвать следующего'), findsOneWidget); // call-next (queue.manage)
     expect(tester.takeException(), isNull);
   });
 }

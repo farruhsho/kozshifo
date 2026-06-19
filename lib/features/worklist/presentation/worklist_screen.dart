@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,13 +10,18 @@ import '../../../core/theme/app_typography.dart';
 import '../../../core/widgets/koz_widgets.dart';
 import '../../../core/widgets/koz_icons.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../queue/data/queue_repository.dart';
+import '../../queue/domain/queue_ticket.dart';
 import '../../scheduling/data/scheduling_repository.dart';
 import '../../scheduling/domain/appointment.dart';
 
-/// «Приём сегодня» — рабочий список врача на текущий день. Переиспользует данные
-/// расписания (scheduleProvider): показывает только записи этого врача (или все
-/// записи дня, если врач не определён). Из строки врач открывает карту пациента
-/// и быстро отмечает «пришёл / принят».
+/// «Приём сегодня» — рабочий список врача на текущий день.
+///
+/// Главный источник — ЖИВАЯ ОЧЕРЕДЬ к врачу (V-дорожка): пациенты, пришедшие
+/// потоком регистратура → оплата → диагностика, после которой система сама
+/// ставит V-талон (TZ §6.2). Врач вызывает следующего, открывает карту и
+/// нажимает «Завершить приём» — талон закрывается, визит уходит кассиру
+/// (TZ §7.1.6). Ниже — записи на сегодня (Расписание) для плановых пациентов.
 class WorklistScreen extends ConsumerStatefulWidget {
   const WorklistScreen({super.key});
 
@@ -24,12 +31,41 @@ class WorklistScreen extends ConsumerStatefulWidget {
 
 class _WorklistScreenState extends ConsumerState<WorklistScreen> {
   bool _busy = false;
+  final _room = TextEditingController(text: '1');
+  Timer? _autoRefresh;
 
   String two(int n) => n.toString().padLeft(2, '0');
 
   String get _dateKey {
     final now = DateTime.now();
     return '${now.year}-${two(now.month)}-${two(now.day)}';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // Near-real-time queue (TZ §12.1): mirror the queue screen's 5s poll so a
+    // patient finishing diagnostics surfaces here without a manual refresh.
+    _autoRefresh = Timer.periodic(const Duration(seconds: 5), (_) {
+      final branchId = ref.read(authControllerProvider).user?.branchId;
+      if (branchId != null) {
+        ref.invalidate(queueListProvider(branchId));
+        ref.invalidate(doctorServedTodayProvider(branchId));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoRefresh?.cancel();
+    _room.dispose();
+    super.dispose();
+  }
+
+  void _refresh(String branchId) {
+    ref.invalidate(queueListProvider(branchId));
+    ref.invalidate(doctorServedTodayProvider(branchId));
+    ref.invalidate(scheduleProvider((branchId: branchId, date: _dateKey)));
   }
 
   Future<void> _act(Future<void> Function() fn,
@@ -50,19 +86,10 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
     } finally {
       if (mounted) {
         setState(() => _busy = false);
-        ref.invalidate(scheduleProvider((branchId: branchId, date: _dateKey)));
+        _refresh(branchId);
       }
     }
   }
-
-  BadgeKind _kind(String status) => switch (status) {
-        'done' => BadgeKind.neutral,
-        'arrived' => BadgeKind.info,
-        'booked' => BadgeKind.info,
-        'cancelled' => BadgeKind.danger,
-        'no_show' => BadgeKind.warning,
-        _ => BadgeKind.neutral,
-      };
 
   String _initials(String name) {
     final words = name
@@ -83,6 +110,7 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
     final user = ref.watch(authControllerProvider).user;
     final branchId = user?.branchId;
     final me = user?.id;
+    final canManageQueue = user?.can('queue.manage') ?? false;
 
     if (branchId == null) {
       return Scaffold(
@@ -92,31 +120,46 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
       );
     }
 
+    final queueAsync = ref.watch(queueListProvider(branchId));
     final apptAsync = ref.watch(scheduleProvider((branchId: branchId, date: _dateKey)));
+    final servedToday = ref.watch(doctorServedTodayProvider(branchId)).valueOrNull ?? 0;
 
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: AppBar(title: const Text('Приём')),
+      appBar: AppBar(
+        title: const Text('Приём'),
+        actions: [
+          IconButton(
+            tooltip: 'Обновить',
+            icon: const Icon(Icons.refresh),
+            onPressed: _busy ? null : () => _refresh(branchId),
+          ),
+        ],
+      ),
       body: SafeArea(
-        child: apptAsync.when(
+        child: queueAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) => Center(
               child: Text(e is ApiException ? e.message : e.toString())),
-          data: (all) {
-            // Только записи этого врача; если врач не определён или своих нет —
-            // показываем все записи дня.
-            final mine = me == null
-                ? const <Appointment>[]
-                : all.where((a) => a.doctorId == me).toList();
-            final rows = mine.isNotEmpty ? mine : all;
+          data: (allTickets) {
+            // Только V-дорожка (вызов к врачу), сегодняшняя и активная — список
+            // приходит уже day-scoped/active с бэкенда.
+            final doctorQ = allTickets.where((t) => t.track == 'doctor').toList()
+              ..sort((a, b) {
+                // Экстренные вперёд, затем по времени создания.
+                final p = b.priority.compareTo(a.priority);
+                return p != 0 ? p : a.createdAt.compareTo(b.createdAt);
+              });
+            final serving = doctorQ.where((t) => t.isActive).toList();
+            final waiting = doctorQ.where((t) => t.isWaiting).toList();
 
-            final inQueue = rows.where((a) => a.status != 'done').length;
-            final accepted = rows.where((a) => a.status == 'done').length;
+            // Записи на сегодня (Расписание): только живые (не done/cancelled),
+            // и, если врач определён, только его.
+            final appts = (apptAsync.valueOrNull ?? const <Appointment>[])
+                .where((a) => a.status == 'booked' || a.status == 'arrived')
+                .where((a) => me == null || a.doctorId == null || a.doctorId == me)
+                .toList();
 
-            // Fill the scroll viewport width (tight constraint) — a
-            // Center+ConstrainedBox here gives the Column LOOSE width, so a
-            // stretch Column shrink-wraps to intrinsic width and every row
-            // overflows. Full-width matches the Lab screen.
             return SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(
@@ -124,23 +167,61 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
                 children: [
                   _heroRow(
                     doctorName: user?.fullName ?? 'Врач',
-                    inQueue: inQueue,
-                    accepted: accepted,
+                    waiting: waiting.length,
+                    onCall: serving.length,
+                    served: servedToday,
                   ),
                   const SizedBox(height: 16),
+                  if (canManageQueue) ...[
+                    _callNextBar(branchId, me, waiting.isEmpty),
+                    const SizedBox(height: 16),
+                  ],
+                  _sectionTitle('На приёме сейчас'),
+                  const SizedBox(height: 8),
                   AppCard(
-                    child: rows.isEmpty
-                        ? const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 28),
-                            child: Center(child: Text('На сегодня записей нет')),
-                          )
-                        : ListView.separated(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: rows.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 1, color: AppColors.line2),
-                            itemBuilder: (context, i) => _row(rows[i], branchId),
+                    child: serving.isEmpty
+                        ? const _Empty('Никто не вызван')
+                        : Column(
+                            children: [
+                              for (final t in serving)
+                                _queueRow(t, branchId,
+                                    canManage: canManageQueue, current: true),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  _sectionTitle('Очередь к врачу (${waiting.length})'),
+                  const SizedBox(height: 8),
+                  AppCard(
+                    child: waiting.isEmpty
+                        ? const _Empty('Очередь пуста')
+                        : Column(
+                            children: [
+                              for (var i = 0; i < waiting.length; i++) ...[
+                                if (i > 0)
+                                  const Divider(height: 1, color: AppColors.line2),
+                                _queueRow(waiting[i], branchId,
+                                    canManage: canManageQueue,
+                                    current: false,
+                                    position: i + 1),
+                              ],
+                            ],
+                          ),
+                  ),
+                  const SizedBox(height: 16),
+                  _sectionTitle('Записи на сегодня (${appts.length})'),
+                  const SizedBox(height: 8),
+                  AppCard(
+                    child: appts.isEmpty
+                        ? const _Empty('Плановых записей на сегодня нет')
+                        : Column(
+                            children: [
+                              for (var i = 0; i < appts.length; i++) ...[
+                                if (i > 0)
+                                  const Divider(height: 1, color: AppColors.line2),
+                                _apptRow(appts[i]),
+                              ],
+                            ],
                           ),
                   ),
                 ],
@@ -152,10 +233,12 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
     );
   }
 
+  // ── Hero + stats ──────────────────────────────────────────────────────────
   Widget _heroRow({
     required String doctorName,
-    required int inQueue,
-    required int accepted,
+    required int waiting,
+    required int onCall,
+    required int served,
   }) {
     return LayoutBuilder(
       builder: (context, c) {
@@ -195,8 +278,9 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
           ),
         );
 
-        final inQueueCard = _countCard(inQueue, 'в очереди');
-        final acceptedCard = _countCard(accepted, 'принято');
+        final waitingCard = _countCard(waiting, 'в очереди');
+        final onCallCard = _countCard(onCall, 'на приёме');
+        final servedCard = _countCard(served, 'принято');
 
         if (stack) {
           return Column(
@@ -206,18 +290,16 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Expanded(child: inQueueCard),
+                  Expanded(child: waitingCard),
                   const SizedBox(width: 12),
-                  Expanded(child: acceptedCard),
+                  Expanded(child: onCallCard),
+                  const SizedBox(width: 12),
+                  Expanded(child: servedCard),
                 ],
               ),
             ],
           );
         }
-        // Fixed-height row (no IntrinsicHeight + stretch): a speculative
-        // intrinsic-width pass over the SVG icon under IntrinsicHeight is
-        // fragile, and stretch inside the unbounded scroll view forces an
-        // infinite height. A fixed height keeps every tile equal and bounded.
         return SizedBox(
           height: 96,
           child: Row(
@@ -225,9 +307,11 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
             children: [
               Expanded(flex: 2, child: hero),
               const SizedBox(width: 12),
-              Expanded(child: inQueueCard),
+              Expanded(child: waitingCard),
               const SizedBox(width: 12),
-              Expanded(child: acceptedCard),
+              Expanded(child: onCallCard),
+              const SizedBox(width: 12),
+              Expanded(child: servedCard),
             ],
           ),
         );
@@ -257,22 +341,143 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
     );
   }
 
-  Widget _row(Appointment a, String branchId) {
-    final service = a.service ?? '';
-    final cabinet = a.cabinet?.trim() ?? '';
+  // ── «Вызвать следующего» ────────────────────────────────────────────────
+  Widget _callNextBar(String branchId, String? me, bool queueEmpty) {
+    return AppCard(
+      child: Row(
+        children: [
+          const Icon(Icons.meeting_room_outlined,
+              size: 20, color: AppColors.sub),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 96,
+            child: TextField(
+              controller: _room,
+              decoration: const InputDecoration(
+                labelText: 'Кабинет',
+                isDense: true,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: GradientButton(
+              label: 'Вызвать следующего',
+              height: 44,
+              onPressed: (_busy || queueEmpty)
+                  ? null
+                  : () => _act(
+                        () async {
+                          final room = _room.text.trim();
+                          await ref.read(queueRepositoryProvider).callNext(
+                                branchId: branchId,
+                                room: room.isEmpty ? '1' : room,
+                                track: 'doctor',
+                                forUserId: me,
+                              );
+                        },
+                        branchId: branchId,
+                        ok: 'Следующий пациент вызван',
+                      ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Строка очереди ────────────────────────────────────────────────────────
+  Widget _queueRow(QueueTicket t, String branchId,
+      {required bool canManage, required bool current, int? position}) {
+    final name = t.patientName.isEmpty ? '—' : t.patientName;
+    final emergency = t.priority > 0;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
         children: [
-          // Ticket number (the queue talon / appointment number) — prototype
-          // shows it large & teal. Sourced from Appointment.appointmentNo
-          // (required field; there is no separate queue-ticket on the model).
-          _ticket(a.appointmentNo),
+          InitialsAvatar(_initials(name)),
           const SizedBox(width: 12),
+          SizedBox(
+            width: 52,
+            child: Text(
+              position != null ? '№$position' : t.ticketNumber,
+              style: const TextStyle(
+                  color: AppColors.sub,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 14.5)),
+                    ),
+                    if (emergency) ...[
+                      const SizedBox(width: 8),
+                      const StatusBadge('⚠ Экстренный', kind: BadgeKind.danger),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text('Талон ${t.ticketNumber} · ${t.statusLabel}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: AppColors.muted, fontSize: 12.5)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (current && canManage) ...[
+            IconButton(
+              tooltip: 'Завершить приём',
+              icon: const Icon(Icons.task_alt),
+              color: AppColors.green,
+              onPressed: _busy
+                  ? null
+                  : () => _act(
+                        () async =>
+                            ref.read(queueRepositoryProvider).done(t.id),
+                        branchId: branchId,
+                        ok: 'Приём завершён — визит передан кассиру',
+                      ),
+            ),
+            const SizedBox(width: 4),
+          ],
+          SizedBox(
+            width: 190,
+            child: GradientButton(
+              label: current ? 'Открыть карту' : 'Начать осмотр',
+              height: 40,
+              onPressed: () => context.go('/patients/${t.patientId}/card'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Строка записи (Расписание) ──────────────────────────────────────────
+  Widget _apptRow(Appointment a) {
+    final service = a.service ?? '';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
           InitialsAvatar(_initials(a.patientName)),
           const SizedBox(width: 12),
           SizedBox(
-            width: 56,
+            width: 52,
             child: Text(a.timeLabel,
                 style: const TextStyle(
                     color: AppColors.sub,
@@ -291,15 +496,9 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                         fontWeight: FontWeight.w700, fontSize: 14.5)),
-                if (service.isNotEmpty || cabinet.isNotEmpty) ...[
+                if (service.isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  Text(
-                      [
-                        if (service.isNotEmpty) service,
-                        // Cabinet/room — only when present on the appointment
-                        // (Appointment.cabinet is nullable; never fabricated).
-                        if (cabinet.isNotEmpty) 'Каб. $cabinet',
-                      ].join('  ·  '),
+                  Text(service,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -309,80 +508,42 @@ class _WorklistScreenState extends ConsumerState<WorklistScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          StatusBadge(a.statusLabel, kind: _kind(a.status)),
+          StatusBadge(a.statusLabel,
+              kind: a.status == 'arrived' ? BadgeKind.info : BadgeKind.neutral),
           const SizedBox(width: 12),
-          _rowActions(a, branchId),
+          SizedBox(
+            width: 190,
+            child: GradientButton(
+              label: 'Открыть карту',
+              height: 40,
+              onPressed: () => context.go('/patients/${a.patientId}/card'),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  /// Prototype-style ticket chip: the appointment/queue number on a soft teal
-  /// pill, in the tabular Manrope figure reserved for "ticket numbers".
-  Widget _ticket(String no) {
-    return Container(
-      width: 64,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppColors.tealBg,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        no,
-        textAlign: TextAlign.center,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: AppTypography.number(14, color: AppColors.tealDark),
-      ),
-    );
-  }
+  Widget _sectionTitle(String text) => Align(
+        alignment: Alignment.centerLeft,
+        child: Text(text,
+            style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 15,
+                color: AppColors.ink)),
+      );
+}
 
-  Widget _rowActions(Appointment a, String branchId) {
-    final children = <Widget>[];
+class _Empty extends StatelessWidget {
+  const _Empty(this.text);
+  final String text;
 
-    // Compact secondary action (mark arrived / done) — an icon button keeps the
-    // row within its bounded width; the primary CTA stays a full button.
-    if (a.status == 'booked') {
-      children.add(IconButton(
-        tooltip: 'Отметить: пришёл',
-        icon: const Icon(Icons.how_to_reg_outlined),
-        color: AppColors.tealDark,
-        onPressed: _busy
-            ? null
-            : () => _act(
-                  () async =>
-                      ref.read(schedulingRepositoryProvider).setStatus(a.id, 'arrived'),
-                  branchId: branchId,
-                  ok: 'Пациент отмечен: пришёл',
-                ),
-      ));
-      children.add(const SizedBox(width: 4));
-    } else if (a.status == 'arrived') {
-      children.add(IconButton(
-        tooltip: 'Завершить приём',
-        icon: const Icon(Icons.task_alt),
-        color: AppColors.green,
-        onPressed: _busy
-            ? null
-            : () => _act(
-                  () async =>
-                      ref.read(schedulingRepositoryProvider).setStatus(a.id, 'done'),
-                  branchId: branchId,
-                  ok: 'Приём завершён',
-                ),
-      ));
-      children.add(const SizedBox(width: 4));
-    }
-
-    children.add(SizedBox(
-      width: 190,
-      child: GradientButton(
-        label: a.status != 'done' ? 'Начать осмотр' : 'Открыть карту',
-        height: 40,
-        onPressed: () => context.go('/patients/${a.patientId}/card'),
-      ),
-    ));
-
-    return Row(mainAxisSize: MainAxisSize.min, children: children);
-  }
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 22),
+        child: Center(
+          child: Text(text,
+              style: const TextStyle(color: AppColors.muted, fontSize: 13.5)),
+        ),
+      );
 }

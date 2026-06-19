@@ -157,7 +157,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "attachments.read", "attachments.write",
         # queue.manage: a doctor runs their OWN queue — calls the next patient
         # into their cabinet, recalls, returns to waiting (the «Моя очередь·Приём»
-        # workstation). Reception keeps the full two-track board.
+        # workstation). Reception keeps the full two-track board. Also finishes
+        # walk-in patients auto-queued after diagnostics → cashier (TZ §7.1.6).
         "queue.read", "queue.manage", "services.read",
         "exams.read", "exams.write", "diagnoses.read", "diagnoses.manage", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",

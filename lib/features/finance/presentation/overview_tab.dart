@@ -42,6 +42,13 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
     ref.invalidate(byDoctorReportProvider(_range));
   }
 
+  static const _methodLabels = <String, String>{
+    'cash': 'Наличные',
+    'card': 'Карта',
+    'qr': 'QR',
+    'transfer': 'Перевод',
+  };
+
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider).user;
@@ -72,6 +79,8 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
                 _kpiRow(context, r),
                 const SizedBox(height: 16),
                 _pieCard(context, r),
+                const SizedBox(height: 16),
+                _incomeByMethodCard(context, r),
               ],
             ),
           ),
@@ -80,6 +89,8 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
             _profitByDoctorCard(context),
             const SizedBox(height: 16),
             _expensesByCategoryCard(context),
+            const SizedBox(height: 16),
+            _topPatientsCard(context),
             const SizedBox(height: 16),
           ],
           _debtorsCard(context),
@@ -243,6 +254,115 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
         Expanded(child: Text(label)),
         Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
       ],
+    );
+  }
+
+  // ── Income by method (наличные/карта/QR/перевод) — «откуда деньги» ───────
+
+  Widget _incomeByMethodCard(BuildContext context, MonthlyReport r) {
+    final entries = _methodLabels.entries
+        .map((e) => (
+              label: e.value,
+              value: double.tryParse(r.incomeByMethod[e.key] ?? '') ?? 0,
+              raw: r.incomeByMethod[e.key] ?? '0.00',
+            ))
+        .where((e) => e.value > 0)
+        .toList();
+    final maxValue =
+        entries.fold<double>(0, (a, e) => e.value > a ? e.value : a);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Приход по способам оплаты',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (entries.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('Поступлений за месяц нет'),
+              )
+            else
+              for (final e in entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: Text(e.label)),
+                          Text(formatMoney(e.raw),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: maxValue <= 0 ? 0 : e.value / maxValue,
+                          minHeight: 7,
+                          color: Colors.green.shade600,
+                          backgroundColor: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Top patients (reports.view) — «от кого сколько прибыли» ──────────────
+
+  Widget _topPatientsCard(BuildContext context) {
+    final rows = ref.watch(byPatientReportProvider(_range));
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Топ пациентов по оплатам',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            AsyncValueWidget<List<PatientSpendRow>>(
+              value: rows,
+              onRetry: () => ref.invalidate(byPatientReportProvider(_range)),
+              builder: (items) {
+                if (items.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('Нет данных за период'),
+                  );
+                }
+                final top = items.take(8).toList();
+                return Column(
+                  children: [
+                    for (final p in top)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(p.fullName),
+                        subtitle: Text('${p.visits} виз.'),
+                        trailing: Text(formatMoney(p.totalPaid),
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 

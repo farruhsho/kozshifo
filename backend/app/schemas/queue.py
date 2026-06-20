@@ -17,6 +17,10 @@ class QueueTicketOut(BaseModel):
     ticket_number: str
     track: str
     patient_id: UUID
+    # Staff-facing patient identity (resolved from the joined Patient). Safe
+    # behind queue.read — the public TV board uses a separate privacy-safe DTO.
+    patient_name: str = ""
+    patient_mrn: str | None = None
     branch_id: UUID
     visit_id: UUID | None
     service_id: UUID | None

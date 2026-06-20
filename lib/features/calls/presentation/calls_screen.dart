@@ -288,6 +288,11 @@ class _CallsKpiHeader extends ConsumerWidget {
     if (summary == null) {
       return const SizedBox(height: 4);
     }
+    final active = ref.watch(callsStatusFilterProvider);
+    // Карточки-фильтры: повторное нажатие на активную сбрасывает фильтр.
+    void toggle(String status) =>
+        ref.read(callsStatusFilterProvider.notifier).state =
+            active == status ? null : status;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
@@ -303,6 +308,8 @@ class _CallsKpiHeader extends ConsumerWidget {
                   value: '${summary.answered}',
                   color: Colors.green,
                   icon: Icons.call_received,
+                  selected: active == 'answered',
+                  onTap: () => toggle('answered'),
                 ),
                 _KpiCard(
                   label: 'Пропущено',
@@ -310,6 +317,8 @@ class _CallsKpiHeader extends ConsumerWidget {
                   sub: summary.incoming > 0 ? '${summary.missedPercent}%' : null,
                   color: summary.missed > 0 ? Colors.red : Colors.grey,
                   icon: Icons.phone_missed,
+                  selected: active == 'missed',
+                  onTap: () => toggle('missed'),
                 ),
                 _KpiCard(
                   label: 'Ср. ответ',
@@ -322,6 +331,8 @@ class _CallsKpiHeader extends ConsumerWidget {
                   value: '${summary.outgoing}',
                   color: Colors.indigo,
                   icon: Icons.call_made,
+                  selected: active == 'outgoing',
+                  onTap: () => toggle('outgoing'),
                 ),
               ],
             ),
@@ -339,6 +350,8 @@ class _KpiCard extends StatelessWidget {
     required this.color,
     required this.icon,
     this.sub,
+    this.selected = false,
+    this.onTap,
   });
 
   final String label;
@@ -347,16 +360,24 @@ class _KpiCard extends StatelessWidget {
   final Color color;
   final IconData icon;
 
+  /// Карточка-фильтр активна (подсвечена).
+  final bool selected;
+
+  /// Если задан — карточка работает как кнопка-фильтр.
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final content = Container(
       width: 132,
-      margin: const EdgeInsets.only(right: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
+        color: color.withValues(alpha: selected ? 0.22 : 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
+        border: Border.all(
+          color: color.withValues(alpha: selected ? 0.9 : 0.25),
+          width: selected ? 2 : 1,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -365,7 +386,15 @@ class _KpiCard extends StatelessWidget {
             children: [
               Icon(icon, size: 18, color: color),
               const SizedBox(width: 6),
-              Text(label, style: Theme.of(context).textTheme.bodySmall),
+              Flexible(
+                child: Text(label,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall),
+              ),
+              if (selected) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.check_circle, size: 14, color: color),
+              ],
             ],
           ),
           const SizedBox(height: 6),
@@ -386,6 +415,22 @@ class _KpiCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+
+    final card = onTap == null
+        ? content
+        : Tooltip(
+            message: selected ? 'Сбросить фильтр' : 'Фильтр: $label',
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: content,
+            ),
+          );
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: card,
     );
   }
 }

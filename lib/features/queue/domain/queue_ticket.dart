@@ -14,6 +14,8 @@ abstract class QueueTicket with _$QueueTicket {
     required String ticketNumber,
     @Default('doctor') String track,
     required String patientId,
+    @Default('') String patientName,
+    String? patientMrn,
     required String branchId,
     String? visitId,
     String? serviceId,

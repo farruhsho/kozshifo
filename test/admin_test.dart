@@ -312,6 +312,28 @@ void main() {
       final body = last().data as Map<String, dynamic>;
       expect(body.containsKey('cabinet'), isFalse);
       expect(body.containsKey('service_ids'), isFalse);
+      // No pay configured → pay fields are omitted (not sent as null).
+      expect(body.containsKey('consult_salary_type'), isFalse);
+      expect(body.containsKey('operation_salary_type'), isFalse);
+    });
+
+    test('createUser sends doctor pay (consult + operation)', () async {
+      final (repo, last) = makeUserRepo();
+      await repo.createUser(
+        email: 'd@kozshifo.uz',
+        fullName: 'Доктор',
+        password: 'password1',
+        roleNames: const ['doctor'],
+        consultSalaryType: 'percent',
+        consultSalaryValue: '30',
+        operationSalaryType: 'fixed',
+        operationSalaryValue: '50000',
+      );
+      final body = last().data as Map<String, dynamic>;
+      expect(body['consult_salary_type'], 'percent');
+      expect(body['consult_salary_value'], '30');
+      expect(body['operation_salary_type'], 'fixed');
+      expect(body['operation_salary_value'], '50000');
     });
 
     test(

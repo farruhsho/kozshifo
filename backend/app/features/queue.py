@@ -85,6 +85,33 @@ def list_queue(
 
 
 @router.get(
+    "/served-today",
+    dependencies=[Depends(require_permission("queue.read"))],
+)
+def served_today(
+    db: Annotated[Session, Depends(get_db)],
+    branch_id: UUID,
+    track: QueueTrack = Query("doctor"),
+) -> dict[str, int]:
+    """Count of today's COMPLETED tickets of a track in a branch.
+
+    Powers the doctor worklist «принято сегодня» stat (TZ §7.1.6 — patients the
+    doctor finished today). Day-scoped by created_at, mirroring every other
+    active view in this module (numbers restart daily)."""
+    count = db.execute(
+        select(func.count())
+        .select_from(QueueTicket)
+        .where(
+            QueueTicket.branch_id == branch_id,
+            QueueTicket.track == track,
+            QueueTicket.status == "done",
+            QueueTicket.created_at >= _today_start(),
+        )
+    ).scalar_one()
+    return {"count": int(count)}
+
+
+@router.get(
     "/specialists",
     response_model=list[SpecialistOut],
     dependencies=[Depends(require_permission("queue.manage"))],

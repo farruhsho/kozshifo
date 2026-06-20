@@ -18,8 +18,16 @@ abstract class StaffUser with _$StaffUser {
     @Default(false) bool isSuperuser,
     String? branchId,
     // Процентная оплата врача (доля от выручки его визитов). Decimal приходит
-    // строкой (например "12.50"); null = не на процентной оплате.
+    // строкой (например "12.50"); null = не на процентной оплате. LEGACY —
+    // зеркалируется в consultSalary* на бэкенде; UI использует пару ниже.
     String? salaryPercent,
+    // Гибкая оплата врача (TZ Modul 8): отдельно за приём и за операции, каждая —
+    // 'percent' (% выручки) или 'fixed' (фикс. сумма). null type = сторона не
+    // оплачивается. Значение — Decimal-строка. (field_rename: snake → snake_case JSON)
+    String? consultSalaryType,
+    String? consultSalaryValue,
+    String? operationSalaryType,
+    String? operationSalaryValue,
     // Кабинет врача (например «Каб. 1») — при вызове талона в очереди пациент
     // направляется именно сюда. Задаёт директор. null = не клинический сотрудник.
     String? cabinet,

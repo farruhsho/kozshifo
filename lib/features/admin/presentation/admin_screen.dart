@@ -936,7 +936,8 @@ class _StaffTab extends ConsumerWidget {
               final u = items[i];
               final greyed = u.isActive ? null : TextStyle(color: disabled);
               final branch = branchNames[u.branchId];
-              final hasPercent = u.salaryPercent != null;
+              final payLabel = _payLabel(u);
+              final hasPercent = payLabel != null;
               return ListTile(
                 isThreeLine: u.roles.isNotEmpty || u.isSuperuser || hasPercent,
                 leading: CircleAvatar(
@@ -971,8 +972,9 @@ class _StaffTab extends ConsumerWidget {
                               ),
                             if (hasPercent)
                               Chip(
-                                avatar: const Icon(Icons.percent, size: 16),
-                                label: Text('${u.salaryPercent}%'),
+                                avatar: const Icon(Icons.payments_outlined,
+                                    size: 16),
+                                label: Text(payLabel),
                                 visualDensity: VisualDensity.compact,
                               ),
                           ],
@@ -1069,6 +1071,11 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
   final _selectedServiceIds = <String>{};
   final _selectedDiagnosisIds = <String>{};
   String? _branchId;
+  // Оплата врача — задаётся сразу при добавлении (тип нет/процент/фикс + значение).
+  String _consultType = _kNoPay;
+  String _operationType = _kNoPay;
+  final _consultValue = TextEditingController();
+  final _operationValue = TextEditingController();
   bool _saving = false;
 
   @override
@@ -1078,11 +1085,20 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
     _password.dispose();
     _cabinet.dispose();
     _queuePrefix.dispose();
+    _consultValue.dispose();
+    _operationValue.dispose();
     super.dispose();
   }
 
+  String _normPay(TextEditingController c) => c.text.trim().replaceAll(',', '.');
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_payErr(_consultType, _consultValue) != null ||
+        _payErr(_operationType, _operationValue) != null) {
+      setState(() {}); // surface inline errors
+      return;
+    }
     setState(() => _saving = true);
     try {
       await ref
@@ -1100,6 +1116,13 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                 : _queuePrefix.text.trim(),
             isExternalSurgeon: _isExternalSurgeon,
             diagnosisIds: _selectedDiagnosisIds.toList(),
+            consultSalaryType: _consultType == _kNoPay ? null : _consultType,
+            consultSalaryValue:
+                _consultType == _kNoPay ? null : _normPay(_consultValue),
+            operationSalaryType:
+                _operationType == _kNoPay ? null : _operationType,
+            operationSalaryValue:
+                _operationType == _kNoPay ? null : _normPay(_operationValue),
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -1212,6 +1235,30 @@ class _UserCreateDialogState extends ConsumerState<_UserCreateDialog> {
                   value: _isExternalSurgeon,
                   onChanged: (v) => setState(() => _isExternalSurgeon = v),
                 ),
+                const SizedBox(height: 12),
+                Text('Оплата врача',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                _PaySideField(
+                  label: 'За приём',
+                  type: _consultType,
+                  value: _consultValue,
+                  onType: (v) => setState(() => _consultType = v),
+                  onChanged: () => setState(() {}),
+                  fixedHint: 'фикс. в месяц',
+                ),
+                const SizedBox(height: 12),
+                _PaySideField(
+                  label: 'За операции (хирургу)',
+                  type: _operationType,
+                  value: _operationValue,
+                  onType: (v) => setState(() => _operationType = v),
+                  onChanged: () => setState(() {}),
+                  fixedHint: 'за операцию',
+                ),
                 const SizedBox(height: 16),
                 Text('Роли', style: Theme.of(context).textTheme.titleSmall),
                 roles.when(
@@ -1314,9 +1361,105 @@ class _UserEditDialog extends ConsumerStatefulWidget {
   ConsumerState<_UserEditDialog> createState() => _UserEditDialogState();
 }
 
+/// Sentinel for the «не оплачивается» option in the pay-type dropdowns.
+const _kNoPay = '';
+
+/// Validate one pay side (type нет/percent/fixed + value). Null = valid.
+String? _payErr(String type, TextEditingController c) {
+  if (type == _kNoPay) return null;
+  final raw = c.text.trim().replaceAll(',', '.');
+  if (raw.isEmpty) return 'Введите значение';
+  final v = double.tryParse(raw);
+  if (v == null) return 'Введите число';
+  if (v < 0) return 'Не меньше 0';
+  if (type == 'percent' && v > 100) return 'Процент 0–100';
+  return null;
+}
+
+/// Reusable «одна сторона оплаты»: dropdown (нет/процент/фикс) + поле значения.
+class _PaySideField extends StatelessWidget {
+  const _PaySideField({
+    required this.label,
+    required this.type,
+    required this.value,
+    required this.onType,
+    required this.onChanged,
+    required this.fixedHint,
+  });
+
+  final String label;
+  final String type;
+  final TextEditingController value;
+  final ValueChanged<String> onType;
+  final VoidCallback onChanged;
+  final String fixedHint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: type,
+          isExpanded: true,
+          decoration: InputDecoration(labelText: label, isDense: true),
+          items: const [
+            DropdownMenuItem(value: _kNoPay, child: Text('Не оплачивается')),
+            DropdownMenuItem(value: 'percent', child: Text('Процент (%)')),
+            DropdownMenuItem(value: 'fixed', child: Text('Фикс. сумма')),
+          ],
+          onChanged: (v) => onType(v ?? _kNoPay),
+        ),
+        if (type != _kNoPay) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: value,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: type == 'percent' ? 'Процент' : 'Сумма, сум',
+              suffixText: type == 'percent' ? '%' : null,
+              hintText: type == 'percent' ? '0–100' : fixedHint,
+              errorText: _payErr(type, value),
+            ),
+            onChanged: (_) => onChanged(),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Short pay summary for the staff list chip, e.g. «Приём 30% · Опер. фикс».
+/// Falls back to the legacy salaryPercent. Null = no pay configured.
+String? _payLabel(StaffUser u) {
+  String? side(String? type, String? value, String prefix) {
+    final t = type ?? (prefix == 'Приём' && u.salaryPercent != null ? 'percent' : null);
+    final v = value ?? (prefix == 'Приём' ? u.salaryPercent : null);
+    if (t == null) return null;
+    if (t == 'percent') return '$prefix $v%';
+    return '$prefix фикс';
+  }
+
+  final parts = [
+    ?side(u.consultSalaryType, u.consultSalaryValue, 'Приём'),
+    ?side(u.operationSalaryType, u.operationSalaryValue, 'Опер.'),
+  ];
+  return parts.isEmpty ? null : parts.join(' · ');
+}
+
 class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
-  late final _percent = TextEditingController(
-    text: widget.user.salaryPercent ?? '',
+  // Оплата врача: тип ('percent'|'fixed'|'' = нет) + значение, отдельно за приём
+  // и за операции. Приём предзаполняем из новой пары, иначе из legacy salaryPercent.
+  late String _consultType =
+      widget.user.consultSalaryType ??
+      (widget.user.salaryPercent != null ? 'percent' : _kNoPay);
+  late String _operationType = widget.user.operationSalaryType ?? _kNoPay;
+  late final _consultValue = TextEditingController(
+    text: widget.user.consultSalaryValue ?? widget.user.salaryPercent ?? '',
+  );
+  late final _operationValue = TextEditingController(
+    text: widget.user.operationSalaryValue ?? '',
   );
   late final _cabinet = TextEditingController(text: widget.user.cabinet ?? '');
   late final _queuePrefix = TextEditingController(
@@ -1335,41 +1478,57 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
 
   @override
   void dispose() {
-    _percent.dispose();
+    _consultValue.dispose();
+    _operationValue.dispose();
     _cabinet.dispose();
     _queuePrefix.dispose();
     super.dispose();
   }
 
   // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
-  String get _normalizedPercent => _percent.text.trim().replaceAll(',', '.');
+  String _norm(TextEditingController c) => c.text.trim().replaceAll(',', '.');
 
-  /// Пусто = допустимо (снять с процента). Иначе — число 0..100.
-  String? _validatePercent() {
-    final raw = _normalizedPercent;
-    if (raw.isEmpty) return null;
+  /// Validate one pay side: empty value with a type set, non-numeric, negative,
+  /// or percent > 100. Returns an error string or null.
+  String? _validateSide(String type, TextEditingController c) {
+    if (type == _kNoPay) return null;
+    final raw = _norm(c);
+    if (raw.isEmpty) return 'Введите значение';
     final v = double.tryParse(raw);
     if (v == null) return 'Введите число';
-    if (v < 0 || v > 100) return 'Диапазон 0–100';
+    if (v < 0) return 'Не меньше 0';
+    if (type == 'percent' && v > 100) return 'Процент 0–100';
     return null;
   }
 
-  bool get _canSave => !_saving && _validatePercent() == null;
+  bool get _canSave =>
+      !_saving &&
+      _validateSide(_consultType, _consultValue) == null &&
+      _validateSide(_operationType, _operationValue) == null;
 
   Future<void> _save() async {
     setState(() => _saving = true);
-    final raw = _normalizedPercent;
     final cab = _cabinet.text.trim();
     final qp = _queuePrefix.text.trim();
+    final consultRaw = _norm(_consultValue);
+    final operationRaw = _norm(_operationValue);
     try {
       await ref
           .read(adminRepositoryProvider)
           .updateUser(
             widget.user.id,
             roleNames: _selectedRoles.toList(),
-            salaryPercent: raw.isEmpty ? null : raw,
-            // Пустое поле — явный сброс процентной оплаты (отправляем null).
-            clearSalaryPercent: raw.isEmpty,
+            // Новая гибкая оплата: тип + значение, отдельно за приём и операции.
+            // Тип «нет» отправляет null/null — снимает оплату на этой стороне.
+            updateConsultSalary: true,
+            consultSalaryType: _consultType == _kNoPay ? null : _consultType,
+            consultSalaryValue: _consultType == _kNoPay ? null : consultRaw,
+            updateOperationSalary: true,
+            operationSalaryType: _operationType == _kNoPay ? null : _operationType,
+            operationSalaryValue:
+                _operationType == _kNoPay ? null : operationRaw,
+            // Заодно гасим legacy-поле, чтобы оно не «зеркалировалось» обратно.
+            clearSalaryPercent: true,
             cabinet: cab.isEmpty ? null : cab,
             clearCabinet: cab.isEmpty,
             serviceIds: _selectedServiceIds.toList(),
@@ -1388,9 +1547,51 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
     }
   }
 
+  /// One pay side: a type dropdown (нет/процент/фикс) + a value field that
+  /// only shows when a type is chosen.
+  Widget _paySide({
+    required String label,
+    required String type,
+    required TextEditingController value,
+    required ValueChanged<String> onType,
+    required String fixedHint,
+  }) {
+    final err = _validateSide(type, value);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: type,
+          isExpanded: true,
+          decoration: InputDecoration(labelText: label, isDense: true),
+          items: const [
+            DropdownMenuItem(value: _kNoPay, child: Text('Не оплачивается')),
+            DropdownMenuItem(value: 'percent', child: Text('Процент (%)')),
+            DropdownMenuItem(value: 'fixed', child: Text('Фикс. сумма')),
+          ],
+          onChanged: (v) => setState(() => onType(v ?? _kNoPay)),
+        ),
+        if (type != _kNoPay) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: value,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: type == 'percent' ? 'Процент' : 'Сумма, сум',
+              suffixText: type == 'percent' ? '%' : null,
+              hintText: type == 'percent' ? '0–100' : fixedHint,
+              errorText: err,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final error = _percent.text.trim().isEmpty ? null : _validatePercent();
     final roles = ref.watch(adminRolesProvider);
     final services = ref.watch(adminServicesProvider);
     final diagnoses = ref.watch(adminDiagnosesProvider);
@@ -1408,21 +1609,29 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 16),
-              TextField(
-                controller: _percent,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: InputDecoration(
-                  labelText: 'Процент врача',
-                  hintText: '0–100',
-                  suffixText: '%',
-                  helperText: 'Пусто — снять с процентной оплаты',
-                  errorText: error,
-                ),
-                onChanged: (_) => setState(() {}),
+              Text('Оплата врача',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              _paySide(
+                label: 'За приём',
+                type: _consultType,
+                value: _consultValue,
+                onType: (v) => _consultType = v,
+                fixedHint: 'фикс. в месяц',
               ),
               const SizedBox(height: 12),
+              _paySide(
+                label: 'За операции (хирургу)',
+                type: _operationType,
+                value: _operationValue,
+                onType: (v) => _operationType = v,
+                fixedHint: 'за операцию',
+              ),
+              const Divider(height: 24),
+              const SizedBox(height: 4),
               TextField(
                 controller: _cabinet,
                 decoration: const InputDecoration(

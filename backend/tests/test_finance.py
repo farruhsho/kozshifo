@@ -202,9 +202,11 @@ def test_payroll_math_through_the_api(client, auth):
     assert resp.status_code == 200, resp.text
     row = next(r for r in resp.json() if r["user_id"] == doctor["id"])
     assert row["full_name"] == doctor["full_name"]
-    assert row["salary_percent"] == "30.00"
-    assert row["revenue"] == "150000.00"  # CONS price, decimal string
-    assert row["salary"] == "45000.00"   # 30% of 150000
+    assert row["consult_salary_type"] == "percent"  # legacy salary_percent mirrors here
+    assert row["consult_salary_value"] == "30.00"
+    assert row["consult_revenue"] == "150000.00"  # CONS price, decimal string
+    assert row["consult_pay"] == "45000.00"  # 30% of 150000
+    assert row["salary"] == "45000.00"  # consult + operation (no operations)
     assert row["paid"] is False
     assert row["paid_at"] is None
 
@@ -215,7 +217,7 @@ def test_payroll_math_through_the_api(client, auth):
                        headers=auth).status_code == 200
     row = next(r for r in client.get(_PAYROLL, headers=auth, params={"month": month}).json()
                if r["user_id"] == doctor["id"])
-    assert row["revenue"] == "150000.00"  # unchanged by the refunded visit
+    assert row["consult_revenue"] == "150000.00"  # unchanged by the refunded visit
 
     # Month format is validated.
     assert client.get(_PAYROLL, headers=auth, params={"month": "2026-13"}).status_code == 422
@@ -272,7 +274,7 @@ def test_payroll_payout_flow(client, auth):
     assert expense["amount"] == "37500.00"  # 25% of 150000
     assert expense["payroll_user_id"] == doctor["id"]
     assert expense["payroll_month"] == month
-    assert "25" in expense["note"] and month in expense["note"]
+    assert month in expense["note"] and "приём" in expense["note"]
 
     # Payroll now shows the row as paid, with the frozen booked amount.
     row = next(r for r in client.get(_PAYROLL, headers=auth, params={"month": month}).json()
@@ -509,7 +511,7 @@ def test_csv_exports(client, auth):
     assert resp.content.startswith(b"\xef\xbb\xbf")
     assert "attachment" in resp.headers["content-disposition"]
     header = resp.text.lstrip("\ufeff").splitlines()[0]
-    assert header.startswith("expense_date,category,amount")
+    assert header.startswith("expense_date,category,name,amount")
 
     resp = client.get(f"{_PAYROLL}.csv", headers=auth, params={"month": "2026-06"})
     assert resp.status_code == 200, resp.text

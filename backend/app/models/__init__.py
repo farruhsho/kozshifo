@@ -6,7 +6,7 @@ from app.models.branch import Branch
 from app.models.cabinet import Cabinet
 from app.models.call import CallDevice, CallRecord
 from app.models.catalog import Service, ServiceCategory, service_doctors
-from app.models.finance import Expense
+from app.models.finance import Expense, ExpenseCategory, RecurringExpense
 from app.models.device import Device, DeviceResult
 from app.models.diagnosis import Diagnosis, VisitDiagnosis, user_diagnoses
 from app.models.exam import EyeExam
@@ -35,6 +35,8 @@ __all__ = [
     "DeviceResult",
     "Diagnosis",
     "Expense",
+    "ExpenseCategory",
+    "RecurringExpense",
     "EyeExam",
     "FaceTerminal",
     "InventoryCategory",

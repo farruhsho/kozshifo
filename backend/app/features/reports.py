@@ -162,9 +162,11 @@ class DoctorRow(BaseModel):
     doctor_name: str
     revenue: Decimal
     visits: int
+    payroll_expense: Decimal  # salary paid out to this doctor in the window
+    net_profit: Decimal  # revenue − payroll_expense (the clinic's cut)
 
 
-def _by_doctor(db: Session, start: datetime, end: datetime) -> list[DoctorRow]:
+def _by_doctor(db: Session, df: date, dt: date, start: datetime, end: datetime) -> list[DoctorRow]:
     revenue = {
         did: Decimal(total) for did, total in db.execute(
             select(Visit.doctor_id, func.coalesce(func.sum(Payment.amount), 0))
@@ -181,13 +183,26 @@ def _by_doctor(db: Session, start: datetime, end: datetime) -> list[DoctorRow]:
             .group_by(Visit.doctor_id)
         ).all()
     }
-    ids = set(revenue) | set(visits)
+    # Salary actually paid to each doctor in the window (kind="payroll" expenses).
+    payroll = {
+        uid: Decimal(total) for uid, total in db.execute(
+            select(Expense.payroll_user_id, func.coalesce(func.sum(Expense.amount), 0))
+            .where(Expense.kind == "payroll", Expense.payroll_user_id.is_not(None),
+                   Expense.expense_date >= df, Expense.expense_date <= dt)
+            .group_by(Expense.payroll_user_id)
+        ).all()
+    }
+    ids = set(revenue) | set(visits) | set(payroll)
     names = {u.id: u.full_name for u in db.execute(select(User).where(User.id.in_(ids))).scalars().all()} if ids else {}
-    rows = [
-        DoctorRow(doctor_id=did, doctor_name=names.get(did, "—"),
-                  revenue=revenue.get(did, Decimal("0")), visits=visits.get(did, 0))
-        for did in ids
-    ]
+    rows = []
+    for did in ids:
+        rev = revenue.get(did, Decimal("0"))
+        exp = payroll.get(did, Decimal("0"))
+        rows.append(DoctorRow(
+            doctor_id=did, doctor_name=names.get(did, "—"),
+            revenue=rev, visits=visits.get(did, 0),
+            payroll_expense=exp, net_profit=rev - exp,
+        ))
     rows.sort(key=lambda r: (r.revenue, r.visits), reverse=True)
     return rows
 
@@ -195,16 +210,18 @@ def _by_doctor(db: Session, start: datetime, end: datetime) -> list[DoctorRow]:
 @router.get("/by-doctor", response_model=list[DoctorRow])
 def by_doctor(db: Annotated[Session, Depends(get_db)],
               date_from: _DateFrom = None, date_to: _DateTo = None) -> list[DoctorRow]:
-    _, _, start, end = _resolve_range(date_from, date_to)
-    return _by_doctor(db, start, end)
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    return _by_doctor(db, df, dt, start, end)
 
 
 @router.get("/by-doctor.csv")
 def by_doctor_csv(db: Annotated[Session, Depends(get_db)],
                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.doctor_name, r.revenue, r.visits] for r in _by_doctor(db, start, end)]
-    return _csv(f"by_doctor_{df}_{dt}.csv", ["Врач", "Выручка", "Визитов"], rows)
+    rows = [[r.doctor_name, r.revenue, r.visits, r.payroll_expense, r.net_profit]
+            for r in _by_doctor(db, df, dt, start, end)]
+    return _csv(f"by_doctor_{df}_{dt}.csv",
+                ["Врач", "Выручка", "Визитов", "Зарплата", "Чистая прибыль"], rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════

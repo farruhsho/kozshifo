@@ -26,7 +26,12 @@ const _user = AuthUser(
   email: 'doc@kozshifo.uz',
   fullName: 'Доктор Тест',
   branchId: 'b1',
-  permissions: ['lab.manage', 'dashboard.view', 'exams.write'],
+  permissions: [
+    'lab.manage', 'dashboard.view', 'exams.write',
+    // queue.manage: the doctor calls the next patient / finishes the V-ticket
+    // from the queue-driven Приём worklist (TZ §3.3/§7.1.6).
+    'queue.read', 'queue.manage',
+  ],
 );
 
 Widget _host(Widget screen, List<Override> overrides) => ProviderScope(

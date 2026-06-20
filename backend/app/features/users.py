@@ -127,6 +127,10 @@ def create_user(
         cabinet=payload.cabinet,
         queue_prefix=payload.queue_prefix or _default_prefix(payload.full_name),
         is_external_surgeon=payload.is_external_surgeon,
+        consult_salary_type=payload.consult_salary_type,
+        consult_salary_value=payload.consult_salary_value,
+        operation_salary_type=payload.operation_salary_type,
+        operation_salary_value=payload.operation_salary_value,
     )
     user.roles = _resolve_roles(db, payload.role_names)
     user.services = _resolve_services(db, payload.service_ids)
@@ -178,6 +182,17 @@ def update_user(
         user.diagnoses = _resolve_diagnoses(db, data.pop("diagnosis_ids") or [])
     for field, value in data.items():
         setattr(user, field, value)
+    # Back-compat: a legacy `salary_percent` write (without an explicit consult
+    # pay in the same request) mirrors into the new consult-percent pay, so old
+    # API clients keep working. Clearing it clears the percent-consult side.
+    if "salary_percent" in data and "consult_salary_type" not in data:
+        if data["salary_percent"] is None:
+            if user.consult_salary_type == "percent":
+                user.consult_salary_type = None
+                user.consult_salary_value = None
+        else:
+            user.consult_salary_type = "percent"
+            user.consult_salary_value = data["salary_percent"]
     record_audit(db, action="update", entity_type="user", entity_id=user.id, actor_id=actor.id,
                  summary=f"Updated user {user.email}")
     db.commit()

@@ -129,6 +129,11 @@ class ReceptionRepository {
     required String amount,
     String method = 'cash',
     String? room,
+    // Куда направить пациента после полной оплаты:
+    //   diagnostic — на диагностику (D-талон, по умолчанию)
+    //   doctor     — «Направлен к врачу» (талон врача выдаётся сразу)
+    //   hold       — «Ожидает назначения» (талон не выдаётся)
+    String referralIntent = 'diagnostic',
   }) async {
     try {
       final resp = await _dio.post('/payments', data: {
@@ -136,8 +141,29 @@ class ReceptionRepository {
         'amount': amount,
         'method': method,
         'room': ?room,
+        'referral_intent': referralIntent,
       });
       return PaymentResult.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// «Направить к врачу» — issues a doctor-track ticket for a registered or held
+  /// («Ожидает назначения») visit, optionally pinning [doctorId] (when the
+  /// suggested лечащий is absent). Returns the ticket number (e.g. «С-001»).
+  Future<String> referToDoctor({
+    required String visitId,
+    String? doctorId,
+    String? room,
+  }) async {
+    try {
+      final resp = await _dio.post('/queue/refer-to-doctor', data: {
+        'visit_id': visitId,
+        'doctor_id': ?doctorId,
+        'room': ?room,
+      });
+      return resp.data['ticket_number'] as String;
     } on DioException catch (e) {
       throw ApiException.from(e);
     }

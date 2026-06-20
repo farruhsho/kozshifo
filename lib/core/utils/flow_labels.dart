@@ -2,6 +2,7 @@
 /// The status is read-only on the client — the backend flow engine owns it.
 String flowStatusLabel(String flowStatus) => switch (flowStatus) {
       'registered' => 'зарегистрирован',
+      'awaiting_assignment' => 'ожидает назначения',
       'waiting_diagnostic' => 'ждёт диагностику',
       'in_diagnostic' => 'на диагностике',
       'waiting_doctor' => 'ждёт врача',

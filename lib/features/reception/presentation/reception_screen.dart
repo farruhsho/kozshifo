@@ -1185,7 +1185,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                   const Icon(Icons.confirmation_number_outlined),
                   const SizedBox(width: 8),
                   Text(
-                    'Талон диагностики: ${r.queueTicketNumber}',
+                    // Талон может быть диагностики (D-) или врача (С-/V-) —
+                    // зависит от выбранного направления.
+                    'Талон очереди: ${r.queueTicketNumber}',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -1252,6 +1254,9 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
     text: widget.visit.balance,
   );
   String _method = 'cash';
+  // Куда направить пациента после оплаты (бизнес-требование: 2 варианта +
+  // привычная диагностика): diagnostic / doctor / hold.
+  String _intent = 'diagnostic';
   bool _paying = false;
   String? _error;
 
@@ -1274,6 +1279,7 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
             // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
             amount: _amount.text.trim().replaceAll(',', '.'),
             method: _method,
+            referralIntent: _intent,
           );
       if (mounted) Navigator.of(context).pop(result);
     } catch (e) {
@@ -1306,6 +1312,19 @@ class _PaymentDialogState extends ConsumerState<_PaymentDialog> {
               DropdownMenuItem(value: 'transfer', child: Text('Перечисление')),
             ],
             onChanged: (v) => setState(() => _method = v ?? 'cash'),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            initialValue: _intent,
+            decoration: const InputDecoration(labelText: 'Направление'),
+            items: const [
+              DropdownMenuItem(
+                  value: 'diagnostic', child: Text('На диагностику')),
+              DropdownMenuItem(value: 'doctor', child: Text('Направить к врачу')),
+              DropdownMenuItem(
+                  value: 'hold', child: Text('Без направления (ожидает)')),
+            ],
+            onChanged: (v) => setState(() => _intent = v ?? 'diagnostic'),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),

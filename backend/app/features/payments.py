@@ -20,6 +20,7 @@ from app.core.deps import CurrentUser, require_permission
 from app.core.flow import advance_flow
 from app.core.print_forms import build_receipt_pdf
 from app.core.sequences import next_receipt_no, next_ticket_number
+from app.features.queue import issue_doctor_ticket
 from app.models.catalog import Service
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -93,7 +94,12 @@ def take_payment(
         for item in visit.items:
             if item.status == "ordered":
                 item.status = "paid"
-        advance_flow(db, visit, "paid_in_full")  # workflow engine (same transaction)
+        # Reception's registration choice drives where the patient goes (the
+        # journey still starts exactly once — the events are guarded to "registered").
+        advance_flow(db, visit, {
+            "doctor": "referred_to_doctor",   # Вариант 2: «Направлен к врачу»
+            "hold": "held_for_assignment",    # Вариант 1: «Ожидает назначения»
+        }.get(payload.referral_intent, "paid_in_full"))  # default: diagnostics
 
     record_audit(db, action="payment", entity_type="payment", entity_id=payment.id, actor_id=actor.id,
                  branch_id=visit.branch_id,
@@ -111,6 +117,15 @@ def take_payment(
         ).scalar_one_or_none()
         if existing:
             ticket_number = existing.ticket_number
+        # «Направлен к врачу» (Вариант 2): mint the doctor ticket directly, routed
+        # to the visit's doctor (лечащий / chosen / eligible) with their С-001
+        # prefix + cabinet. «Ожидает назначения» leaves flow at awaiting_assignment
+        # and mints nothing (reception refers later via /queue/refer-to-doctor).
+        elif visit.flow_status == "waiting_doctor":
+            new_ticket = issue_doctor_ticket(db, visit, actor, room=payload.room,
+                                             audit_note=" at payment (направлен к врачу)")
+            if new_ticket is not None:
+                ticket_number = new_ticket.ticket_number
         # A NEW diagnostics ticket is minted only when the JOURNEY starts (flow
         # is waiting_diagnostic). Settling a later bill — e.g. a prescribed
         # surgery after the appointment — must never re-queue the patient to

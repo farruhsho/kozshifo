@@ -57,6 +57,17 @@ class AssignRequest(BaseModel):
     assigned_user_id: UUID | None = None
 
 
+class ReferToDoctorRequest(BaseModel):
+    """Reception sends a registered/held visit straight to a doctor (registration
+    Вариант 2, or assigning a previously held «Ожидает назначения» patient).
+    Optionally pins the doctor (sets visit.doctor_id, e.g. when the suggested
+    лечащий is absent and reception picks another)."""
+
+    visit_id: UUID
+    doctor_id: UUID | None = None
+    room: str | None = None
+
+
 class TreatmentTicketRequest(BaseModel):
     """Reception issues a treatment-track ticket (Л-…) for a patient who is here
     for a course of treatment. Independent of payment (per-day / prepaid /

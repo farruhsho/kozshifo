@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.flow import advance_flow
 from app.core.sequences import next_ticket_number
+from app.core.visibility import owner_user_ids
 from app.models.branch import Branch
 from app.models.catalog import service_doctors
 from app.models.patient import Patient
@@ -32,6 +33,7 @@ from app.schemas.queue import (
     CallTicketRequest,
     QueueTicketOut,
     QueueTrack,
+    ReferToDoctorRequest,
     SpecialistOut,
     TreatmentTicketRequest,
     TvBranchOption,
@@ -100,7 +102,11 @@ def list_specialists(
     rows = (
         db.execute(
             select(User)
-            .where(User.is_active.is_(True), User.branch_id == branch_id)
+            .where(
+                User.is_active.is_(True),
+                User.branch_id == branch_id,
+                User.id.not_in(owner_user_ids()),  # ghost: never expose the owner
+            )
             .order_by(User.full_name)
         )
         .scalars()
@@ -288,50 +294,61 @@ def _doctor_for_visit(db: Session, visit: Visit) -> User | None:
     return _eligible_doctor_for_visit(db, visit)
 
 
-def _auto_advance_to_doctor(db: Session, ticket: QueueTicket, actor: CurrentUser) -> None:
-    """Diagnostics finished -> automatically queue the patient for the doctor.
+def issue_doctor_ticket(db: Session, visit: Visit, actor: CurrentUser,
+                        room: str | None = None, audit_note: str = "") -> QueueTicket | None:
+    """Mint a waiting doctor-track ticket for a visit, routed to its doctor
+    (visit.doctor_id → patient's primary → single eligible → open pool «V»),
+    pre-filled with that doctor's cabinet + their ``queue_prefix`` (С-001…), and
+    inheriting the visit's emergency priority. Returns None (mints nothing) for a
+    dead visit or one that already has an active doctor ticket.
 
-    Issues a waiting doctor-track (V-…) ticket for the same visit, unless the
-    visit already has an active doctor ticket. When the visit's service maps to a
-    single eligible doctor, the ticket is pre-routed to them and pre-filled with
-    their cabinet (so the TV board already shows the room and call-next claims it
-    for that doctor). Runs inside the caller's transaction so the transition and
-    the new ticket commit atomically.
+    Shared by (a) diagnostics auto-advance and (b) reception's «Направить к врачу»
+    (registration Вариант 2 / assigning a held patient). Runs in the caller's
+    transaction so the ticket commits atomically with whatever triggered it.
     """
-    # A dead visit must not re-enter the flow: a refunded-then-cancelled or
-    # already-closed visit gets no doctor ticket.
-    visit = db.get(Visit, ticket.visit_id)
     if visit is None or visit.status in ("completed", "cancelled"):
-        return
+        return None
     active_doctor = db.execute(
         select(QueueTicket.id)
         .where(
-            QueueTicket.visit_id == ticket.visit_id,
+            QueueTicket.visit_id == visit.id,
             QueueTicket.track == "doctor",
             QueueTicket.status.in_(_ACTIVE),
         )
         .limit(1)
     ).first()
     if active_doctor is not None:
-        return
+        return None
     doctor = _doctor_for_visit(db, visit)
     new_ticket = QueueTicket(
-        ticket_number=next_ticket_number(db, ticket.branch_id, _doctor_prefix(doctor)),
+        ticket_number=next_ticket_number(db, visit.branch_id, _doctor_prefix(doctor)),
         track="doctor",
-        patient_id=ticket.patient_id,
-        branch_id=ticket.branch_id,
-        visit_id=ticket.visit_id,
-        room=doctor.cabinet if doctor is not None else None,
+        patient_id=visit.patient_id,
+        branch_id=visit.branch_id,
+        visit_id=visit.id,
+        room=room if room is not None else (doctor.cabinet if doctor is not None else None),
         assigned_user_id=doctor.id if doctor is not None else None,
         status="waiting",
+        priority=visit.priority,
+        priority_reason=visit.priority_reason,
     )
     db.add(new_ticket)
     db.flush()
     routed = f" routed to {doctor.full_name}" if doctor is not None else ""
     record_audit(db, action="create", entity_type="queue_ticket", entity_id=new_ticket.id,
-                 actor_id=actor.id, branch_id=ticket.branch_id,
-                 summary=f"auto-advance to doctor queue: {new_ticket.ticket_number} "
-                         f"after {ticket.ticket_number} done{routed}")
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Doctor ticket {new_ticket.ticket_number}{audit_note}{routed}")
+    return new_ticket
+
+
+def _auto_advance_to_doctor(db: Session, ticket: QueueTicket, actor: CurrentUser) -> None:
+    """Diagnostics finished -> automatically queue the patient for the doctor.
+    A dead/closed visit (refunded-then-cancelled) gets no doctor ticket."""
+    visit = db.get(Visit, ticket.visit_id)
+    if visit is None:
+        return
+    issue_doctor_ticket(db, visit, actor,
+                        audit_note=f" auto-advance after {ticket.ticket_number} done")
 
 
 def _transition(db: Session, ticket_id: UUID, actor: CurrentUser, new_status: str, ts_field: str | None) -> QueueTicket:
@@ -551,6 +568,46 @@ def assign_ticket(
         summary=(f"Routed {ticket.ticket_number} to {target.full_name}" if target is not None
                  else f"Cleared routing on {ticket.ticket_number}"),
     )
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+@router.post("/refer-to-doctor", response_model=QueueTicketOut, status_code=status.HTTP_201_CREATED)
+def refer_to_doctor(
+    payload: ReferToDoctorRequest,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("queue.admin"))],
+) -> QueueTicket:
+    """Reception sends a visit straight to a doctor — registration Вариант 2
+    «Направлен к врачу», or assigning a previously held «Ожидает назначения»
+    patient. Optionally pins the doctor on the visit (when the suggested лечащий
+    is absent and reception picks another), then mints the doctor-track ticket
+    routed to them (their С-001 prefix + cabinet). Idempotent: a visit that already
+    has an active doctor ticket returns that one."""
+    visit = db.get(Visit, payload.visit_id)
+    if visit is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Visit is closed")
+    if payload.doctor_id is not None:
+        doctor = db.get(User, payload.doctor_id)
+        if doctor is None or not doctor.is_active:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Doctor not found or inactive")
+        visit.doctor_id = doctor.id
+    advance_flow(db, visit, "referred_to_doctor")  # workflow engine (same transaction)
+    ticket = issue_doctor_ticket(db, visit, actor,
+                                 room=(payload.room or "").strip() or None,
+                                 audit_note=" referred by reception")
+    if ticket is None:  # already had an active doctor ticket → return it (idempotent)
+        ticket = db.execute(
+            select(QueueTicket)
+            .where(QueueTicket.visit_id == visit.id, QueueTicket.track == "doctor",
+                   QueueTicket.status.in_(_ACTIVE))
+            .order_by(QueueTicket.created_at.desc()).limit(1)
+        ).scalars().first()
+        if ticket is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Could not issue a doctor ticket")
     db.commit()
     db.refresh(ticket)
     return ticket

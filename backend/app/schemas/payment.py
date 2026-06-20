@@ -11,6 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field
 # Closed vocabulary (TZ Modul 2.2): anything else is a 422 before touching the DB.
 PaymentMethod = Literal["cash", "card", "qr", "transfer"]
 
+# Reception's registration-time routing choice on full payment:
+#   diagnostic — issue a D-… diagnostics ticket (default; eye-clinic norm)
+#   doctor     — «Направлен к врачу»: issue the doctor ticket directly (Вариант 2)
+#   hold       — «Ожидает назначения»: no ticket, await a routing decision (Вариант 1)
+ReferralIntent = Literal["diagnostic", "doctor", "hold"]
+
 
 class PaymentCreate(BaseModel):
     visit_id: UUID
@@ -20,6 +26,8 @@ class PaymentCreate(BaseModel):
     # Issue a queue ticket when the visit becomes fully paid (default behaviour).
     issue_queue_ticket: bool = True
     room: str | None = None
+    # Where the patient goes when this payment settles the visit (see above).
+    referral_intent: ReferralIntent = "diagnostic"
 
 
 class PaymentOut(BaseModel):

@@ -12,6 +12,11 @@ Event table (event -> resulting flow_status):
                              first full payment starts the journey; settling a
                              later bill (e.g. a prescribed surgery) must never
                              throw the patient back into the diagnostics queue
+    held_for_assignment   -> awaiting_assignment  reception saved the visit with
+                             no referral yet (Вариант 1: «Ожидает назначения»)
+    referred_to_doctor    -> waiting_doctor        reception sent the patient
+                             straight to a doctor (Вариант 2: «Направлен к врачу»),
+                             from "registered" or from "awaiting_assignment"
     diagnostic_called     -> in_diagnostic        D-ticket claimed by call-next
     diagnostic_skipped    -> waiting_diagnostic   called D no-show skipped
     diagnostic_done       -> waiting_doctor       D-ticket done (auto V-ticket point)
@@ -39,6 +44,8 @@ from app.models.visit import Visit
 
 FLOW_EVENTS: dict[str, str] = {
     "paid_in_full": "waiting_diagnostic",
+    "held_for_assignment": "awaiting_assignment",
+    "referred_to_doctor": "waiting_doctor",
     "diagnostic_called": "in_diagnostic",
     "diagnostic_skipped": "waiting_diagnostic",
     "diagnostic_done": "waiting_doctor",
@@ -86,6 +93,13 @@ def advance_flow(db: Session, visit: Visit, event: str) -> None:
     # The journey starts exactly once: later full payments (surgery billed and
     # settled mid-flow) must not regress the patient to the diagnostics queue.
     if event == "paid_in_full" and current != "registered":
+        return
+    # Reception's registration-time referral choice (Вариант 1 / Вариант 2):
+    # «hold» only opens the journey; «to doctor» may also fire later, when
+    # reception assigns a doctor to a held (awaiting_assignment) patient.
+    if event == "held_for_assignment" and current != "registered":
+        return
+    if event == "referred_to_doctor" and current not in ("registered", "awaiting_assignment"):
         return
     # No-show skips revert the "in the room" claim without inventing progress.
     if event == "diagnostic_skipped" and current != "in_diagnostic":

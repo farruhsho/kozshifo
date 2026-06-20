@@ -15,7 +15,8 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Expense {
 
- String get id; String get branchId; String get category; String get amount; String get expenseDate;// YYYY-MM-DD
+ String get id; String get branchId; String get category; String? get name;// rasxod nomi (отдельно от типа-категории)
+ String get amount; String get expenseDate;// YYYY-MM-DD
  String? get note; String get kind;// regular | payroll
  String? get payrollUserId; String? get payrollMonth;// YYYY-MM
  String? get createdByName; String? get createdAt;
@@ -31,16 +32,16 @@ $ExpenseCopyWith<Expense> get copyWith => _$ExpenseCopyWithImpl<Expense>(this as
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Expense&&(identical(other.id, id) || other.id == id)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.category, category) || other.category == category)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.expenseDate, expenseDate) || other.expenseDate == expenseDate)&&(identical(other.note, note) || other.note == note)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.payrollUserId, payrollUserId) || other.payrollUserId == payrollUserId)&&(identical(other.payrollMonth, payrollMonth) || other.payrollMonth == payrollMonth)&&(identical(other.createdByName, createdByName) || other.createdByName == createdByName)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Expense&&(identical(other.id, id) || other.id == id)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.category, category) || other.category == category)&&(identical(other.name, name) || other.name == name)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.expenseDate, expenseDate) || other.expenseDate == expenseDate)&&(identical(other.note, note) || other.note == note)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.payrollUserId, payrollUserId) || other.payrollUserId == payrollUserId)&&(identical(other.payrollMonth, payrollMonth) || other.payrollMonth == payrollMonth)&&(identical(other.createdByName, createdByName) || other.createdByName == createdByName)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,branchId,category,amount,expenseDate,note,kind,payrollUserId,payrollMonth,createdByName,createdAt);
+int get hashCode => Object.hash(runtimeType,id,branchId,category,name,amount,expenseDate,note,kind,payrollUserId,payrollMonth,createdByName,createdAt);
 
 @override
 String toString() {
-  return 'Expense(id: $id, branchId: $branchId, category: $category, amount: $amount, expenseDate: $expenseDate, note: $note, kind: $kind, payrollUserId: $payrollUserId, payrollMonth: $payrollMonth, createdByName: $createdByName, createdAt: $createdAt)';
+  return 'Expense(id: $id, branchId: $branchId, category: $category, name: $name, amount: $amount, expenseDate: $expenseDate, note: $note, kind: $kind, payrollUserId: $payrollUserId, payrollMonth: $payrollMonth, createdByName: $createdByName, createdAt: $createdAt)';
 }
 
 
@@ -51,7 +52,7 @@ abstract mixin class $ExpenseCopyWith<$Res>  {
   factory $ExpenseCopyWith(Expense value, $Res Function(Expense) _then) = _$ExpenseCopyWithImpl;
 @useResult
 $Res call({
- String id, String branchId, String category, String amount, String expenseDate, String? note, String kind, String? payrollUserId, String? payrollMonth, String? createdByName, String? createdAt
+ String id, String branchId, String category, String? name, String amount, String expenseDate, String? note, String kind, String? payrollUserId, String? payrollMonth, String? createdByName, String? createdAt
 });
 
 
@@ -68,12 +69,13 @@ class _$ExpenseCopyWithImpl<$Res>
 
 /// Create a copy of Expense
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? branchId = null,Object? category = null,Object? amount = null,Object? expenseDate = null,Object? note = freezed,Object? kind = null,Object? payrollUserId = freezed,Object? payrollMonth = freezed,Object? createdByName = freezed,Object? createdAt = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? branchId = null,Object? category = null,Object? name = freezed,Object? amount = null,Object? expenseDate = null,Object? note = freezed,Object? kind = null,Object? payrollUserId = freezed,Object? payrollMonth = freezed,Object? createdByName = freezed,Object? createdAt = freezed,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,branchId: null == branchId ? _self.branchId : branchId // ignore: cast_nullable_to_non_nullable
 as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as String,amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
+as String,name: freezed == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
+as String?,amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
 as String,expenseDate: null == expenseDate ? _self.expenseDate : expenseDate // ignore: cast_nullable_to_non_nullable
 as String,note: freezed == note ? _self.note : note // ignore: cast_nullable_to_non_nullable
 as String?,kind: null == kind ? _self.kind : kind // ignore: cast_nullable_to_non_nullable
@@ -166,10 +168,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String branchId,  String category,  String amount,  String expenseDate,  String? note,  String kind,  String? payrollUserId,  String? payrollMonth,  String? createdByName,  String? createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String branchId,  String category,  String? name,  String amount,  String expenseDate,  String? note,  String kind,  String? payrollUserId,  String? payrollMonth,  String? createdByName,  String? createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Expense() when $default != null:
-return $default(_that.id,_that.branchId,_that.category,_that.amount,_that.expenseDate,_that.note,_that.kind,_that.payrollUserId,_that.payrollMonth,_that.createdByName,_that.createdAt);case _:
+return $default(_that.id,_that.branchId,_that.category,_that.name,_that.amount,_that.expenseDate,_that.note,_that.kind,_that.payrollUserId,_that.payrollMonth,_that.createdByName,_that.createdAt);case _:
   return orElse();
 
 }
@@ -187,10 +189,10 @@ return $default(_that.id,_that.branchId,_that.category,_that.amount,_that.expens
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String branchId,  String category,  String amount,  String expenseDate,  String? note,  String kind,  String? payrollUserId,  String? payrollMonth,  String? createdByName,  String? createdAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String branchId,  String category,  String? name,  String amount,  String expenseDate,  String? note,  String kind,  String? payrollUserId,  String? payrollMonth,  String? createdByName,  String? createdAt)  $default,) {final _that = this;
 switch (_that) {
 case _Expense():
-return $default(_that.id,_that.branchId,_that.category,_that.amount,_that.expenseDate,_that.note,_that.kind,_that.payrollUserId,_that.payrollMonth,_that.createdByName,_that.createdAt);case _:
+return $default(_that.id,_that.branchId,_that.category,_that.name,_that.amount,_that.expenseDate,_that.note,_that.kind,_that.payrollUserId,_that.payrollMonth,_that.createdByName,_that.createdAt);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -207,10 +209,10 @@ return $default(_that.id,_that.branchId,_that.category,_that.amount,_that.expens
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String branchId,  String category,  String amount,  String expenseDate,  String? note,  String kind,  String? payrollUserId,  String? payrollMonth,  String? createdByName,  String? createdAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String branchId,  String category,  String? name,  String amount,  String expenseDate,  String? note,  String kind,  String? payrollUserId,  String? payrollMonth,  String? createdByName,  String? createdAt)?  $default,) {final _that = this;
 switch (_that) {
 case _Expense() when $default != null:
-return $default(_that.id,_that.branchId,_that.category,_that.amount,_that.expenseDate,_that.note,_that.kind,_that.payrollUserId,_that.payrollMonth,_that.createdByName,_that.createdAt);case _:
+return $default(_that.id,_that.branchId,_that.category,_that.name,_that.amount,_that.expenseDate,_that.note,_that.kind,_that.payrollUserId,_that.payrollMonth,_that.createdByName,_that.createdAt);case _:
   return null;
 
 }
@@ -222,12 +224,14 @@ return $default(_that.id,_that.branchId,_that.category,_that.amount,_that.expens
 @JsonSerializable()
 
 class _Expense extends Expense {
-  const _Expense({required this.id, required this.branchId, required this.category, required this.amount, required this.expenseDate, this.note, this.kind = 'regular', this.payrollUserId, this.payrollMonth, this.createdByName, this.createdAt}): super._();
+  const _Expense({required this.id, required this.branchId, required this.category, this.name, required this.amount, required this.expenseDate, this.note, this.kind = 'regular', this.payrollUserId, this.payrollMonth, this.createdByName, this.createdAt}): super._();
   factory _Expense.fromJson(Map<String, dynamic> json) => _$ExpenseFromJson(json);
 
 @override final  String id;
 @override final  String branchId;
 @override final  String category;
+@override final  String? name;
+// rasxod nomi (отдельно от типа-категории)
 @override final  String amount;
 @override final  String expenseDate;
 // YYYY-MM-DD
@@ -253,16 +257,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Expense&&(identical(other.id, id) || other.id == id)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.category, category) || other.category == category)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.expenseDate, expenseDate) || other.expenseDate == expenseDate)&&(identical(other.note, note) || other.note == note)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.payrollUserId, payrollUserId) || other.payrollUserId == payrollUserId)&&(identical(other.payrollMonth, payrollMonth) || other.payrollMonth == payrollMonth)&&(identical(other.createdByName, createdByName) || other.createdByName == createdByName)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Expense&&(identical(other.id, id) || other.id == id)&&(identical(other.branchId, branchId) || other.branchId == branchId)&&(identical(other.category, category) || other.category == category)&&(identical(other.name, name) || other.name == name)&&(identical(other.amount, amount) || other.amount == amount)&&(identical(other.expenseDate, expenseDate) || other.expenseDate == expenseDate)&&(identical(other.note, note) || other.note == note)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.payrollUserId, payrollUserId) || other.payrollUserId == payrollUserId)&&(identical(other.payrollMonth, payrollMonth) || other.payrollMonth == payrollMonth)&&(identical(other.createdByName, createdByName) || other.createdByName == createdByName)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,branchId,category,amount,expenseDate,note,kind,payrollUserId,payrollMonth,createdByName,createdAt);
+int get hashCode => Object.hash(runtimeType,id,branchId,category,name,amount,expenseDate,note,kind,payrollUserId,payrollMonth,createdByName,createdAt);
 
 @override
 String toString() {
-  return 'Expense(id: $id, branchId: $branchId, category: $category, amount: $amount, expenseDate: $expenseDate, note: $note, kind: $kind, payrollUserId: $payrollUserId, payrollMonth: $payrollMonth, createdByName: $createdByName, createdAt: $createdAt)';
+  return 'Expense(id: $id, branchId: $branchId, category: $category, name: $name, amount: $amount, expenseDate: $expenseDate, note: $note, kind: $kind, payrollUserId: $payrollUserId, payrollMonth: $payrollMonth, createdByName: $createdByName, createdAt: $createdAt)';
 }
 
 
@@ -273,7 +277,7 @@ abstract mixin class _$ExpenseCopyWith<$Res> implements $ExpenseCopyWith<$Res> {
   factory _$ExpenseCopyWith(_Expense value, $Res Function(_Expense) _then) = __$ExpenseCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String branchId, String category, String amount, String expenseDate, String? note, String kind, String? payrollUserId, String? payrollMonth, String? createdByName, String? createdAt
+ String id, String branchId, String category, String? name, String amount, String expenseDate, String? note, String kind, String? payrollUserId, String? payrollMonth, String? createdByName, String? createdAt
 });
 
 
@@ -290,12 +294,13 @@ class __$ExpenseCopyWithImpl<$Res>
 
 /// Create a copy of Expense
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? branchId = null,Object? category = null,Object? amount = null,Object? expenseDate = null,Object? note = freezed,Object? kind = null,Object? payrollUserId = freezed,Object? payrollMonth = freezed,Object? createdByName = freezed,Object? createdAt = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? branchId = null,Object? category = null,Object? name = freezed,Object? amount = null,Object? expenseDate = null,Object? note = freezed,Object? kind = null,Object? payrollUserId = freezed,Object? payrollMonth = freezed,Object? createdByName = freezed,Object? createdAt = freezed,}) {
   return _then(_Expense(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,branchId: null == branchId ? _self.branchId : branchId // ignore: cast_nullable_to_non_nullable
 as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as String,amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
+as String,name: freezed == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
+as String?,amount: null == amount ? _self.amount : amount // ignore: cast_nullable_to_non_nullable
 as String,expenseDate: null == expenseDate ? _self.expenseDate : expenseDate // ignore: cast_nullable_to_non_nullable
 as String,note: freezed == note ? _self.note : note // ignore: cast_nullable_to_non_nullable
 as String?,kind: null == kind ? _self.kind : kind // ignore: cast_nullable_to_non_nullable

@@ -125,6 +125,21 @@ const _dailyJson = <String, dynamic>{
   'net': '680000.00',
 };
 
+const _monthlyJson = <String, dynamic>{
+  'month': '2026-06',
+  'income_by_method': {
+    'cash': '500000.00',
+    'card': '250000.00',
+    'qr': '0.00',
+    'transfer': '100000.00',
+  },
+  'income_total': '850000.00',
+  'refund_total': '50000.00',
+  'expense_total': '120000.00',
+  'net': '680000.00',
+  'payroll_total': null,
+};
+
 const _cashier = AuthUser(
   id: 'u-cash',
   email: 'kassa@kozshifo.uz',
@@ -366,12 +381,15 @@ void main() {
             items: const [], total: 0, offset: 0, limit: 50)),
         dailyReportProvider
             .overrideWith((ref, d) async => DailyReport.fromJson(_dailyJson)),
+        monthlyReportProvider.overrideWith(
+            (ref, m) async => MonthlyReport.fromJson(_monthlyJson)),
         patientNameProvider.overrideWith((ref, id) async => 'Имя'),
       ],
       child: const MaterialApp(home: FinanceScreen()),
     ));
     await tester.pumpAndSettle();
 
+    expect(find.widgetWithText(Tab, 'Сводка'), findsOneWidget);
     expect(find.widgetWithText(Tab, 'Платежи'), findsOneWidget);
     expect(find.widgetWithText(Tab, 'Возвраты'), findsOneWidget);
     expect(find.widgetWithText(Tab, 'Смена'), findsOneWidget);

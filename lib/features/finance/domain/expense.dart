@@ -13,6 +13,7 @@ abstract class Expense with _$Expense {
     required String id,
     required String branchId,
     required String category,
+    String? name, // rasxod nomi (отдельно от типа-категории)
     required String amount,
     required String expenseDate, // YYYY-MM-DD
     String? note,

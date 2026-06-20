@@ -26,8 +26,22 @@ class User(UUIDPKMixin, TimestampMixin, Base):
         Uuid, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True
     )
     # Payroll (TZ Modul 8): doctor's cut of revenue from their visits, in
-    # percent. NULL = not on percent-based pay.
+    # percent. NULL = not on percent-based pay. LEGACY — kept for back-compat and
+    # migrated into consult_salary_type/value; the payroll engine reads the
+    # consult_*/operation_* pair below.
     salary_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    # Flexible doctor pay (admin-set, per doctor): SEPARATELY for consultations
+    # («приём») and for operations the doctor performs as surgeon. Each side is
+    # either a PERCENT of that side's revenue, or a FIXED sum. NULL type = that
+    # side is not paid out.
+    #   consult_salary_type:   'percent' -> % of consult revenue (per month)
+    #                          'fixed'   -> flat monthly sum
+    #   operation_salary_type: 'percent' -> % of performed-operation revenue
+    #                          'fixed'   -> flat sum PER performed operation
+    consult_salary_type: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    consult_salary_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    operation_salary_type: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    operation_salary_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     # Face ID / access control: this staff member's person id on the Hikvision
     # terminal(s). The mapping key between a recognition event (employeeNoString)
     # and our user. NULL = not enrolled on any terminal. See

@@ -19,6 +19,7 @@ from app.models.branch import Branch
 from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device
 from app.models.diagnosis import Diagnosis
+from app.models.finance import ExpenseCategory
 from app.models.inventory import InventoryCategory, Product, Supplier
 from app.models.operation import OperationType, OperationTypeConsumable
 from app.models.rbac import Permission, Role
@@ -293,6 +294,28 @@ def _seed_diagnoses(db: Session) -> None:
     db.flush()
 
 
+# Default expense types (rasxod turlari). «Зарплата» is a system type — payroll
+# payouts book against it — so it can be deactivated but never deleted.
+_DEFAULT_EXPENSE_CATEGORIES = [
+    ("Аренда", False),
+    ("Зарплата", True),
+    ("Коммунальные", False),
+    ("Расходники", False),
+    ("Реклама", False),
+    ("Налоги", False),
+    ("Прочее", False),
+]
+
+
+def _seed_expense_categories(db: Session) -> None:
+    for order, (name, is_system) in enumerate(_DEFAULT_EXPENSE_CATEGORIES):
+        if db.execute(
+            select(ExpenseCategory).where(ExpenseCategory.name == name)
+        ).scalar_one_or_none() is None:
+            db.add(ExpenseCategory(name=name, is_system=is_system, sort_order=order))
+    db.flush()
+
+
 def run_seed() -> None:
     db = SessionLocal()
     try:
@@ -306,6 +329,7 @@ def run_seed() -> None:
         _seed_inventory(db)
         _seed_operations(db)
         _seed_diagnoses(db)
+        _seed_expense_categories(db)
         db.commit()
     finally:
         db.close()

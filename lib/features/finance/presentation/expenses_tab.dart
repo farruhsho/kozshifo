@@ -6,17 +6,9 @@ import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
 import '../data/finance_repository.dart';
 import '../domain/expense.dart';
+import '../domain/expense_category.dart';
+import 'expense_admin_dialogs.dart';
 import 'finance_common.dart';
-
-/// Common expense categories — the «Прочее» bucket opens a free-text field.
-const kExpenseCategories = <String>[
-  'Аренда',
-  'Зарплата',
-  'Коммунальные',
-  'Расходники',
-  'Реклама',
-  'Прочее',
-];
 
 /// Sentinel for the filter dropdown's "no category" option.
 const _kAllCategories = '';
@@ -132,6 +124,15 @@ class _ExpensesTabState extends ConsumerState<ExpensesTab> {
     final page = ref.watch(expensesProvider(_query));
     final user = ref.watch(authControllerProvider).user;
     final canManage = user?.can('expenses.manage') ?? false;
+    final categories =
+        ref.watch(activeExpenseCategoriesProvider).valueOrNull ??
+            const <ExpenseCategory>[];
+    // The applied filter may point at a now-deactivated type — keep it selectable
+    // so the dropdown value stays valid.
+    final filterNames = <String>{
+      for (final c in categories) c.name,
+      if (_appliedCategory.isNotEmpty) _appliedCategory,
+    }.toList();
 
     return Scaffold(
       floatingActionButton: canManage
@@ -183,8 +184,8 @@ class _ExpensesTabState extends ConsumerState<ExpensesTab> {
                     items: [
                       const DropdownMenuItem(
                           value: _kAllCategories, child: Text('Все категории')),
-                      for (final c in kExpenseCategories)
-                        DropdownMenuItem(value: c, child: Text(c)),
+                      for (final name in filterNames)
+                        DropdownMenuItem(value: name, child: Text(name)),
                     ],
                     // Applying the filter snapshots the category and resets the
                     // page — the export then reads the same snapshot.
@@ -205,6 +206,33 @@ class _ExpensesTabState extends ConsumerState<ExpensesTab> {
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.download_outlined),
                 ),
+                if (canManage)
+                  PopupMenuButton<String>(
+                    tooltip: 'Управление',
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (v) {
+                      if (v == 'types') {
+                        showDialog(
+                            context: context,
+                            builder: (_) => const ExpenseCategoriesDialog());
+                      } else if (v == 'recurring') {
+                        showDialog(
+                          context: context,
+                          builder: (_) =>
+                              RecurringExpensesDialog(month: ym(DateTime.now())),
+                        ).then((changed) {
+                          if (changed == true) ref.invalidate(expensesProvider);
+                        });
+                      }
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(
+                          value: 'types', child: Text('Типы расходов')),
+                      PopupMenuItem(
+                          value: 'recurring',
+                          child: Text('Постоянные расходы')),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -259,7 +287,10 @@ class _ExpensesTabState extends ConsumerState<ExpensesTab> {
   }
 
   Widget _tile(BuildContext context, Expense e, bool canManage) {
+    // Title = название (если есть), иначе тип; тип уходит в подпись.
+    final hasName = e.name != null && e.name!.isNotEmpty;
     final subtitleParts = [
+      if (hasName) e.category,
       ddMMyyyy(e.expenseDate),
       if (e.note != null && e.note!.isNotEmpty) e.note!,
       if (e.createdByName != null) e.createdByName!,
@@ -269,7 +300,7 @@ class _ExpensesTabState extends ConsumerState<ExpensesTab> {
         e.isPayroll ? Icons.badge_outlined : Icons.receipt_long_outlined,
         color: Theme.of(context).colorScheme.primary,
       ),
-      title: Text(e.category),
+      title: Text(hasName ? e.name! : e.category),
       subtitle: Text(subtitleParts.join(' · ')),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -345,7 +376,7 @@ class _ExpenseCreateDialog extends ConsumerStatefulWidget {
 
 class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
   String? _categorySelect;
-  final _customCategory = TextEditingController();
+  final _name = TextEditingController();
   final _amount = TextEditingController();
   final _note = TextEditingController();
   DateTime _date = DateTime.now();
@@ -353,7 +384,7 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
 
   @override
   void dispose() {
-    _customCategory.dispose();
+    _name.dispose();
     _amount.dispose();
     _note.dispose();
     super.dispose();
@@ -362,13 +393,8 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
   // ru/uz-раскладки дают запятую — нормализуем до точки для Decimal.
   String get _normalizedAmount => _amount.text.trim().replaceAll(',', '.');
 
-  /// «Прочее» → the free-text value; any other choice → the label itself.
-  String get _resolvedCategory => _categorySelect == 'Прочее'
-      ? _customCategory.text.trim()
-      : (_categorySelect ?? '');
-
   bool get _canSave {
-    if (_saving || _resolvedCategory.isEmpty) return false;
+    if (_saving || (_categorySelect ?? '').isEmpty) return false;
     final amount = double.tryParse(_normalizedAmount);
     return amount != null && amount > 0;
   }
@@ -387,7 +413,8 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
     setState(() => _saving = true);
     try {
       await ref.read(financeRepositoryProvider).createExpense(
-            category: _resolvedCategory,
+            category: _categorySelect ?? '',
+            name: _name.text.trim().isEmpty ? null : _name.text.trim(),
             amount: _normalizedAmount,
             expenseDate: ymd(_date),
             note: _note.text.trim().isEmpty ? null : _note.text.trim(),
@@ -403,6 +430,9 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final categories =
+        ref.watch(activeExpenseCategoriesProvider).valueOrNull ??
+            const <ExpenseCategory>[];
     return AlertDialog(
       title: const Text('Новый расход'),
       content: SizedBox(
@@ -412,22 +442,20 @@ class _ExpenseCreateDialogState extends ConsumerState<_ExpenseCreateDialog> {
           children: [
             DropdownButtonFormField<String>(
               initialValue: _categorySelect,
-              decoration: const InputDecoration(labelText: 'Категория'),
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Тип расхода'),
               items: [
-                for (final c in kExpenseCategories)
-                  DropdownMenuItem(value: c, child: Text(c)),
+                for (final c in categories)
+                  DropdownMenuItem(value: c.name, child: Text(c.name)),
               ],
               onChanged: (v) => setState(() => _categorySelect = v),
             ),
-            if (_categorySelect == 'Прочее') ...[
-              const SizedBox(height: 12),
-              TextField(
-                controller: _customCategory,
-                decoration: const InputDecoration(
-                    labelText: 'Категория (свой вариант)'),
-                onChanged: (_) => setState(() {}),
-              ),
-            ],
+            const SizedBox(height: 12),
+            TextField(
+              controller: _name,
+              decoration: const InputDecoration(
+                  labelText: 'Название (необязательно)', hintText: 'напр. Перчатки'),
+            ),
             const SizedBox(height: 12),
             TextField(
               controller: _amount,

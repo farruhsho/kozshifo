@@ -42,6 +42,8 @@ from app.schemas.operation import (
     OperationCreate,
     OperationDaySummary,
     OperationOut,
+    OperationPriceResult,
+    OperationPriceUpdate,
     OperationReport,
     OperationSchedule,
     OperationTypeCreate,
@@ -442,6 +444,9 @@ def schedule_operation(
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Only a referred or scheduled operation can be scheduled "
                             f"(status: {operation.status})")
+    if operation.financially_closed_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Operation is financially closed — cannot reschedule/reprice it")
     visit = db.get(Visit, operation.visit_id)
     if visit.status in ("completed", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot schedule on a {visit.status} visit")
@@ -449,7 +454,14 @@ def schedule_operation(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown surgeon")
 
     op_type = operation.operation_type
-    final_price = payload.price if payload.price is not None else Decimal(op_type.price)
+    # Price precedence: explicit override → a pre-set quote (set-price on a still
+    # referred op) → the service catalog default.
+    if payload.price is not None:
+        final_price = payload.price
+    elif operation.price is not None:
+        final_price = Decimal(operation.price)
+    else:
+        final_price = Decimal(op_type.price)
 
     if operation.status == "referred":
         # First scheduling: bill the linked service at the final price.
@@ -459,14 +471,12 @@ def schedule_operation(
         db.flush()  # assign the item id for the billing trace
         operation.visit_item_id = item.id
     elif operation.visit_item_id is not None:
-        # Re-schedule: adjust the existing billed line if it is still unpaid.
+        # Re-schedule: adjust the existing billed line. Cost stays editable even
+        # after payment (owner brief 2026-06-20) — the only freeze is financial
+        # close (guarded above). A new price re-derives the visit balance; an
+        # over/under payment is reconciled by reception via the till/refund.
         item = db.get(VisitItem, operation.visit_item_id)
         if item is not None and Decimal(item.unit_price) != final_price:
-            if item.status != "ordered":
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "The billed item is already paid — refund before changing the price",
-                )
             item.unit_price = final_price
             item.total = final_price * item.quantity
             _recompute_total(visit)
@@ -482,6 +492,81 @@ def schedule_operation(
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Scheduled operation {op_type.name} on visit {visit.visit_no} "
                          f"for {payload.scheduled_at:%Y-%m-%d %H:%M}, price {final_price}")
+    db.commit()
+    db.refresh(operation)
+    return operation
+
+
+@router.post("/operations/{operation_id}/set-price", response_model=OperationPriceResult)
+def set_operation_price(
+    operation_id: UUID,
+    payload: OperationPriceUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("operations.schedule"))],
+) -> OperationPriceResult:
+    """Change an operation's cost at any point (before/during/after) until it is
+    financially closed (owner brief 2026-06-20 — cost is NOT fixed at planning).
+    Repoints the billed visit line if one exists; a still-referred op just stores
+    the quote, applied when it is scheduled. The new price re-derives the visit
+    balance — if it drops below what was already paid the response reports the
+    refund owed (reception returns it via the till)."""
+    operation = _get_or_404(db, operation_id)
+    if operation.status == "cancelled":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot price a cancelled operation")
+    if operation.financially_closed_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Operation is financially closed — its price can no longer be changed")
+    visit = db.get(Visit, operation.visit_id)
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot change price on a {visit.status} visit")
+
+    new_price = Decimal(payload.price)
+    old_price = operation.price
+    if operation.visit_item_id is not None:
+        item = db.get(VisitItem, operation.visit_item_id)
+        if item is not None:
+            item.unit_price = new_price
+            item.total = new_price * item.quantity
+            _recompute_total(visit)
+    operation.price = new_price
+    reason = (payload.reason or "").strip()
+    record_audit(db, action="price_change", entity_type="operation", entity_id=operation.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Changed price of operation {operation.type_name} on visit "
+                         f"{visit.visit_no}: {old_price} → {new_price}"
+                         + (f" ({reason})" if reason else ""))
+    db.commit()
+    db.refresh(operation)
+    db.refresh(visit)
+    refund_due = max(Decimal("0.00"), Decimal(visit.paid_amount) - visit.payable)
+    return OperationPriceResult(
+        operation=OperationOut.model_validate(operation),
+        visit_balance=visit.balance,
+        refund_due=refund_due,
+    )
+
+
+@router.post("/operations/{operation_id}/financial-close", response_model=OperationOut)
+def financial_close_operation(
+    operation_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("operations.schedule"))],
+) -> Operation:
+    """Freeze an operation's finances: after this the price/bill can no longer be
+    changed — the end of the editable window. Closing the visit auto-closes its
+    operations too (see visits.close_visit)."""
+    operation = _get_or_404(db, operation_id)
+    if operation.status == "cancelled":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot financially close a cancelled operation")
+    if operation.financially_closed_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Operation is already financially closed")
+    visit = db.get(Visit, operation.visit_id)
+    operation.financially_closed_at = datetime.now(timezone.utc)
+    operation.financially_closed_by_id = actor.id
+    record_audit(db, action="financial_close", entity_type="operation", entity_id=operation.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Financially closed operation {operation.type_name} on visit "
+                         f"{visit.visit_no} (price {operation.price})")
     db.commit()
     db.refresh(operation)
     return operation
@@ -503,6 +588,9 @@ def unschedule_operation(
     if operation.status != "scheduled":
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Only a scheduled operation can be detached (status: {operation.status})")
+    if operation.financially_closed_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Operation is financially closed — cannot detach it")
     visit = db.get(Visit, operation.visit_id)
     if operation.visit_item_id is not None:
         item = db.get(VisitItem, operation.visit_item_id)
@@ -682,6 +770,9 @@ def cancel_operation(
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Only a not-yet-performed operation can be cancelled "
                             f"(status: {operation.status})")
+    if operation.financially_closed_at is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Operation is financially closed — cannot cancel it")
     visit = db.get(Visit, operation.visit_id)
 
     # De-bill: scheduling added the linked service to the visit, so cancelling

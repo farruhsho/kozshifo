@@ -26,6 +26,7 @@ _Operation _$OperationFromJson(Map<String, dynamic> json) => _Operation(
   completedAt: json['completed_at'] as String?,
   notes: json['notes'] as String?,
   result: json['result'] as String?,
+  financiallyClosedAt: json['financially_closed_at'] as String?,
   createdAt: json['created_at'] as String,
 );
 
@@ -50,5 +51,6 @@ Map<String, dynamic> _$OperationToJson(_Operation instance) =>
       'completed_at': instance.completedAt,
       'notes': instance.notes,
       'result': instance.result,
+      'financially_closed_at': instance.financiallyClosedAt,
       'created_at': instance.createdAt,
     };

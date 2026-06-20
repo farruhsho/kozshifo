@@ -440,6 +440,19 @@ def close_visit(
         raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot close a {visit.status} visit")
     visit.status = "completed"
     visit.closed_at = datetime.now(timezone.utc)
+    # Closing the visit freezes its operations' finances — the price/bill can no
+    # longer be edited (owner brief 2026-06-20: cost editable UNTIL financial
+    # close; visit close IS such a close). Cancelled/already-closed ops are left.
+    closing_ops = db.execute(
+        select(Operation).where(
+            Operation.visit_id == visit.id,
+            Operation.status != "cancelled",
+            Operation.financially_closed_at.is_(None),
+        )
+    ).scalars().all()
+    for op in closing_ops:
+        op.financially_closed_at = visit.closed_at
+        op.financially_closed_by_id = actor.id
     advance_flow(db, visit, "visit_closed")  # workflow engine (same transaction)
     record_audit(db, action="close", entity_type="visit", entity_id=visit.id, actor_id=actor.id,
                  summary=f"Closed visit {visit.visit_no} (balance {visit.balance})")

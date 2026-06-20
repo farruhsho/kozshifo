@@ -19,6 +19,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.core.types import UTCDateTime
 from app.models.base import TimestampMixin, UUIDPKMixin
 
 # Suffix appended to the FEFO write-off `reason` for consumables the operating
@@ -131,6 +132,14 @@ class Operation(UUIDPKMixin, TimestampMixin, Base):
     visit_item_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("visit_items.id", ondelete="SET NULL"), nullable=True
     )
+    # Финансовое закрытие (owner brief 2026-06-20): пока пусто — цену операции
+    # можно менять (до/во время/после операции). Закрывается вручную через
+    # /financial-close ИЛИ автоматически при закрытии визита; после этого
+    # цена/счёт заморожены и set-price/reschedule отклоняются.
+    financially_closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    financially_closed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     operation_type: Mapped[OperationType] = relationship(lazy="joined")
     patient: Mapped["Patient"] = relationship(lazy="joined")  # noqa: F821
@@ -154,6 +163,10 @@ class Operation(UUIDPKMixin, TimestampMixin, Base):
     @property
     def surgeon_name(self) -> str | None:
         return self.surgeon.full_name if self.surgeon else None
+
+    @property
+    def financially_closed(self) -> bool:
+        return self.financially_closed_at is not None
 
 
 class Treatment(UUIDPKMixin, TimestampMixin, Base):

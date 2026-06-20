@@ -262,6 +262,40 @@ class ClinicalRepository {
     }
   }
 
+  /// Change an operation's cost any time before it is financially closed (owner
+  /// brief 2026-06-20: cost is NOT fixed at planning). Repoints the billed line;
+  /// the response carries the recomputed visit balance and any refund owed when
+  /// the new price is below what the patient already paid. Answers 409 (surfaced
+  /// via [ApiException]) once the operation is financially closed.
+  Future<({Operation operation, String visitBalance, String refundDue})>
+      setOperationPrice(String id, {required String price, String? reason}) async {
+    try {
+      final resp = await _dio.post(
+        '/operations/$id/set-price',
+        data: {'price': price, 'reason': ?reason},
+      );
+      final data = resp.data as Map<String, dynamic>;
+      return (
+        operation: Operation.fromJson(data['operation'] as Map<String, dynamic>),
+        visitBalance: data['visit_balance'].toString(),
+        refundDue: data['refund_due'].toString(),
+      );
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Freeze an operation's finances — after this the price can no longer be
+  /// changed. (Closing the visit does the same automatically server-side.)
+  Future<Operation> financialCloseOperation(String id) async {
+    try {
+      final resp = await _dio.post('/operations/$id/financial-close');
+      return Operation.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Place a referred operation onto a day from the scheduling board. Thin
   /// wrapper over [scheduleOperation] that takes the chosen instant as a
   /// `DateTime` and serialises it to a UTC ISO string for the server. The board

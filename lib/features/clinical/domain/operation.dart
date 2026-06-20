@@ -30,6 +30,7 @@ abstract class Operation with _$Operation {
     String? completedAt,
     String? notes,
     String? result,
+    String? financiallyClosedAt,
     required String createdAt,
   }) = _Operation;
 
@@ -44,6 +45,9 @@ abstract class Operation with _$Operation {
 
   bool get isInProgress => status == 'in_progress';
   bool get isPerformed => status == 'performed';
+
+  /// Финансово закрыта: цена/счёт заморожены, изменить стоимость нельзя.
+  bool get isFinanciallyClosed => financiallyClosedAt != null;
 
   /// Not yet performed → still cancellable / re-schedulable.
   bool get isOpen =>

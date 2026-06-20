@@ -906,6 +906,10 @@ class _OperationCard extends ConsumerWidget {
                 ),
                 const SizedBox(width: 6),
               ],
+              if (op.isFinanciallyClosed) ...[
+                StatusBadge('счёт закрыт', kind: BadgeKind.neutral),
+                const SizedBox(width: 6),
+              ],
               StatusBadge(op.statusLabel, kind: _kind),
             ],
           ),
@@ -936,10 +940,20 @@ class _OperationCard extends ConsumerWidget {
     );
   }
 
+  /// Cost stays editable (before/during/after the operation) until it is
+  /// financially closed — owner brief 2026-06-20. Referred ops set price at
+  /// schedule; cancelled ops have nothing to price.
+  bool get _canEditCost =>
+      canSchedule &&
+      !op.isFinanciallyClosed &&
+      op.status != 'referred' &&
+      op.status != 'cancelled';
+
   bool get _hasActions =>
       (canSchedule && (op.isReferred || op.isScheduled)) ||
       (canPerform && (op.isScheduled || op.isInProgress || op.isPerformed)) ||
-      (canCancel && op.isOpen);
+      (canCancel && op.isOpen) ||
+      _canEditCost;
 
   List<Widget> _actions(BuildContext context, WidgetRef ref) {
     final widgets = <Widget>[];
@@ -960,6 +974,11 @@ class _OperationCard extends ConsumerWidget {
     }
     if (canSchedule && op.isScheduled) {
       widgets.add(_secondary('Изменить', () => _schedule(context, ref)));
+    }
+    // Гибкая стоимость: менять цену и закрывать счёт можно до фин. закрытия.
+    if (_canEditCost) {
+      widgets.add(_secondary('Изменить цену', () => _setPrice(context, ref)));
+      widgets.add(_secondary('Закрыть счёт', () => _financialClose(context, ref)));
     }
     if (canCancel && op.isOpen) {
       widgets.add(
@@ -1069,6 +1088,107 @@ class _OperationCard extends ConsumerWidget {
       ref,
       (r) => r.completeOperation(op.id, result: result.isEmpty ? null : result),
       'Операция завершена',
+    );
+  }
+
+  Future<void> _setPrice(BuildContext context, WidgetRef ref) async {
+    final priceCtrl = TextEditingController(text: op.price ?? '');
+    final reasonCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Изменить стоимость'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: priceCtrl,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Новая стоимость',
+                suffixText: 'сум',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: reasonCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Причина (необязательно)',
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    final price = priceCtrl.text.trim().replaceAll(',', '.');
+    if (double.tryParse(price) == null || double.parse(price) < 0) {
+      _snack(context, 'Введите корректную стоимость', error: true);
+      return;
+    }
+    final reason = reasonCtrl.text.trim();
+    try {
+      final res = await ref.read(clinicalRepositoryProvider).setOperationPrice(
+            op.id,
+            price: price,
+            reason: reason.isEmpty ? null : reason,
+          );
+      if (!context.mounted) return;
+      onChanged();
+      final refund = double.tryParse(res.refundDue) ?? 0;
+      final balance = double.tryParse(res.visitBalance) ?? 0;
+      final msg = refund > 0
+          ? 'Цена изменена. К возврату пациенту: ${formatMoney(res.refundDue)}'
+          : balance > 0
+              ? 'Цена изменена. К доплате: ${formatMoney(res.visitBalance)}'
+              : 'Цена изменена. Визит оплачен полностью';
+      _snack(context, msg);
+    } catch (e) {
+      if (context.mounted) {
+        _snack(context, e is ApiException ? e.message : '$e', error: true);
+      }
+    }
+  }
+
+  Future<void> _financialClose(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Финансовое закрытие'),
+        content: const Text(
+          'После закрытия стоимость операции изменить будет нельзя. Продолжить?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Закрыть счёт'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !context.mounted) return;
+    await _run(
+      context,
+      ref,
+      (r) => r.financialCloseOperation(op.id),
+      'Операция финансово закрыта',
     );
   }
 

@@ -583,14 +583,15 @@ def _notify_critical_insights(db: Session, criticals: list[InsightOut]) -> None:
             pass
 
 
-@router.get("/insights", response_model=list[InsightOut],
-            dependencies=[Depends(require_permission("dashboard.view"))])
-def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
-    """Morning attention list: every rule that fired, ordered critical → info.
+def compute_insights(db: Session) -> list[InsightOut]:
+    """The live "what needs attention now" set — every rule that fired, ordered
+    critical → info.
 
-    An EMPTY list is the good-morning state — nothing needs attention. All
-    rules are set-based queries over live data (same UTC day/month conventions
-    as /summary, same business date as the FEFO engine for stock rules).
+    PURE and self-resolving: each rule is a set-based query over CURRENT data, so
+    an insight exists ONLY while its problem exists (an empty list is the good
+    state). Same UTC day/month conventions as /summary, same business date as the
+    FEFO engine for stock rules. Single source of truth shared by
+    GET /dashboard/insights and the self-clearing GET /notifications/active.
     """
     now = datetime.now(timezone.utc)
     day = _day_start()
@@ -862,6 +863,16 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
 
     # Critical first, info last; stable sort keeps the rule order within a tier.
     found.sort(key=lambda i: _SEVERITY_RANK[i.severity])
+    return found
+
+
+@router.get("/insights", response_model=list[InsightOut],
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
+    """Director's morning attention list. Computes the live insight set and, as a
+    side effect, pushes any CRITICAL ones through the notification seam (log +
+    Telegram, 24h-debounced). The pure set lives in compute_insights()."""
+    found = compute_insights(db)
     _notify_critical_insights(db, [i for i in found if i.severity == "critical"])
     return found
 

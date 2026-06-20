@@ -1,71 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/koz_icons.dart';
-import '../../../core/widgets/koz_widgets.dart';
+import '../../dashboard/domain/insight.dart';
 import '../data/notifications_repository.dart';
-import '../domain/app_notification.dart';
 
-/// Уведомления — журнал сработавших событий (дефицит склада, инсайты,
-/// напоминания, очередь). Серверный журнал доступен только на чтение, поэтому
-/// «закрытие» уведомления локальное — прячем id в [_hidden] до обновления.
-class NotificationsScreen extends ConsumerStatefulWidget {
+/// Уведомления — ЖИВОЙ список актуальных проблем, который сам себя очищает
+/// (owner brief 2026-06-20). Уведомление существует только пока существует
+/// проблема: завершён визит / прикреплён результат УЗИ / погашен долг → оно
+/// автоматически исчезает. Набор вычисляется на сервере на чтение
+/// (GET /notifications/active) — никаких устаревших хранимых записей и никакого
+/// «локального скрытия». Тап по карточке ведёт сразу к разделу проблемы.
+class NotificationsScreen extends ConsumerWidget {
   const NotificationsScreen({super.key});
 
   @override
-  ConsumerState<NotificationsScreen> createState() =>
-      _NotificationsScreenState();
-}
-
-class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
-  final Set<String> _hidden = {};
-  String _filter = 'all';
-
-  static const _filters = <({String value, String label, NotifKind? kind})>[
-    (value: 'all', label: 'Все', kind: null),
-    (value: 'stock', label: 'Склад', kind: NotifKind.stock),
-    (value: 'reminder', label: 'Напоминания', kind: NotifKind.reminder),
-    (value: 'queue', label: 'Очередь', kind: NotifKind.queue),
-  ];
-
-  void _refresh() {
-    setState(_hidden.clear);
-    ref.invalidate(notificationsProvider);
-  }
-
-  // KozIcon-ключ для chip по типу события.
-  String _iconKey(NotifKind k) => switch (k) {
-        NotifKind.stock => 'inventory',
-        NotifKind.insight => 'analytics',
-        NotifKind.reminder => 'schedule',
-        NotifKind.queue => 'queue',
-        NotifKind.other => 'notifications',
-      };
-
-  // Пара цветов (текст, фон) для Pill по типу события.
-  (Color, Color) _pillColors(NotifKind k) => switch (k) {
-        NotifKind.stock => (AppColors.amber, AppColors.amberBg),
-        NotifKind.reminder => (AppColors.tealDark, AppColors.tealBg),
-        NotifKind.queue => (AppColors.blue, AppColors.blueBg),
-        NotifKind.insight => (AppColors.green, AppColors.greenBg),
-        NotifKind.other => (AppColors.sub, AppColors.line2),
-      };
-
-  // ISO-8601 → "HH:MM" в локальном времени; '' если не разобрали.
-  String _time(String s) {
-    if (s.isEmpty) return '';
-    final hasZone = s.endsWith('Z') || RegExp(r'[+-]\d{2}:\d{2}$').hasMatch(s);
-    final t = DateTime.tryParse(hasZone ? s : '${s}Z')?.toLocal();
-    if (t == null) return '';
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(t.hour)}:${two(t.minute)}';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final notifsAsync = ref.watch(notificationsProvider);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final problems = ref.watch(activeProblemsProvider);
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -73,7 +27,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         title: const Text('Уведомления'),
         actions: [
           IconButton(
-            onPressed: _refresh,
+            onPressed: () => ref.invalidate(activeProblemsProvider),
             icon: const Icon(Icons.refresh),
             tooltip: 'Обновить',
           ),
@@ -82,20 +36,20 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       ),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: () async => _refresh(),
+          onRefresh: () async => ref.invalidate(activeProblemsProvider),
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(24),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 900),
-                child: notifsAsync.when(
+                child: problems.when(
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
                   error: (e, _) => Center(
                     child: Text(e is ApiException ? e.message : e.toString()),
                   ),
-                  data: (all) => _content(all),
+                  data: _content,
                 ),
               ),
             ),
@@ -105,132 +59,71 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     );
   }
 
-  Widget _content(List<AppNotification> all) {
-    final selectedKind =
-        _filters.firstWhere((f) => f.value == _filter).kind;
-    final items = all
-        .where((n) => !_hidden.contains(n.id))
-        .where((n) => selectedKind == null || n.kind == selectedKind)
-        .toList();
-
+  Widget _content(List<Insight> items) {
+    if (items.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 64),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              KozIcon('notifications', size: 40, color: AppColors.muted),
+              SizedBox(height: 12),
+              Text('Всё в порядке — актуальных проблем нет',
+                  style: TextStyle(color: AppColors.muted)),
+            ],
+          ),
+        ),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final f in _filters)
-              ChoiceChip(
-                label: Text(f.label),
-                selected: _filter == f.value,
-                onSelected: (_) => setState(() => _filter = f.value),
-              ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        if (items.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 64),
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  KozIcon('notifications', size: 40, color: AppColors.muted),
-                  SizedBox(height: 12),
-                  Text(
-                    'Новых уведомлений нет',
-                    style: TextStyle(color: AppColors.muted),
-                  ),
-                ],
-              ),
-            ),
-          )
-        else
-          AppCard(
-            padding: EdgeInsets.zero,
-            child: ListView.separated(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(8),
-              itemCount: items.length,
-              separatorBuilder: (_, _) =>
-                  const Divider(height: 1, color: AppColors.line2),
-              itemBuilder: (_, i) => _row(items[i]),
-            ),
-          ),
-      ],
+      children: [for (final i in items) _NotificationCard(insight: i)],
     );
   }
+}
 
-  Widget _row(AppNotification n) {
-    final (pillColor, pillBg) = _pillColors(n.kind);
-    final time = _time(n.createdAt);
+/// Карточка проблемы — тот же вид, что и панель «Что требует внимания» на
+/// дашборде: иконка/цвет по важности, значение-чип и переход к разделу.
+class _NotificationCard extends StatelessWidget {
+  const _NotificationCard({required this.insight});
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: AppColors.line2,
-              borderRadius: BorderRadius.circular(AppColors.rField),
-            ),
-            alignment: Alignment.center,
-            child: KozIcon(_iconKey(n.kind), size: 20, color: AppColors.sub),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Pill(label: n.kindLabel, color: pillColor, bg: pillBg),
-                    if (time.isNotEmpty) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        time,
-                        style: const TextStyle(
-                          color: AppColors.muted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  n.title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-                if (n.body != null && n.body!.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    n.body!,
-                    style: const TextStyle(
-                      color: AppColors.muted,
-                      fontSize: 12.5,
-                    ),
-                  ),
+  final Insight insight;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final (IconData icon, Color color) = insight.isCritical
+        ? (Icons.error_outline, scheme.error)
+        : insight.isWarning
+            ? (Icons.warning_amber_outlined, AppColors.amber)
+            : (Icons.info_outline, AppColors.blue);
+    final chip = insight.value == null
+        ? null
+        : Chip(
+            label: Text(insight.value!,
+                style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+            side: BorderSide(color: color.withValues(alpha: 0.4)),
+          );
+    final clickable = insight.route != null;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        onTap: clickable ? () => context.go(insight.route!) : null,
+        leading: Icon(icon, color: color),
+        title: Text(insight.title,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text(insight.detail),
+        trailing: !clickable
+            ? chip
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ?chip,
+                  const SizedBox(width: 4),
+                  const Icon(Icons.chevron_right, size: 20),
                 ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.close, size: 18),
-            color: AppColors.muted,
-            tooltip: 'Скрыть',
-            onPressed: () => setState(() => _hidden.add(n.id)),
-          ),
-        ],
+              ),
       ),
     );
   }

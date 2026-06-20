@@ -13,9 +13,9 @@ import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/dashboard/data/dashboard_repository.dart';
 import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
+import 'package:kozshifo/features/dashboard/domain/insight.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
 import 'package:kozshifo/features/notifications/data/notifications_repository.dart';
-import 'package:kozshifo/features/notifications/domain/app_notification.dart';
 import 'package:kozshifo/features/notifications/presentation/notifications_screen.dart';
 
 const _user = AuthUser(
@@ -73,25 +73,35 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Notifications renders the journal + dismiss hides a row', (tester) async {
+  testWidgets('Notifications renders the live, self-resolving problem set',
+      (tester) async {
     _desktop(tester);
     await tester.pumpWidget(_host(const NotificationsScreen(), [
-      notificationsProvider.overrideWith((ref) async => const [
-            AppNotification(
-              id: 'n1', event: 'low_stock', channel: 'log',
-              title: 'Низкий остаток: ИОЛ AcrySof IQ', status: 'sent', createdAt: '2026-06-14T08:00:00Z',
+      activeProblemsProvider.overrideWith((ref) async => const [
+            Insight(
+              code: 'low_stock', severity: 'critical',
+              title: 'Дефицит на складе',
+              detail: 'Под минимумом: ИОЛ AcrySof IQ', value: '3',
             ),
           ]),
     ]));
     await tester.pumpAndSettle();
 
     expect(find.text('Уведомления'), findsOneWidget);
-    expect(find.textContaining('Низкий остаток'), findsOneWidget);
-    // Dismiss → row hidden, empty-state shown.
-    await tester.tap(find.byIcon(Icons.close));
+    expect(find.text('Дефицит на складе'), findsOneWidget);
+    expect(find.textContaining('Под минимумом'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Notifications shows the good state when nothing is wrong',
+      (tester) async {
+    _desktop(tester);
+    await tester.pumpWidget(_host(const NotificationsScreen(), [
+      activeProblemsProvider.overrideWith((ref) async => const <Insight>[]),
+    ]));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Низкий остаток'), findsNothing);
-    expect(find.text('Новых уведомлений нет'), findsOneWidget);
+
+    expect(find.textContaining('Всё в порядке'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

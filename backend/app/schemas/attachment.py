@@ -22,6 +22,7 @@ class AttachmentOut(BaseModel):
     content_type: str | None = None
     size: int | None = None
     note: str | None = None
+    cabinet: str | None = None        # room the study was done in
     uploaded_by_id: UUID | None = None
     uploaded_by_name: str | None = None
     created_at: datetime

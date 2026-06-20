@@ -84,8 +84,10 @@ class VisitDiagnosisOut(BaseModel):
     visit_id: UUID
     patient_id: UUID
     doctor_id: UUID | None
+    doctor_name: str | None = None   # diagnostician's full name (from relationship)
     diagnosis: str
     icd10: str | None
+    cabinet: str | None = None       # room the conclusion was recorded in
     created_at: datetime
 
 

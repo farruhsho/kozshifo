@@ -18,7 +18,7 @@ from app.core.sequences import next_ticket_number, next_visit_no
 from app.models.branch import Branch
 from app.models.catalog import Service
 from app.models.diagnosis import VisitDiagnosis
-from app.models.operation import Treatment
+from app.models.operation import Operation, Treatment
 from app.models.patient import Patient
 from app.models.queue import QueueTicket
 from app.models.user import User
@@ -407,6 +407,19 @@ def cancel_visit(
         record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
                      actor_id=actor.id, branch_id=visit.branch_id,
                      summary=f"Ticket {ticket.ticket_number} skipped: visit cancelled")
+    # Auto-cancel the visit's not-yet-performed operations so a cancelled patient
+    # is removed from the operations board and the slot frees up for the next one.
+    open_ops = db.execute(
+        select(Operation).where(
+            Operation.visit_id == visit.id,
+            Operation.status.in_(Operation.OPEN_STATUSES),
+        )
+    ).scalars().all()
+    for op in open_ops:
+        op.status = "cancelled"
+        record_audit(db, action="cancel", entity_type="operation", entity_id=op.id,
+                     actor_id=actor.id, branch_id=visit.branch_id,
+                     summary=f"Operation {op.id} cancelled: visit {visit.visit_no} cancelled")
     record_audit(db, action="cancel", entity_type="visit", entity_id=visit.id, actor_id=actor.id,
                  branch_id=visit.branch_id, summary=f"Cancelled visit {visit.visit_no}")
     db.commit()

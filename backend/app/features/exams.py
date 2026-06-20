@@ -128,6 +128,7 @@ def add_diagnosis(
         doctor_id=actor.id,
         diagnosis=payload.diagnosis.strip(),
         icd10=(payload.icd10.strip() if payload.icd10 and payload.icd10.strip() else None),
+        cabinet=actor.cabinet,
     )
     db.add(diagnosis)
     db.flush()
@@ -178,7 +179,7 @@ def record_diagnostic_conclusion(
                             "Provide diagnosis_id (from the catalog) or diagnosis text")
     conclusion = VisitDiagnosis(
         visit_id=visit.id, patient_id=visit.patient_id, doctor_id=actor.id,
-        diagnosis=text, icd10=icd10,
+        diagnosis=text, icd10=icd10, cabinet=actor.cabinet,
     )
     db.add(conclusion)
     db.flush()

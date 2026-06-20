@@ -427,13 +427,16 @@ def test_perform_blocked_on_cancelled_visit(client, auth):
     op = client.post(f"{API}/visits/{visit_id}/operations", headers=auth,
                      json={"operation_type_id": phaco["id"], "eye": "os"}).json()
     assert _schedule(client, auth, op["id"]).status_code == 200
-    # Reception aborts the (unpaid) visit; the scheduled operation must die with it.
+    # Reception aborts the (unpaid) visit; the scheduled operation dies with it
+    # (auto-cancelled, so it also leaves the operations board).
     cancelled = client.post(f"{API}/visits/{visit_id}/cancel", headers=auth)
     assert cancelled.status_code == 200, cancelled.text
+    after = client.get(f"{API}/visits/{visit_id}/operations", headers=auth).json()
+    assert after[0]["status"] == "cancelled"
 
+    # Performing the dead operation is blocked — no stock is consumed.
     denied = client.post(f"{API}/operations/{op['id']}/perform", headers=auth)
     assert denied.status_code == 409
-    assert "cancelled visit" in denied.json()["detail"]
 
     # Treatments are equally guarded on dead visits.
     t_denied = client.post(f"{API}/visits/{visit_id}/treatments", headers=auth,

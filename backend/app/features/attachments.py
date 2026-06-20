@@ -106,6 +106,7 @@ def upload_attachment(
         content_type=file.content_type,
         size=len(content),
         note=note,
+        cabinet=actor.cabinet,
         uploaded_by_id=actor.id,
     )
     db.add(attachment)

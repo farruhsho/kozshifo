@@ -49,6 +49,9 @@ class Attachment(UUIDPKMixin, TimestampMixin, Base):
     content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # The room the study was done in (snapshot of the uploader's cabinet at the
+    # time), so a later cabinet change doesn't rewrite this result's history.
+    cabinet: Mapped[str | None] = mapped_column(String(64), nullable=True)
     uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

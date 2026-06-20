@@ -64,5 +64,12 @@ class VisitDiagnosis(UUIDPKMixin, TimestampMixin, Base):
 
     diagnosis: Mapped[str] = mapped_column(Text, nullable=False)
     icd10: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Room the conclusion was recorded in (snapshot of the recorder's cabinet).
+    cabinet: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     visit: Mapped["Visit"] = relationship()  # noqa: F821
+    doctor: Mapped["User | None"] = relationship(lazy="joined")  # noqa: F821
+
+    @property
+    def doctor_name(self) -> str | None:
+        return self.doctor.full_name if self.doctor else None

@@ -49,20 +49,29 @@ class FinancialReport {
       );
 }
 
-/// Доход и визиты по врачу.
+/// Доход, визиты, выплаченная зарплата и чистая прибыль по врачу.
 class DoctorReportRow {
   const DoctorReportRow({
+    required this.doctorId,
     required this.doctorName,
     required this.revenue,
     required this.visits,
+    required this.payrollExpense,
+    required this.netProfit,
   });
+  final String? doctorId;
   final String doctorName;
   final String revenue;
   final int visits;
+  final String payrollExpense;
+  final String netProfit;
   factory DoctorReportRow.fromJson(Map<String, dynamic> j) => DoctorReportRow(
+        doctorId: j['doctor_id']?.toString(),
         doctorName: (j['doctor_name'] ?? '—').toString(),
         revenue: _money(j['revenue']),
         visits: _int(j['visits']),
+        payrollExpense: _money(j['payroll_expense']),
+        netProfit: _money(j['net_profit']),
       );
 }
 

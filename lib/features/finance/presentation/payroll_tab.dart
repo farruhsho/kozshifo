@@ -8,6 +8,7 @@ import '../../auth/application/auth_controller.dart';
 import '../data/finance_repository.dart';
 import '../domain/payroll_row.dart';
 import 'finance_common.dart';
+import 'payroll_detail_screen.dart';
 
 /// «Зарплата»: процентные оклады за месяц — ФИО, %, выручка, зарплата,
 /// статус выплаты. Кнопка «Выплатить» требует `payroll.manage`.
@@ -126,7 +127,7 @@ class _PayrollTabState extends ConsumerState<PayrollTab> {
               if (items.isEmpty) {
                 return const Center(
                     child: Text(
-                        'Нет сотрудников с процентным окладом.\nПроцент задаётся в карточке сотрудника.'));
+                        'Нет сотрудников с настроенной оплатой.\nОплата задаётся в карточке сотрудника.'));
               }
               return RefreshIndicator(
                 onRefresh: () async => ref.invalidate(payrollProvider(_month)),
@@ -184,8 +185,11 @@ class _PayrollTabState extends ConsumerState<PayrollTab> {
     return ListTile(
       leading: const CircleAvatar(child: Icon(Icons.person_outline)),
       title: Text(row.fullName),
-      subtitle: Text(
-          '${row.salaryPercent}% · выручка ${formatMoney(row.revenue)}'),
+      subtitle: Text(_payBreakdown(row)),
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PayrollDetailScreen(
+            userId: row.userId, fullName: row.fullName, month: _month),
+      )),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -199,5 +203,23 @@ class _PayrollTabState extends ConsumerState<PayrollTab> {
         ],
       ),
     );
+  }
+
+  /// "Приём: 30% (450 000 сум) · Опер.: 50 000/оп ×3" — only the configured sides.
+  String _payBreakdown(PayrollRow row) {
+    final parts = <String>[];
+    if (row.consultSalaryType != null) {
+      final rule = row.consultSalaryType == 'percent'
+          ? '${row.consultSalaryValue}%'
+          : 'фикс';
+      parts.add('Приём: $rule (${formatMoney(row.consultPay)})');
+    }
+    if (row.operationSalaryType != null) {
+      final rule = row.operationSalaryType == 'percent'
+          ? '${row.operationSalaryValue}%'
+          : '${formatMoney(row.operationSalaryValue)}/оп';
+      parts.add('Опер.: $rule ×${row.operationCount} (${formatMoney(row.operationPay)})');
+    }
+    return parts.isEmpty ? 'оплата не настроена' : parts.join(' · ');
   }
 }

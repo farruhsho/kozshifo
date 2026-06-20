@@ -12,6 +12,7 @@ import 'package:kozshifo/core/network/api_exception.dart';
 import 'package:kozshifo/core/utils/formatters.dart';
 import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
+import 'package:kozshifo/features/finance/data/cashier_repository.dart';
 import 'package:kozshifo/features/finance/data/finance_repository.dart';
 import 'package:kozshifo/features/finance/domain/cash_report.dart';
 import 'package:kozshifo/features/finance/domain/expense.dart';
@@ -114,20 +115,36 @@ const _payrollRowsJson = [
   {
     'user_id': 'u-7',
     'full_name': 'Иванова Дилноза',
-    'salary_percent': '10.00',
-    'revenue': '4000000.00',
+    'consult_salary_type': 'percent',
+    'consult_salary_value': '10.00',
+    'consult_revenue': '4000000.00',
+    'consult_pay': '400000.00',
+    'operation_salary_type': null,
+    'operation_salary_value': null,
+    'operation_revenue': '0.00',
+    'operation_count': 0,
+    'operation_pay': '0.00',
     'salary': '400000.00',
     'paid': true,
     'paid_at': '2026-06-11T10:00:00Z',
+    'paid_amount': '400000.00',
   },
   {
     'user_id': 'u-8',
     'full_name': 'Каримов Жасур',
-    'salary_percent': '15.00',
-    'revenue': '0.00',
+    'consult_salary_type': 'percent',
+    'consult_salary_value': '15.00',
+    'consult_revenue': '0.00',
+    'consult_pay': '0.00',
+    'operation_salary_type': 'fixed',
+    'operation_salary_value': '50000.00',
+    'operation_revenue': '0.00',
+    'operation_count': 0,
+    'operation_pay': '0.00',
     'salary': '0.00',
     'paid': false,
     'paid_at': null,
+    'paid_amount': null,
   },
 ];
 
@@ -227,7 +244,8 @@ void main() {
     expect(adapter.lastRequest!.uri.queryParameters['month'], '2026-06');
     expect(rows, hasLength(2));
     expect(rows.first.fullName, 'Иванова Дилноза');
-    expect(rows.first.salaryPercent, '10.00');
+    expect(rows.first.consultSalaryType, 'percent');
+    expect(rows.first.consultSalaryValue, '10.00');
     expect(rows.first.salary, '400000.00');
     expect(rows.first.paid, isTrue);
     expect(rows.last.paid, isFalse);
@@ -339,6 +357,10 @@ void main() {
             .overrideWith((ref, d) async => DailyReport.fromJson(_dailyJson)),
         monthlyReportProvider.overrideWith(
             (ref, m) async => MonthlyReport.fromJson(_monthlyJson)),
+        // Сводка (первая вкладка) тянет должников — отдаём пустую страницу,
+        // иначе спиннер не даёт pumpAndSettle завершиться.
+        openVisitsProvider.overrideWith((ref, offset) async =>
+            VisitPage(items: const [], total: 0, offset: 0, limit: 50)),
       ],
       child: const MaterialApp(home: FinanceScreen()),
     ));

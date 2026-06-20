@@ -317,6 +317,13 @@ class AdminRepository {
     List<String>? roleNames,
     String? salaryPercent,
     bool clearSalaryPercent = false,
+    // Flexible pay: type ('percent'|'fixed') + value; null type clears the side.
+    String? consultSalaryType,
+    String? consultSalaryValue,
+    String? operationSalaryType,
+    String? operationSalaryValue,
+    bool updateConsultSalary = false,
+    bool updateOperationSalary = false,
     String? cabinet,
     bool clearCabinet = false,
     List<String>? serviceIds,
@@ -337,6 +344,16 @@ class AdminRepository {
         body['salary_percent'] = null;
       } else if (salaryPercent != null) {
         body['salary_percent'] = salaryPercent;
+      }
+      // Flexible pay — each side sent as an explicit (type, value) pair; null
+      // type+value clears that side. Only sent when the editor touched it.
+      if (updateConsultSalary) {
+        body['consult_salary_type'] = consultSalaryType;
+        body['consult_salary_value'] = consultSalaryValue;
+      }
+      if (updateOperationSalary) {
+        body['operation_salary_type'] = operationSalaryType;
+        body['operation_salary_value'] = operationSalaryValue;
       }
       // Same explicit-null clear path for the doctor's cabinet (empty field).
       if (clearCabinet) {

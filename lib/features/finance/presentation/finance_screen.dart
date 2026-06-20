@@ -6,6 +6,7 @@ import '../data/cashier_repository.dart';
 import '../data/finance_repository.dart';
 import 'cash_tab.dart';
 import 'expenses_tab.dart';
+import 'overview_tab.dart';
 import 'payroll_tab.dart';
 import 'refunds_tab.dart';
 import 'shift_tab.dart';
@@ -27,7 +28,9 @@ class FinanceScreen extends ConsumerWidget {
     final canPayroll = user?.can('payroll.read') ?? false;
 
     final tabs = <(Tab, Widget)>[
-      // Cashier till first — the cashier's primary workspace.
+      // Сводка first for anyone who can see the cash side (отчёт/аналитика).
+      if (canExpenses) (const Tab(text: 'Сводка'), const OverviewTab()),
+      // Cashier till — the cashier's primary workspace.
       if (canTill) (const Tab(text: 'Платежи'), const TillTab()),
       if (canPayments) (const Tab(text: 'Возвраты'), const RefundsTab()),
       if (canExpenses) (const Tab(text: 'Смена'), const ShiftTab()),

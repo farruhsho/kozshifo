@@ -281,6 +281,11 @@ class AdminRepository {
     String? queuePrefix,
     bool? isExternalSurgeon,
     List<String>? diagnosisIds,
+    // Оплата врача задаётся сразу при создании (percent|fixed, по приёму/операциям).
+    String? consultSalaryType,
+    String? consultSalaryValue,
+    String? operationSalaryType,
+    String? operationSalaryValue,
   }) async {
     try {
       final resp = await _dio.post(
@@ -296,6 +301,10 @@ class AdminRepository {
           'queue_prefix': ?queuePrefix,
           'is_external_surgeon': ?isExternalSurgeon,
           'diagnosis_ids': ?diagnosisIds,
+          'consult_salary_type': ?consultSalaryType,
+          'consult_salary_value': ?consultSalaryValue,
+          'operation_salary_type': ?operationSalaryType,
+          'operation_salary_value': ?operationSalaryValue,
         },
       );
       return StaffUser.fromJson(resp.data as Map<String, dynamic>);

@@ -24,6 +24,7 @@ import '../features/operations/presentation/operations_screen.dart';
 import '../features/patients/presentation/patient_history_screen.dart';
 import '../features/patients/presentation/patient_visits_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
+import '../features/priem/presentation/priem_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
 import '../features/splash/splash_screen.dart';
@@ -50,9 +51,10 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => const ReceptionScreen(),
           ),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
-          // Личное рабочее место очереди: одна дорожка (врач «Мой приём» /
-          // диагност «Диагностика»), кабинет из профиля. Дорожка выводится из
-          // прав внутри экрана (exams.write → врач, иначе диагност).
+          // Объединённый кабинет врача «Приём»: вкладки «Моя очередь» (свои
+          // V-пациенты) + «Лечение». Заменяет для врача /my-queue + /treatment-queue.
+          GoRoute(path: '/priem', builder: (_, _) => const PriemScreen()),
+          // Личное рабочее место диагноста «Диагностика» (D): кабинет из профиля.
           GoRoute(
             path: '/my-queue',
             builder: (_, _) => const QueueScreen(personal: true),

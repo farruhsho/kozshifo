@@ -89,7 +89,7 @@ def test_exam_requires_permission(client, auth):
     _, visit_id = _make_visit(client, auth, last_name="Доступ")
 
     for email, role, expected in (
-        ("emr.cashier@kozshifo.uz", "Cashier", 403),
+        ("emr.cashier@kozshifo.uz", "Administrator", 403),
         ("emr.doctor@kozshifo.uz", "Doctor", 200),
     ):
         created = client.post(

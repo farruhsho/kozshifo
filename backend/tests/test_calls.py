@@ -145,11 +145,11 @@ def test_ingest_phone_without_digits_422(client, pbx_key):
 # -------------------------------------------------------------------- journal
 
 def test_list_requires_calls_read(client, auth):
-    # Warehouse role has no calls.read -> 403.
+    # Doctor role has no calls.read -> 403.
     created = client.post(
         f"{API}/users", headers=auth,
-        json={"email": "calls.wh@kozshifo.uz", "full_name": "Тест Склад",
-              "password": "Wh!2026call", "role_names": ["Warehouse"]},
+        json={"email": "calls.wh@kozshifo.uz", "full_name": "Тест Врач",
+              "password": "Wh!2026call", "role_names": ["Doctor"]},
     )
     assert created.status_code == 201, created.text
     token = client.post(

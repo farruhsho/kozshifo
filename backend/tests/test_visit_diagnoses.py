@@ -62,10 +62,10 @@ def test_blank_diagnosis_rejected(client, auth):
 
 def test_diagnoses_require_exams_write(client, auth):
     _, visit_id = _make_visit(client, auth, last_name="Доступ")
-    # Cashier lacks exams.write → cannot add; lacks exams.read → cannot list.
+    # A role-less user lacks exams.write → cannot add; lacks exams.read → cannot list.
     client.post(f"{API}/users", headers=auth,
-                json={"email": "dx.cashier@kozshifo.uz", "full_name": "Dx Cashier",
-                      "password": "Dxtest!2026", "role_names": ["Cashier"]})
+                json={"email": "dx.cashier@kozshifo.uz", "full_name": "Dx Без роли",
+                      "password": "Dxtest!2026", "role_names": []})
     tok = client.post(f"{API}/auth/login",
                       data={"username": "dx.cashier@kozshifo.uz", "password": "Dxtest!2026"}
                       ).json()["access_token"]

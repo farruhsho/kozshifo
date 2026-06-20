@@ -84,7 +84,7 @@ def test_conclusion_requires_diagnoses_record_permission(client, auth):
     branch = _branch(client, auth)
     client.post(f"{API}/users", headers=auth,
                 json={"email": "concl.cash@kozshifo.uz", "full_name": "Кассир Закл",
-                      "password": PWD, "role_names": ["Cashier"], "branch_id": branch})
+                      "password": PWD, "role_names": ["Administrator"], "branch_id": branch})
     cash = _login(client, "concl.cash@kozshifo.uz")
     visit_id = _visit(client, auth, branch, "Касса")
     denied = client.post(f"{API}/visits/{visit_id}/diagnostic-conclusion", headers=cash,

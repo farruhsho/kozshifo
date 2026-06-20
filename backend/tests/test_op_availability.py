@@ -209,7 +209,7 @@ def test_availability_rbac_requires_operations_read(client, auth):
     created = client.post(
         f"{API}/users", headers=auth,
         json={"email": "avail.cashier@kozshifo.uz", "full_name": "Кассир Доступности",
-              "password": "Kassa!2026av", "role_names": ["Cashier"]},
+              "password": "Kassa!2026av", "role_names": ["Diagnost"]},
     )
     assert created.status_code == 201, created.text
     token = client.post(

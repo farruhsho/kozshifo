@@ -94,8 +94,8 @@ def test_notifications_rbac(client, auth):
     assert denied.status_code == 403
     assert "notifications.read" in denied.json()["detail"]
 
-    # Warehouse role includes notifications.read -> 200.
-    warehouse = login("notif.wh@kozshifo.uz", "Wh!2026notif", "Warehouse")
+    # Administrator role includes notifications.read -> 200.
+    warehouse = login("notif.wh@kozshifo.uz", "Wh!2026notif", "Administrator")
     allowed = client.get(f"{API}/notifications", headers=warehouse)
     assert allowed.status_code == 200, allowed.text
     assert isinstance(allowed.json(), list)

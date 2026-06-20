@@ -58,11 +58,11 @@ def test_patients_by_region_new_vs_returning(client, auth):
 
 
 def test_patients_by_region_requires_dashboard_view(client, auth):
-    # A reception account lacks dashboard.view → 403.
+    # A doctor account lacks dashboard.view → 403.
     created = client.post(
         f"{API}/users", headers=auth,
-        json={"email": "region.reception@kozshifo.uz", "full_name": "Рег Ресепшен",
-              "password": "Passw0rd!", "role_names": ["Reception"]},
+        json={"email": "region.reception@kozshifo.uz", "full_name": "Рег Врач",
+              "password": "Passw0rd!", "role_names": ["Doctor"]},
     )
     assert created.status_code == 201, created.text
     token = client.post(

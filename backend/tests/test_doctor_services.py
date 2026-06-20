@@ -101,10 +101,10 @@ def test_assignable_doctors_listed_for_reception_without_users_read(client, auth
     })
     rec = client.post(f"{API}/users", headers=auth, json={
         "email": "rec.assignable@kozshifo.uz",
-        "full_name": "Ресепшен Тест",
+        "full_name": "Админ Тест",
         "password": "Reception!2026",
         "branch_id": branch_id,
-        "role_names": ["Reception"],
+        "role_names": ["Administrator"],
     })
     assert rec.status_code == 201, rec.text
     rec_token = client.post(f"{API}/auth/login", data={
@@ -113,11 +113,11 @@ def test_assignable_doctors_listed_for_reception_without_users_read(client, auth
     }).json()["access_token"]
     rec_auth = {"Authorization": f"Bearer {rec_token}"}
 
-    # Reception CAN list assignable doctors...
+    # The administrator CAN list assignable doctors...
     resp = client.get(f"{API}/services/assignable-doctors", headers=rec_auth)
     assert resp.status_code == 200, resp.text
     mine = [r for r in resp.json() if r["full_name"] == "Доктор Списочный"]
     assert mine and mine[0]["cabinet"] == "Каб. 7"
     assert mine[0]["is_active"] is True
-    # ...even though reception genuinely lacks users.read.
+    # ...even though the administrator genuinely lacks users.read (owner-only).
     assert client.get(f"{API}/users", headers=rec_auth).status_code == 403

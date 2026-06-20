@@ -116,10 +116,10 @@ def test_bad_range_rejected_and_rbac_enforced(client, auth):
                      params={"date_from": "2026-06-30", "date_to": "2026-06-01"})
     assert bad.status_code == 422
 
-    # Reception lacks reports.view → 403 (and is not a superuser).
+    # Doctor lacks reports.view → 403 (and is not a superuser).
     client.post(f"{API}/users", headers=auth,
-                json={"email": "report.recep@kozshifo.uz", "full_name": "Рецепшн Отчёт",
-                      "password": "Passw0rd!", "role_names": ["Reception"]})
+                json={"email": "report.recep@kozshifo.uz", "full_name": "Врач Отчёт",
+                      "password": "Passw0rd!", "role_names": ["Doctor"]})
     tok = client.post(f"{API}/auth/login",
                       data={"username": "report.recep@kozshifo.uz", "password": "Passw0rd!"}
                       ).json()["access_token"]

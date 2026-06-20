@@ -64,6 +64,38 @@ def _seed_roles(db: Session, perms: dict[str, Permission]) -> dict[str, Role]:
     return roles
 
 
+# Roles folded into the single Administrator seat → where their existing users go.
+_RETIRED_ROLE_MIGRATION: dict[str, str] = {
+    "Reception": "Administrator",
+    "Cashier": "Administrator",
+    "Warehouse": "Administrator",
+}
+
+
+def _retire_obsolete_roles(db: Session, roles: dict[str, Role]) -> None:
+    """Delete seeded system roles no longer in ROLE_TEMPLATES, first moving any
+    users holding them onto the replacement role so nobody is left role-less."""
+    obsolete = (
+        db.execute(
+            select(Role).where(
+                Role.name.not_in(list(ROLE_TEMPLATES.keys())),
+                Role.is_system.is_(True),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for role in obsolete:
+        target = roles.get(_RETIRED_ROLE_MIGRATION.get(role.name, ""))
+        for user in list(role.users):
+            kept = [r for r in user.roles if r.id != role.id]
+            if target is not None and target not in kept:
+                kept.append(target)
+            user.roles = kept
+        db.delete(role)
+    db.flush()
+
+
 def _seed_branch(db: Session) -> Branch:
     branch = db.execute(select(Branch).where(Branch.code == "MAIN")).scalar_one_or_none()
     if branch is None:
@@ -105,21 +137,17 @@ def _seed_director(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
 # well-known passwords must never exist in production (there the owner creates
 # staff through the /admin screen with real passwords).
 #
-# Per the owner's model the front desk (Reception) also runs the till (касса)
-# and the warehouse (склад) — so the Reception account/login covers all three,
-# and the quick-login screen shows no separate касса/склад buttons. The narrower
-# Cashier/Warehouse accounts stay seeded (dynamic roles for a split-duty clinic,
-# and the finance tests log in as them). The Superadmin account is the owner's
-# god-account (is_superuser) for observing and managing everything.
+# The front office is ONE seat — the Administrator (reception@) covers ресепшен
+# + касса + склад, so there are no separate касса/склад quick-login buttons.
+# The Superadmin account is the owner's god-account (is_superuser) for observing
+# and managing everything.
 _DEMO_STAFF: list[tuple[str, str, str, str, bool]] = [
     # (email, full_name, password, role, is_superuser)
     ("superadmin@kozshifo.uz", "Суперадмин (владелец)", "Superadmin!2026", "Superadmin", True),
     ("vrach@kozshifo.uz", "Доктор Исмоилов А.А.", "Vrach!2026", "Doctor", False),
-    ("reception@kozshifo.uz", "Регистратор Юлдашева Н.", "Reception!2026", "Reception", False),
+    ("reception@kozshifo.uz", "Администратор Юлдашева Н.", "Reception!2026", "Administrator", False),
     ("diagnost@kozshifo.uz", "Диагност Рахимова М.", "Diagnost!2026", "Diagnost", False),
     ("treatment@kozshifo.uz", "Процедурная м/с Ким О.", "Treatment!2026", "TreatmentRoom", False),
-    ("kassa@kozshifo.uz", "Кассир Каримов Ш.", "Kassa!2026", "Cashier", False),
-    ("sklad@kozshifo.uz", "Завсклад Турсунов Б.", "Sklad!2026", "Warehouse", False),
 ]
 
 
@@ -351,6 +379,7 @@ def run_seed() -> None:
     try:
         perms = _seed_permissions(db)
         roles = _seed_roles(db, perms)
+        _retire_obsolete_roles(db, roles)
         branch = _seed_branch(db)
         _seed_director(db, branch, roles)
         _seed_demo_staff(db, branch, roles)

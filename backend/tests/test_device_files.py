@@ -109,8 +109,8 @@ def test_upload_rbac(client, auth):
     )
     assert ok.status_code == 201, ok.text
 
-    # Cashier lacks device_results.create → 403.
-    cashier_auth = _login(client, auth, email="files.cashier@kozshifo.uz", role="Cashier")
+    # Administrator lacks device_results.create → 403.
+    cashier_auth = _login(client, auth, email="files.cashier@kozshifo.uz", role="Administrator")
     denied = client.post(
         f"{API}/devices/{cas['id']}/results/file", headers=cashier_auth,
         files={"file": ("cash-bscan.jpg", b"\xff\xd8\xff fake jpeg", "image/jpeg")},

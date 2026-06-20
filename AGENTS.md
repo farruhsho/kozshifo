@@ -388,6 +388,23 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   «Направить на операцию», new `/operations` department screen
   (schedule/start/perform/complete). Migration `a1c4e7f9d2b0`.
 
+- **ERP optimization wave (owner brief 2026-06-20) — Phase 1: ✅ done** (branch
+  `feat/erp-optimization-2026-06-20`). 14-area brief; 8-phase plan (1 inventory-UX+lab-removal,
+  2 op-cost, 3 insights/notifications/dashboard-filters, 4 «талон» facade+role-scoped clinical,
+  5 debt, 6 analytics+reports, 7 super-admin, 8 doc-viewer). **Phase 1 shipped:** (a) **Laboratory
+  module REMOVED entirely** — backend feature/model/schema/`next_lab_no`/`lab.*` perms + Doctor
+  template, frontend `lib/features/lab/` + `/lab` route/nav; migration `32eb64bbf044` drops
+  `lab_orders` (the attachments document-kind `"lab"` is a *separate* file-category feature, kept).
+  (b) **Inventory/operations UX:** reusable `lib/core/widgets/quantity_stepper.dart` ([−] qty [+],
+  unit hidden at qty==1) in write-off + perform dialogs; the **«Выполнить» dialog is now a checkbox
+  mass-write-off** (template still auto-written-off server-side — excluded from the list to avoid
+  double-deduct; instruments hidden); `GET /operation-types/{id}/availability` gained
+  `feasibility_count`/`min_feasibility`/`status`(🟢🟡🔴, thresh 5)/`bottleneck` with a traffic-light
+  panel («Хватит ещё на N операций»); `GET /inventory/products` gained a `product_type` filter.
+  **⚠️ alembic head note:** the finance module + owner-reqs moved the head past `e8c2a4f9b73d`; the
+  real pre-wave head was `3f7348baf0c4`, now `32eb64bbf044`. Gates: pytest 300 · flutter 167 ·
+  analyze clean · `alembic upgrade head` clean.
+
 ## 2. Repo map (where things live)
 
 ```

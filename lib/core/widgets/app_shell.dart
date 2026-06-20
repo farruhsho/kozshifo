@@ -21,7 +21,6 @@ const Map<String, String> _navIconKey = {
   '/analytics': 'analytics',
   '/finance': 'finance',
   '/inventory': 'inventory',
-  '/lab': 'lab',
   '/notifications': 'notifications',
   '/admin': 'settings',
   '/devices': 'devices',
@@ -170,13 +169,6 @@ const kAppDestinations = <AppDestination>[
     'Склад',
     '/inventory',
     permissions: ['inventory.read'],
-  ),
-  AppDestination(
-    Icons.science_outlined,
-    Icons.science,
-    'Лаборатория',
-    '/lab',
-    permissions: ['lab.read'],
   ),
   AppDestination(
     Icons.face_outlined,

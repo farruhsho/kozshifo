@@ -93,9 +93,6 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Access control / Face ID terminals
     ("access_control.read", "access_control", "View face terminals, enrollment & events"),
     ("access_control.manage", "access_control", "Connect terminals, enroll staff faces"),
-    # Lab / diagnostics referrals
-    ("lab.read", "lab", "View lab referrals & results"),
-    ("lab.manage", "lab", "Create referrals / enter results"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("reports.view", "reports", "View director reports (financial / clinical / CRM) + CSV export"),
@@ -180,9 +177,6 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
         "treatments.read", "treatments.prescribe", "treatments.perform",
-        # lab: a doctor refers tests and reads results (prototype: doctor nav
-        # includes Лаборатория)
-        "lab.read", "lab.manage",
     ],
     # Diagnostics workspace: serves the D-track, records device measurements,
     # sees patients/visits. No clinical authoring (exams.write) or money.

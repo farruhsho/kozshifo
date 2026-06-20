@@ -1,5 +1,5 @@
 // Render smoke tests for the prototype screens added to the shell:
-// Analytics, Notifications, Lab. Each mounts the real screen
+// Analytics, Notifications. Each mounts the real screen
 // with its data providers overridden (no network) + a fake authenticated user,
 // then asserts a key element renders and that no exception was thrown (catches
 // overflow / null-deref / provider-misuse the analyzer cannot see).
@@ -14,9 +14,6 @@ import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/dashboard/data/dashboard_repository.dart';
 import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
-import 'package:kozshifo/features/lab/data/lab_repository.dart';
-import 'package:kozshifo/features/lab/domain/lab_order.dart';
-import 'package:kozshifo/features/lab/presentation/lab_screen.dart';
 import 'package:kozshifo/features/notifications/data/notifications_repository.dart';
 import 'package:kozshifo/features/notifications/domain/app_notification.dart';
 import 'package:kozshifo/features/notifications/presentation/notifications_screen.dart';
@@ -27,7 +24,7 @@ const _user = AuthUser(
   fullName: 'Доктор Тест',
   branchId: 'b1',
   permissions: [
-    'lab.manage', 'dashboard.view', 'exams.write',
+    'dashboard.view', 'exams.write',
     // queue.manage: the doctor calls the next patient / finishes the V-ticket
     // from the queue-driven Приём worklist (TZ §3.3/§7.1.6).
     'queue.read', 'queue.manage',
@@ -95,25 +92,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Низкий остаток'), findsNothing);
     expect(find.text('Новых уведомлений нет'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Lab renders referrals + result action', (tester) async {
-    _desktop(tester);
-    await tester.pumpWidget(_host(const LabScreen(), [
-      labListProvider('b1').overrideWith((ref) async => const [
-            LabOrder(
-              id: 'l1', orderNo: 'LAB-1', branchId: 'b1', patientId: 'p1',
-              patientName: 'Усмонов Бахтиёр', testName: 'ОКТ макулы',
-              status: 'referred', createdAt: '2026-06-14T08:00:00Z',
-            ),
-          ]),
-    ]));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Лаборатория'), findsOneWidget);
-    expect(find.text('ОКТ макулы'), findsOneWidget);
-    expect(find.text('Результат'), findsOneWidget); // enter-result action
     expect(tester.takeException(), isNull);
   });
 }

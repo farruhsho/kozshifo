@@ -18,7 +18,6 @@ import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
 import '../features/finance/presentation/finance_screen.dart';
 import '../features/inventory/presentation/inventory_screen.dart';
-import '../features/lab/presentation/lab_screen.dart';
 import '../features/notifications/presentation/notifications_screen.dart';
 import '../features/operations/presentation/operations_screen.dart';
 import '../features/patients/presentation/patient_history_screen.dart';
@@ -73,7 +72,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => const AnalyticsScreen(),
           ),
           GoRoute(path: '/reports', builder: (_, _) => const ReportsScreen()),
-          GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),
           GoRoute(
             path: '/notifications',
             builder: (_, _) => const NotificationsScreen(),

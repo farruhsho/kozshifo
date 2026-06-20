@@ -55,6 +55,9 @@ class AvailabilityItem(BaseModel):
     required: Decimal
     available: Decimal
     ok: bool
+    # How many whole operations THIS line's stock supports = floor(available /
+    # required). Lines that require nothing (<=0) don't constrain the operation.
+    feasibility_count: int
 
 
 class AvailabilityOut(BaseModel):
@@ -62,6 +65,13 @@ class AvailabilityOut(BaseModel):
 
     ok: bool
     items: list[AvailabilityItem]
+    # Whole operations the current stock supports = min feasibility_count across
+    # the template (0 if any constraining line can't cover even one operation).
+    min_feasibility: int
+    # Traffic-light verdict: red (0), yellow (low, <threshold), green (enough).
+    status: Literal["red", "yellow", "green"]
+    # Product name of the limiting line — null when green or template is empty.
+    bottleneck: str | None = None
 
 
 # ── Operations (instances on a visit) ─────────────────────────────────────────

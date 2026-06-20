@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -10,6 +8,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/koz_widgets.dart';
+import '../../../core/widgets/quantity_stepper.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../clinical/data/clinical_repository.dart';
 import '../../clinical/domain/operation.dart';
@@ -1083,9 +1082,10 @@ class _OperationCard extends ConsumerWidget {
   }
 }
 
-/// Диалог «Выполнить»: ресепшен/хирург добавляет фактически использованные
-/// (ad-hoc) расходники сверх шаблона типа операции. Возврат: список
-/// {productId, quantity} (пусто = только шаблон); null = отмена.
+/// Диалог «Выполнить»: ресепшен/хирург отмечает галочками фактически
+/// использованные (ad-hoc) расходники сверх шаблона типа операции — все
+/// списываются одним атомарным действием. Возврат: список {productId, quantity}
+/// (пусто = только шаблон); null = отмена.
 class _PerformDialog extends ConsumerStatefulWidget {
   const _PerformDialog({required this.op});
 
@@ -1098,151 +1098,139 @@ class _PerformDialog extends ConsumerStatefulWidget {
 class _PerformDialogState extends ConsumerState<_PerformDialog> {
   final _search = TextEditingController();
   String _query = '';
-  Timer? _debounce;
-  // Выбранные ad-hoc расходники: продукт → контроллер количества.
-  final Map<Product, TextEditingController> _adHoc = {};
+  // Отмеченные ad-hoc расходники: id → продукт, и id → количество (по умолч. 1).
+  final Map<String, Product> _selected = {};
+  final Map<String, double> _qty = {};
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _search.dispose();
-    for (final c in _adHoc.values) {
-      c.dispose();
-    }
     super.dispose();
   }
 
-  // Строка ad-hoc валидна = количество положительное число.
-  bool _qtyValid(TextEditingController c) {
-    final v = double.tryParse(c.text.trim().replaceAll(',', '.'));
-    return v != null && v > 0;
-  }
-
-  bool get _allQtysValid => _adHoc.values.every(_qtyValid);
-
-  void _add(Product p) {
-    if (_adHoc.containsKey(p)) return;
+  void _toggle(Product p, bool on) {
     setState(() {
-      _adHoc[p] = TextEditingController(text: '1');
-      _search.clear();
-      _query = '';
+      if (on) {
+        _selected[p.id] = p;
+        _qty.putIfAbsent(p.id, () => 1);
+      } else {
+        _selected.remove(p.id);
+        _qty.remove(p.id);
+      }
     });
   }
 
-  void _remove(Product p) {
-    setState(() => _adHoc.remove(p)?.dispose());
-  }
-
   List<({String productId, String quantity})> _result() => [
-    for (final e in _adHoc.entries)
-      (productId: e.key.id, quantity: e.value.text.trim().replaceAll(',', '.')),
+    for (final p in _selected.values)
+      (productId: p.id, quantity: QuantityStepper.format(_qty[p.id] ?? 1)),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final q = _query.trim();
     final canSearch =
         ref.watch(authControllerProvider).user?.can('inventory.read') ?? false;
-    final results = q.isEmpty
-        ? const AsyncValue<List<Product>>.data(<Product>[])
-        : ref.watch(productSearchProvider(q));
     final errStyle = TextStyle(color: Theme.of(context).colorScheme.error);
     return AlertDialog(
       title: Text(widget.op.typeName),
       content: SizedBox(
-        width: 460,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Шаблонные расходники типа спишутся автоматически. Ниже — '
-                'дополнительные, фактически использованные.',
+        width: 480,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Шаблонные расходники типа спишутся автоматически. Отметьте '
+              'галочками дополнительно использованные — спишутся одним действием.',
+            ),
+            const SizedBox(height: 12),
+            if (!canSearch)
+              Text(
+                'Добавление расходников требует доступа к складу — '
+                'спишутся только шаблонные.',
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else ...[
+              TextField(
+                controller: _search,
+                decoration: const InputDecoration(
+                  labelText: 'Поиск расходника',
+                  prefixIcon: Icon(Icons.search),
+                  isDense: true,
+                ),
+                onChanged: (v) => setState(() => _query = v),
               ),
-              const SizedBox(height: 12),
-              if (canSearch) ...[
-                TextField(
-                  controller: _search,
-                  decoration: const InputDecoration(
-                    labelText: 'Добавить расходник',
-                    prefixIcon: Icon(Icons.search),
-                    isDense: true,
-                  ),
-                  // Debounce: не дёргать GET на каждое нажатие.
-                  onChanged: (v) {
-                    _debounce?.cancel();
-                    _debounce = Timer(const Duration(milliseconds: 300), () {
-                      if (mounted) setState(() => _query = v);
-                    });
-                  },
-                ),
-                if (q.isNotEmpty)
-                  results.when(
-                    data: (items) => Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Инструменты — многоразовые активы, не списываются как
-                        // одноразовые расходники: прячем из пикера.
-                        for (final p
-                            in items
-                                .where((p) => p.productType != 'instrument')
-                                .take(8))
-                          ListTile(
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(p.name),
-                            subtitle: Text('${p.sku} · ${p.typeLabel}'),
-                            trailing: const Icon(Icons.add),
-                            onTap: () => _add(p),
-                          ),
-                      ],
-                    ),
-                    loading: () => const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: LinearProgressIndicator(),
-                    ),
-                    error: (e, _) =>
-                        Text('Поиск недоступен: $e', style: errStyle),
-                  ),
-              ] else
-                Text(
-                  'Добавление расходников требует доступа к складу — '
-                  'спишутся только шаблонные.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
               const SizedBox(height: 8),
-              for (final e in _adHoc.entries)
+              SizedBox(
+                height: 320,
+                child: ref.watch(productsProvider).when(
+                      data: (all) {
+                        final q = _query.trim().toLowerCase();
+                        // Инструменты — многоразовые активы, не одноразовые
+                        // расходники: прячем из списка списания.
+                        final items = all
+                            .where((p) => p.productType != 'instrument')
+                            .where((p) =>
+                                q.isEmpty ||
+                                p.name.toLowerCase().contains(q) ||
+                                p.sku.toLowerCase().contains(q))
+                            .toList();
+                        if (items.isEmpty) {
+                          return const Center(child: Text('Ничего не найдено'));
+                        }
+                        return ListView.builder(
+                          itemCount: items.length,
+                          itemBuilder: (_, i) {
+                            final p = items[i];
+                            final on = _selected.containsKey(p.id);
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Checkbox(
+                                  value: on,
+                                  onChanged: (v) => _toggle(p, v ?? false),
+                                ),
+                                Expanded(
+                                  child: InkWell(
+                                    onTap: () => _toggle(p, !on),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(p.name),
+                                        Text('${p.sku} · ${p.typeLabel}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                if (on)
+                                  QuantityStepper(
+                                    value: _qty[p.id] ?? 1,
+                                    unit: p.unit,
+                                    onChanged: (v) =>
+                                        setState(() => _qty[p.id] = v),
+                                  ),
+                              ],
+                            );
+                          },
+                        );
+                      },
+                      loading: () =>
+                          const Center(child: CircularProgressIndicator()),
+                      error: (e, _) =>
+                          Text('Каталог недоступен: $e', style: errStyle),
+                    ),
+              ),
+              if (_selected.isNotEmpty)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text('${e.key.name} (${e.key.unit})')),
-                      SizedBox(
-                        width: 84,
-                        child: TextField(
-                          controller: e.value,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          onChanged: (_) => setState(() {}),
-                          decoration: InputDecoration(
-                            labelText: 'Кол-во',
-                            isDense: true,
-                            errorText: _qtyValid(e.value) ? null : '> 0',
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Убрать',
-                        icon: const Icon(Icons.close),
-                        onPressed: () => _remove(e.key),
-                      ),
-                    ],
-                  ),
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('Выбрано расходников: ${_selected.length}',
+                      style: Theme.of(context).textTheme.bodySmall),
                 ),
             ],
-          ),
+          ],
         ),
       ),
       actions: [
@@ -1251,9 +1239,7 @@ class _PerformDialogState extends ConsumerState<_PerformDialog> {
           child: const Text('Отмена'),
         ),
         FilledButton(
-          onPressed: _allQtysValid
-              ? () => Navigator.of(context).pop(_result())
-              : null,
+          onPressed: () => Navigator.of(context).pop(_result()),
           child: const Text('Выполнить'),
         ),
       ],

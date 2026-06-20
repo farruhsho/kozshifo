@@ -374,25 +374,74 @@ class _ReferOperationDialogState
     );
   }
 
-  /// Компактная панель наличия расходников: строка на каждый расходник
-  /// («название — требуется X, на складе Y») + итоговая строка. Дефицит —
-  /// янтарное предупреждение: назначать МОЖНО, заблокируется лишь выполнение.
+  /// Компактная панель наличия расходников: цветной заголовок-светофор
+  /// 🟢/🟡/🔴 «Хватит ещё на N операций» (по min_feasibility) + строка на каждый
+  /// расходник («название — требуется X, на складе Y, хватит на N»). Дефицит —
+  /// назначать МОЖНО, заблокируется лишь выполнение; узкое место подсвечено.
   Widget _availabilityPanel(BuildContext context, OperationAvailability a) {
     if (a.items.isEmpty) return const SizedBox.shrink(); // нет шаблона — нечего показывать
     final textTheme = Theme.of(context).textTheme;
     final errorColor = Theme.of(context).colorScheme.error;
-    final accent = a.ok ? Colors.green : Colors.amber;
+
+    // Светофор сервера: red / yellow / green → цвет, иконка, эмодзи заголовка.
+    final (Color accent, IconData headIcon, String emoji) = switch (a.status) {
+      'green' => (Colors.green, Icons.check_circle, '🟢'),
+      'yellow' => (Colors.amber, Icons.warning_amber_rounded, '🟡'),
+      _ => (errorColor, Icons.error, '🔴'),
+    };
+
+    // Русское склонение: «на 1 операцию», «на 2 операции», «на 5 операций».
+    String plOps(int n) {
+      final m10 = n % 10, m100 = n % 100;
+      if (m10 == 1 && m100 != 11) return 'операцию';
+      if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'операции';
+      return 'операций';
+    }
+
+    final headline = a.status == 'red'
+        ? 'Расходников не хватает'
+        : 'Хватит ещё на ${a.minFeasibility} ${plOps(a.minFeasibility)}';
+
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        color: accent.withValues(alpha: 0.08),
+        color: accent.withValues(alpha: 0.10),
+        border: Border.all(color: accent.withValues(alpha: 0.40)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Заголовок-светофор: цветной бейдж с итоговой ёмкостью склада.
+          Row(
+            children: [
+              Icon(headIcon, size: 18, color: accent),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '$emoji  $headline',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: accent,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // Узкое место (что упрётся первым) — только когда не «зелёный».
+          if (a.bottleneck != null) ...[
+            const SizedBox(height: 2),
+            Padding(
+              padding: const EdgeInsets.only(left: 24),
+              child: Text(
+                'Узкое место: ${a.bottleneck}',
+                style: textTheme.bodySmall?.copyWith(color: accent),
+              ),
+            ),
+          ],
+          const Divider(height: 14),
           for (final item in a.items)
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
@@ -407,36 +456,14 @@ class _ReferOperationDialogState
                   Expanded(
                     child: Text(
                       '${item.name} — требуется ${item.required}, '
-                      'на складе ${item.available}',
+                      'на складе ${item.available} '
+                      '(хватит на ${item.feasibilityCount})',
                       style: textTheme.bodySmall,
                     ),
                   ),
                 ],
               ),
             ),
-          Row(
-            children: [
-              Icon(
-                a.ok
-                    ? Icons.inventory_2_outlined
-                    : Icons.warning_amber_outlined,
-                size: 16,
-                color: a.ok ? Colors.green.shade700 : Colors.amber.shade900,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  a.ok
-                      ? 'Расходников достаточно'
-                      : 'Не хватает расходников — выполнение будет заблокировано',
-                  style: textTheme.bodySmall?.copyWith(
-                    color: a.ok ? Colors.green.shade700 : Colors.amber.shade900,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );

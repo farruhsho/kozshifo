@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:kozshifo/core/network/api_exception.dart';
+import 'package:kozshifo/core/widgets/quantity_stepper.dart';
 import 'package:kozshifo/features/inventory/data/inventory_repository.dart';
 import 'package:kozshifo/features/inventory/domain/movement.dart';
 import 'package:kozshifo/features/inventory/domain/product.dart';
@@ -236,8 +237,8 @@ void main() {
         child: MaterialApp(home: Scaffold(body: child)),
       );
 
-  testWidgets('WriteOffDialog: button stays disabled until qty>0 and reason set',
-      (tester) async {
+  testWidgets('WriteOffDialog: button stays disabled until reason set '
+      '(qty defaults to 1 via stepper)', (tester) async {
     await tester.pumpWidget(host(
       WriteOffDialog(branchId: 'br-1', product: product),
     ));
@@ -246,21 +247,12 @@ void main() {
     Finder save() => find.widgetWithText(FilledButton, 'Списать');
     bool enabled() => tester.widget<FilledButton>(save()).onPressed != null;
 
-    // Initially disabled (no quantity, no reason).
+    // The QuantityStepper seeds quantity at its min (1), so quantity is valid
+    // from the start — the only thing still gating the button is the reason.
+    expect(find.byType(QuantityStepper), findsOneWidget);
     expect(enabled(), isFalse);
 
-    // Zero / non-positive quantity must not enable + shows validation error.
-    await tester.enterText(find.widgetWithText(TextField, 'Количество'), '0');
-    await tester.pump();
-    expect(enabled(), isFalse);
-    expect(find.text('Введите число больше нуля'), findsOneWidget);
-
-    // Valid quantity but still no reason → disabled.
-    await tester.enterText(find.widgetWithText(TextField, 'Количество'), '3');
-    await tester.pump();
-    expect(enabled(), isFalse);
-
-    // Reason filled → enabled.
+    // Reason filled → enabled (quantity already 1).
     await tester.enterText(
         find.widgetWithText(TextField, 'Причина'), 'порча');
     await tester.pump();
@@ -282,8 +274,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    await tester.enterText(
-        find.widgetWithText(TextField, 'Количество'), '100');
+    // Quantity defaults to 1 via the stepper; the stub throws regardless of
+    // amount, so we only need a reason to enable submit.
     await tester.enterText(
         find.widgetWithText(TextField, 'Причина'), 'тест');
     await tester.pump();

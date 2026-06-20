@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_exception.dart';
+import '../../../core/widgets/quantity_stepper.dart';
 import '../data/inventory_repository.dart';
 import '../domain/movement.dart';
 import '../domain/product.dart';
@@ -39,11 +40,11 @@ class WriteOffDialog extends ConsumerStatefulWidget {
 }
 
 class _WriteOffDialogState extends ConsumerState<WriteOffDialog> {
-  final _quantity = TextEditingController();
   final _reason = TextEditingController();
   final _search = TextEditingController();
 
   Product? _selected;
+  double _quantity = 1; // stepper state; min is 1
   String _query = '';
   Timer? _debounce;
   bool _includeExpired = false;
@@ -59,7 +60,6 @@ class _WriteOffDialogState extends ConsumerState<WriteOffDialog> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _quantity.dispose();
     _reason.dispose();
     _search.dispose();
     super.dispose();
@@ -72,24 +72,20 @@ class _WriteOffDialogState extends ConsumerState<WriteOffDialog> {
     });
   }
 
-  /// Quantity is valid only if it parses to a strictly positive number.
-  /// (Backend enforces gt=0; we mirror that so the button stays disabled.)
-  double? get _qty {
-    final raw = _quantity.text.trim().replaceAll(',', '.');
-    final v = double.tryParse(raw);
-    return (v != null && v > 0) ? v : null;
-  }
+  /// Quantity is valid only if strictly positive. The stepper enforces min: 1,
+  /// so this stays > 0 by construction; we keep the guard to mirror the backend
+  /// (gt=0) for the button-enabled state.
+  bool get _qtyValid => _quantity > 0;
 
   bool get _canSave =>
       !_saving &&
       _selected != null &&
-      _qty != null &&
+      _qtyValid &&
       _reason.text.trim().isNotEmpty;
 
   Future<void> _save() async {
     final product = _selected;
-    final qty = _qty;
-    if (product == null || qty == null) return;
+    if (product == null || !_qtyValid) return;
     setState(() {
       _saving = true;
       _error = null;
@@ -99,7 +95,8 @@ class _WriteOffDialogState extends ConsumerState<WriteOffDialog> {
           await ref.read(inventoryRepositoryProvider).writeOff(
                 productId: product.id,
                 branchId: widget.branchId,
-                quantity: _quantity.text.trim().replaceAll(',', '.'),
+                // API expects a '.'-normalized numeric string.
+                quantity: QuantityStepper.format(_quantity),
                 reason: _reason.text.trim(),
                 includeExpired: _includeExpired,
               );
@@ -156,18 +153,19 @@ class _WriteOffDialogState extends ConsumerState<WriteOffDialog> {
                 }),
               ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _quantity,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                labelText: 'Количество',
-                suffixText: _selected?.unit,
-                errorText: _quantity.text.trim().isNotEmpty && _qty == null
-                    ? 'Введите число больше нуля'
-                    : null,
-              ),
-              onChanged: (_) => setState(() {}),
+            Row(
+              children: [
+                Text('Количество',
+                    style: Theme.of(context).textTheme.bodyMedium),
+                const SizedBox(width: 12),
+                QuantityStepper(
+                  value: _quantity,
+                  unit: _selected?.unit,
+                  min: 1,
+                  step: 1,
+                  onChanged: (v) => setState(() => _quantity = v),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             TextField(

@@ -53,6 +53,13 @@ from app.schemas.operation import (
 
 router = APIRouter(tags=["Operations"])
 
+# Below this many supported operations the availability verdict turns yellow
+# (low stock) instead of green; 0 supported operations is always red.
+LOW_FEASIBILITY_THRESHOLD = 5
+# Sentinel "effectively unlimited": a template line that requires nothing must
+# not drag min_feasibility down — it never constrains the operation.
+_UNCONSTRAINED = 10**9
+
 
 def _get_or_404(db: Session, operation_id: UUID) -> Operation:
     operation = db.get(Operation, operation_id)
@@ -125,8 +132,17 @@ def operation_type_availability(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Operation type not found")
 
     items: list[AvailabilityItem] = []
+    # Track the most-constrained line so we can name the bottleneck product.
+    min_feasibility = _UNCONSTRAINED
+    bottleneck: str | None = None
     for line in op_type.consumables:
         available = on_hand(db, line.product_id, branch_id)
+        # floor(available / required): whole operations this line alone supports.
+        # A line that requires nothing never constrains the operation count.
+        if line.quantity > 0:
+            feasibility = int(available // line.quantity)
+        else:
+            feasibility = _UNCONSTRAINED
         items.append(
             AvailabilityItem(
                 product_id=line.product_id,
@@ -134,10 +150,35 @@ def operation_type_availability(
                 required=line.quantity,
                 available=available,
                 ok=available >= line.quantity,
+                feasibility_count=feasibility,
             )
         )
+        if feasibility < min_feasibility:
+            min_feasibility = feasibility
+            bottleneck = line.product_name
+
+    # An empty template (no constraining line) is trivially coverable → green,
+    # no finite limit and no bottleneck to surface.
+    if min_feasibility == _UNCONSTRAINED:
+        min_feasibility = 0
+        bottleneck = None
+        status_value = "green"
+    elif min_feasibility == 0:
+        status_value = "red"
+    elif min_feasibility < LOW_FEASIBILITY_THRESHOLD:
+        status_value = "yellow"
+    else:
+        status_value = "green"
+        bottleneck = None  # plenty in stock — no limiting line to highlight
+
     # all([]) is True: an empty template is trivially coverable.
-    return AvailabilityOut(ok=all(item.ok for item in items), items=items)
+    return AvailabilityOut(
+        ok=all(item.ok for item in items),
+        items=items,
+        min_feasibility=min_feasibility,
+        status=status_value,
+        bottleneck=bottleneck,
+    )
 
 
 # ── Operations on a visit ─────────────────────────────────────────────────────

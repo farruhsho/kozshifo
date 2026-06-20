@@ -14,17 +14,28 @@ final clinicalRepositoryProvider = Provider<ClinicalRepository>(
 
 /// One consumable-template line vs. usable stock in the branch.
 /// `required`/`available` are decimal strings (e.g. "2.000") — never doubles.
+/// [feasibilityCount] = whole operations THIS line's stock supports.
 typedef ConsumableAvailability = ({
   String productId,
   String name,
   String required,
   String available,
   bool ok,
+  int feasibilityCount,
 });
 
 /// Advisory availability verdict for an operation type in a branch.
 /// `ok` is true when every template line is coverable (empty template → true).
-typedef OperationAvailability = ({bool ok, List<ConsumableAvailability> items});
+/// [minFeasibility] = whole operations the current stock supports overall;
+/// [status] is the traffic-light verdict ('red' / 'yellow' / 'green') and
+/// [bottleneck] names the limiting product (null when green / empty template).
+typedef OperationAvailability = ({
+  bool ok,
+  List<ConsumableAvailability> items,
+  int minFeasibility,
+  String status,
+  String? bottleneck,
+});
 
 /// A staff member eligible to operate (TZ Modul 6). [isExternal] marks visiting
 /// «приезжий» surgeons (e.g. from Tashkent); [cabinet] is their room, if any.
@@ -111,6 +122,9 @@ class ClinicalRepository {
       final data = resp.data as Map<String, dynamic>;
       return (
         ok: data['ok'] as bool,
+        minFeasibility: (data['min_feasibility'] as num).toInt(),
+        status: data['status'] as String,
+        bottleneck: data['bottleneck'] as String?,
         items: [
           for (final raw in data['items'] as List<dynamic>)
             (
@@ -119,6 +133,7 @@ class ClinicalRepository {
               required: raw['required'] as String,
               available: raw['available'] as String,
               ok: raw['ok'] as bool,
+              feasibilityCount: (raw['feasibility_count'] as num).toInt(),
             ),
         ],
       );

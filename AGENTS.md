@@ -405,6 +405,17 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   real pre-wave head was `3f7348baf0c4`, now `32eb64bbf044`. Gates: pytest 300 · flutter 167 ·
   analyze clean · `alembic upgrade head` clean.
 
+- **ERP optimization wave — Phase 2 (flexible operation cost): ✅ done.** An operation's cost is
+  **no longer fixed at planning** — editable before/during/after until it is *financially closed*.
+  `operations.financially_closed_at` (+`_by_id`; migration `b6d2f8a1c3e5`, head now `b6d2f8a1c3e5`).
+  New `POST /operations/{id}/set-price` (repoints the billed `VisitItem` with **no "refund first"
+  block**; returns `{operation, visit_balance, refund_due}` — overpayment on a price cut surfaces a
+  refund, collected/returned via the till, never auto-refunded) and `POST /operations/{id}/financial-close`
+  (freeze; after it set-price/reschedule/unschedule/cancel → 409). `close_visit` auto-closes its
+  operations' finances. The old schedule "paid → refund first" re-price lock is **relaxed** to the
+  financial-close gate (unschedule/cancel keep refund-first as they de-bill). Flutter: «Изменить цену» +
+  «Закрыть счёт» actions + «счёт закрыт» badge. Gates: pytest 304 · flutter 167 · analyze clean.
+
 ## 2. Repo map (where things live)
 
 ```

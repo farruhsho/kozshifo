@@ -25,8 +25,12 @@ class OverviewTab extends ConsumerStatefulWidget {
   ConsumerState<OverviewTab> createState() => _OverviewTabState();
 }
 
+/// How to rank doctors in the «Топ врачей» card.
+enum _DoctorSort { revenue, visits, profit }
+
 class _OverviewTabState extends ConsumerState<OverviewTab> {
   late String _month = ym(DateTime.now());
+  _DoctorSort _doctorSort = _DoctorSort.revenue;
 
   ReportRange get _range {
     final parts = _month.split('-');
@@ -366,7 +370,20 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
     );
   }
 
-  // ── Profit by doctor (reports.view) — clickable → salary detail ──────────
+  // ── Top doctors (reports.view) — sort by revenue/visits/profit, clickable ─
+
+  double _doctorSortKey(DoctorReportRow d) => switch (_doctorSort) {
+        _DoctorSort.revenue => double.tryParse(d.revenue) ?? 0,
+        _DoctorSort.visits => d.visits.toDouble(),
+        _DoctorSort.profit => double.tryParse(d.netProfit) ?? 0,
+      };
+
+  /// The metric shown on the right, matching the active sort.
+  String _doctorTrailing(DoctorReportRow d) => switch (_doctorSort) {
+        _DoctorSort.revenue => formatMoney(d.revenue),
+        _DoctorSort.visits => '${d.visits} виз.',
+        _DoctorSort.profit => formatMoney(d.netProfit),
+      };
 
   Widget _profitByDoctorCard(BuildContext context) {
     final rows = ref.watch(byDoctorReportProvider(_range));
@@ -376,19 +393,37 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Прибыль по врачам',
+            Text('Топ врачей',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final (mode, label) in const [
+                  (_DoctorSort.revenue, 'Выручка'),
+                  (_DoctorSort.visits, 'Пациентов'),
+                  (_DoctorSort.profit, 'Прибыль'),
+                ])
+                  ChoiceChip(
+                    label: Text(label),
+                    selected: _doctorSort == mode,
+                    onSelected: (_) => setState(() => _doctorSort = mode),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
             AsyncValueWidget<List<DoctorReportRow>>(
               value: rows,
               onRetry: () => ref.invalidate(byDoctorReportProvider(_range)),
-              builder: (items) {
-                if (items.isEmpty) {
+              builder: (data) {
+                if (data.isEmpty) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: Text('Нет данных за период'),
                   );
                 }
+                final items = [...data]
+                  ..sort((a, b) => _doctorSortKey(b).compareTo(_doctorSortKey(a)));
                 return Column(
                   children: [
                     for (final d in items)
@@ -397,8 +432,8 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(d.doctorName),
                         subtitle: Text(
-                            'Выручка ${formatMoney(d.revenue)} · зарплата ${formatMoney(d.payrollExpense)}'),
-                        trailing: Text(formatMoney(d.netProfit),
+                            'Выручка ${formatMoney(d.revenue)} · ${d.visits} виз. · прибыль ${formatMoney(d.netProfit)}'),
+                        trailing: Text(_doctorTrailing(d),
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold)),
                         // Кликабельно: детализация зарплаты врача за месяц.

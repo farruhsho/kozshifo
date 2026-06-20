@@ -247,6 +247,7 @@ class _FakeCallsRepository extends CallsRepository {
     String? q,
     DateTime? dateFrom,
     DateTime? dateTo,
+    String? status,
     int offset = 0,
     int limit = 50,
   }) async {
@@ -294,6 +295,7 @@ class _PagingRepo extends CallsRepository {
     String? q,
     DateTime? dateFrom,
     DateTime? dateTo,
+    String? status,
     int offset = 0,
     int limit = 50,
   }) async {

@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Calendar month on the wire: "YYYY-MM" (payroll period / monthly report key).
 MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
@@ -13,6 +13,7 @@ MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
 
 class ExpenseCreate(BaseModel):
     category: str = Field(max_length=64)
+    name: str | None = Field(default=None, max_length=128)  # rasxod nomi
     amount: Decimal = Field(gt=0)
     expense_date: date
     note: str | None = Field(default=None, max_length=512)
@@ -32,6 +33,7 @@ class ExpenseOut(BaseModel):
     id: UUID
     branch_id: UUID
     category: str
+    name: str | None = None
     amount: Decimal
     expense_date: date
     note: str | None
@@ -42,17 +44,144 @@ class ExpenseOut(BaseModel):
     created_at: datetime
 
 
+# ── Expense types (admin-managed) ───────────────────────────────────────────
+
+
+class ExpenseCategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    is_active: bool
+    is_system: bool
+    sort_order: int
+
+
+class ExpenseCategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class ExpenseCategoryUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+# ── Recurring (monthly) expenses ────────────────────────────────────────────
+
+
+class RecurringExpenseOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    category: str
+    name: str
+    amount: Decimal | None
+    is_fixed: bool
+    is_active: bool
+
+
+class RecurringExpenseCreate(BaseModel):
+    category: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=128)
+    amount: Decimal | None = Field(default=None, ge=0)
+    is_fixed: bool = True
+    is_active: bool = True
+
+
+class RecurringExpenseUpdate(BaseModel):
+    category: str | None = Field(default=None, min_length=1, max_length=64)
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    amount: Decimal | None = Field(default=None, ge=0)
+    is_fixed: bool | None = None
+    is_active: bool | None = None
+
+
+class RecurringExpensePostIn(BaseModel):
+    """Materialise a recurring template into an Expense for a month.
+
+    For a variable (is_fixed=False) template the amount is required here; for a
+    fixed template it is optional (defaults to the template amount).
+    """
+
+    month: str = Field(pattern=MONTH_PATTERN)
+    amount: Decimal | None = Field(default=None, gt=0)
+
+
+class RecurringExpenseStatus(RecurringExpenseOut):
+    """A recurring template plus whether it is already booked for a given month."""
+
+    posted: bool
+    posted_amount: Decimal | None
+
+
 class PayrollRow(BaseModel):
-    """One eligible employee's percent-payroll line for a month."""
+    """One eligible employee's payroll line for a month, with the consult +
+    operation breakdown (see app/features/finance.py for the maths)."""
 
     user_id: UUID
     full_name: str
-    salary_percent: Decimal
-    revenue: Decimal  # completed payments of the month on visits where they are the doctor
-    salary: Decimal  # revenue * salary_percent / 100, 0.01-quantized (live, recomputed)
+    # Consultation side
+    consult_salary_type: str | None  # percent | fixed | None
+    consult_salary_value: Decimal | None
+    consult_revenue: Decimal  # completed consult payments on the doctor's visits
+    consult_pay: Decimal
+    # Operation side (performed as surgeon)
+    operation_salary_type: str | None
+    operation_salary_value: Decimal | None
+    operation_revenue: Decimal
+    operation_count: int
+    operation_pay: Decimal
+    # Total + payout state
+    salary: Decimal  # consult_pay + operation_pay (live, recomputed)
     paid: bool  # a payout Expense(kind="payroll") exists for this month
     paid_at: datetime | None
     paid_amount: Decimal | None  # amount actually booked at payout (frozen); None if unpaid
+
+
+# ── Payroll detail (per-day, per-patient breakdown for printing) ────────────
+
+
+class PayrollDetailPatient(BaseModel):
+    visit_id: UUID
+    patient_name: str
+    amount: Decimal  # what the patient paid on this visit (in the period)
+    share: Decimal  # the doctor's cut of it (0 for fixed-type pay)
+
+
+class PayrollDetailDay(BaseModel):
+    date: date
+    patients: list[PayrollDetailPatient]
+    revenue: Decimal  # sum of patient amounts for the day
+    share: Decimal  # sum of doctor shares for the day
+
+
+class PayrollDetailOperation(BaseModel):
+    date: date
+    patient_name: str
+    type_name: str
+    price: Decimal
+    share: Decimal
+
+
+class PayrollDetail(BaseModel):
+    user_id: UUID
+    full_name: str
+    month: str
+    consult_salary_type: str | None
+    consult_salary_value: Decimal | None
+    operation_salary_type: str | None
+    operation_salary_value: Decimal | None
+    days: list[PayrollDetailDay]
+    operations: list[PayrollDetailOperation]
+    consult_revenue: Decimal
+    consult_pay: Decimal
+    operation_revenue: Decimal
+    operation_count: int
+    operation_pay: Decimal
+    salary: Decimal
 
 
 class PayrollPayoutIn(BaseModel):

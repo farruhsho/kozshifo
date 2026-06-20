@@ -32,6 +32,7 @@ from app.models.diagnosis import VisitDiagnosis
 from app.models.exam import EyeExam
 from app.models.payment import Payment
 from app.models.visit import Visit
+from app.schemas.finance import PayrollDetail
 
 _BUNDLED_FONTS = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
@@ -77,13 +78,21 @@ _LINE = 5.2 * mm
 class _Writer:
     """Top-down text flow with automatic page breaks and a repeated footer."""
 
-    def __init__(self, canvas: Canvas):
+    def __init__(self, canvas: Canvas, footer=None):
         self.c = canvas
         self.y = _PAGE_H - _MARGIN
+        # Footer stamped on every page break and at save time. Defaults to the
+        # MoH Form 025-8 footer; non-medical forms (e.g. payroll) pass their own
+        # or None.
+        self.footer = _draw_footer if footer is None else footer
+
+    def draw_footer(self) -> None:
+        if self.footer is not None:
+            self.footer(self.c)
 
     def _page_break_if_needed(self, needed: float) -> None:
         if self.y - needed < _MARGIN + 10 * mm:
-            _draw_footer(self.c)
+            self.draw_footer()
             self.c.showPage()
             self.y = _PAGE_H - _MARGIN
 
@@ -116,6 +125,16 @@ class _Writer:
         self.c.setLineWidth(0.4)
         self.c.line(_MARGIN, self.y + 1.5 * mm, _PAGE_W - _MARGIN, self.y + 1.5 * mm)
         self.spacer(1.5 * mm)
+
+    def pair(self, left: str, right: str, *, bold: bool = False, size: float = 9.5,
+             indent: float = 0) -> None:
+        """One row: left label at the margin, right value right-aligned."""
+        self._page_break_if_needed(_LINE)
+        font = FONT_BOLD if bold else FONT
+        self.c.setFont(font, size)
+        self.c.drawString(_MARGIN + indent, self.y, left)
+        self.c.drawRightString(_PAGE_W - _MARGIN, self.y, right)
+        self.y -= _LINE
 
 
 def _draw_footer(c: Canvas) -> None:
@@ -373,5 +392,83 @@ def build_exam_card_pdf(exam: EyeExam, diagnoses: list[VisitDiagnosis] | None = 
     w.text("Шифокор:", f"{doctor_name}    имзо: _________________", bold_label=True)
 
     _draw_footer(c)
+    c.save()
+    return buf.getvalue()
+
+
+_SALARY_TYPE_RU = {"percent": "процент", "fixed": "фикс."}
+
+
+def _salary_rule(salary_type: str | None, value, *, per_op: bool = False) -> str:
+    """Human-readable pay rule, e.g. «10%» or «50 000 сум за операцию»."""
+    if salary_type is None or value is None:
+        return "—"
+    if salary_type == "percent":
+        return f"{Decimal(str(value)):g}%"
+    if per_op:
+        return f"{_money(value)} за операцию"
+    return f"{_money(value)} / мес"
+
+
+def build_payroll_detail_pdf(detail: PayrollDetail) -> bytes:
+    """Per-day / per-patient salary detalizatsiya for one doctor and month
+    (the TZ example: «01.01 — 4 пациента 100/200/50/120 = 470 …»)."""
+    _register_fonts()
+    buf = io.BytesIO()
+    c = Canvas(buf, pagesize=A4)
+    c.setTitle(f"Зарплата — {detail.full_name} — {detail.month}")
+
+    def _footer(canvas: Canvas) -> None:
+        canvas.setFont(FONT, 7.5)
+        canvas.drawCentredString(_PAGE_W / 2, 11 * mm, "«KO'Z SHIFO» — расчёт заработной платы")
+
+    w = _Writer(c, footer=_footer)
+
+    # Header
+    c.setFont(FONT, 8)
+    c.drawString(_MARGIN, w.y, "«KO'Z SHIFO» klinikasi")
+    c.drawRightString(_PAGE_W - _MARGIN, w.y, f"Месяц: {detail.month}")
+    w.spacer(_LINE * 2)
+    w.heading("ДЕТАЛИЗАЦИЯ ЗАРАБОТНОЙ ПЛАТЫ", size=13)
+    w.text("Врач:", detail.full_name, bold_label=True)
+    w.text("Оплата за приём:", _salary_rule(detail.consult_salary_type, detail.consult_salary_value))
+    w.text("Оплата за операции:",
+           _salary_rule(detail.operation_salary_type, detail.operation_salary_value, per_op=True))
+    w.rule()
+
+    # Consultations — per day, per patient (the requested breakdown).
+    w.heading("Приём (по дням)", size=11)
+    if not detail.days:
+        w.text("Платежей за приём в этом месяце нет.")
+    for day in detail.days:
+        w.pair(_fmt_date(day.date), f"итого: {_money(day.revenue)}  →  {_money(day.share)}",
+               bold=True, size=9.5)
+        for i, p in enumerate(day.patients, 1):
+            share = f"  →  {_money(p.share)}" if p.share else ""
+            w.pair(f"{i}. {p.patient_name}", f"{_money(p.amount)}{share}",
+                   size=9, indent=6 * mm)
+        w.spacer(1 * mm)
+    w.rule()
+    w.pair("Выручка с приёма:", _money(detail.consult_revenue), bold=True)
+    w.pair("Начислено за приём:", _money(detail.consult_pay), bold=True)
+
+    # Operations — one row per performed operation.
+    if detail.operations:
+        w.heading("Операции", size=11)
+        for i, op in enumerate(detail.operations, 1):
+            w.pair(f"{i}. {_fmt_date(op.date)} · {op.patient_name} · {op.type_name}",
+                   f"{_money(op.price)}  →  {_money(op.share)}", size=9, indent=2 * mm)
+        w.rule()
+    w.pair("Выручка с операций:", f"{_money(detail.operation_revenue)} ({detail.operation_count} шт.)",
+           bold=True)
+    w.pair("Начислено за операции:", _money(detail.operation_pay), bold=True)
+
+    # Grand total
+    w.rule()
+    w.pair("ИТОГО К ВЫПЛАТЕ:", _money(detail.salary), bold=True, size=12)
+    w.spacer(_LINE)
+    w.text("Подпись: _________________________", bold_label=True)
+
+    w.draw_footer()
     c.save()
     return buf.getvalue()

@@ -21,6 +21,7 @@ import '../features/inventory/presentation/inventory_screen.dart';
 import '../features/lab/presentation/lab_screen.dart';
 import '../features/notifications/presentation/notifications_screen.dart';
 import '../features/operations/presentation/operations_screen.dart';
+import '../features/patients/presentation/patient_history_screen.dart';
 import '../features/patients/presentation/patient_visits_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
@@ -89,6 +90,14 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/patients/:id/visits',
             builder: (_, state) =>
                 PatientVisitsScreen(patientId: state.pathParameters['id']!),
+          ),
+          // Consolidated patient history grouped into 5 sections (Приёмы/
+          // Диагностика/Лечение/Операции/Финансы). Under /patients → inherits
+          // the patients.read redirect guard.
+          GoRoute(
+            path: '/patients/:id/history',
+            builder: (_, state) =>
+                PatientHistoryScreen(patientId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/finance', builder: (_, _) => const FinanceScreen()),
           GoRoute(

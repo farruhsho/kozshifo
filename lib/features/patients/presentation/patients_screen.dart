@@ -135,13 +135,21 @@ class _PatientList extends StatelessWidget {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (canViewVisits)
+                    if (canViewVisits) ...[
                       IconButton(
                         tooltip: 'История визитов',
                         icon: const Icon(Icons.history),
                         onPressed: () =>
                             context.go('/patients/${p.id}/visits'),
                       ),
+                      IconButton(
+                        tooltip: 'История пациента '
+                            '(приёмы · диагностика · лечение · операции · финансы)',
+                        icon: const Icon(Icons.folder_shared_outlined),
+                        onPressed: () =>
+                            context.go('/patients/${p.id}/history'),
+                      ),
+                    ],
                     TextButton.icon(
                       onPressed: () => context.go('/patients/${p.id}/card'),
                       icon: const Icon(Icons.medical_information_outlined),

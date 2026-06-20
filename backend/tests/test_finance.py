@@ -150,14 +150,14 @@ def test_expense_create_list_delete(client, auth):
     assert exp["kind"] == "regular"
     assert exp["amount"] == "500000.00"  # decimal string, 2dp from Numeric(12,2)
     assert exp["branch_id"] == branch_id  # defaulted to the actor's branch
-    assert exp["created_by_name"] == "Директор клиники"
+    assert exp["created_by_name"] == "Суперадмин (владелец)"  # `auth` = owner
 
     listed = client.get(_EXPENSES, headers=auth,
                         params={"category": "Аренда", "date_from": "2026-06-01",
                                 "date_to": "2026-06-01"}).json()
     assert listed["total"] >= 1
     row = next(e for e in listed["items"] if e["id"] == exp["id"])
-    assert row["created_by_name"] == "Директор клиники"
+    assert row["created_by_name"] == "Суперадмин (владелец)"
 
     deleted = client.delete(f"{_EXPENSES}/{exp['id']}", headers=auth)
     assert deleted.status_code == 200, deleted.text

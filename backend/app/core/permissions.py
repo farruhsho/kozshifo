@@ -23,6 +23,9 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("branches.read", "branches", "View branches"),
     ("branches.create", "branches", "Create branches"),
     ("branches.update", "branches", "Edit branches"),
+    # Cabinets (consulting rooms) — created only by the Super Admin
+    ("cabinets.read", "branches", "View cabinets (rooms)"),
+    ("cabinets.manage", "branches", "Create / edit cabinets (rooms)"),
     # Patients
     ("patients.read", "patients", "View patients"),
     ("patients.create", "patients", "Register patients"),
@@ -51,6 +54,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Queue
     ("queue.read", "queue", "View queue & TV board"),
     ("queue.manage", "queue", "Call / serve / skip tickets"),
+    ("queue.admin", "queue", "Open the general two-track queue board (front desk / director)"),
     # EMR (Form 025-8 eye exam)
     ("exams.read", "emr", "View eye exams / print Form 025-8"),
     ("exams.write", "emr", "Create / edit eye exams"),
@@ -89,10 +93,6 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Access control / Face ID terminals
     ("access_control.read", "access_control", "View face terminals, enrollment & events"),
     ("access_control.manage", "access_control", "Connect terminals, enroll staff faces"),
-    # Scheduling / appointments
-    ("appointments.read", "scheduling", "View the appointments calendar"),
-    ("appointments.create", "scheduling", "Book appointments"),
-    ("appointments.update", "scheduling", "Reschedule / change appointment status"),
     # Lab / diagnostics referrals
     ("lab.read", "lab", "View lab referrals & results"),
     ("lab.manage", "lab", "Create referrals / enter results"),
@@ -103,6 +103,19 @@ PERMISSIONS: list[tuple[str, str, str]] = [
 ]
 
 ALL_CODES: list[str] = [code for code, _, _ in PERMISSIONS]
+
+# System-administration codes the Director must NOT hold. Per the owner's model
+# the Super Admin (owner) alone creates staff, assigns roles, manages branches
+# and cabinets; the Director sees everything and runs day-to-day operations but
+# «не может изменять системные настройки». The Director is therefore NOT a
+# superuser (see seed.py) and is granted ALL_CODES MINUS this set — keeping
+# read-only visibility of staff/roles/branches but no mutation.
+_DIRECTOR_CANNOT: set[str] = {
+    "users.create", "users.update", "users.delete",
+    "roles.create", "roles.update", "roles.delete",
+    "branches.create", "branches.update",
+    "cabinets.manage",  # Phase 4: cabinets are owner-only
+}
 
 # Starter roles (seed data only). Director is also flagged superuser at the user level.
 #
@@ -118,10 +131,11 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     # level (bypasses checks). Only an account WITH this role may see/manage other
     # Superadmins (see _is_owner in users.py).
     "Superadmin": ALL_CODES,
-    # Director — full clinic admin: every permission and is_superuser too, so it
-    # has the same broad bypass as the owner EXCEPT it is not a Superadmin, so the
-    # owner-visibility rule hides/locks the Superadmin account from the Director.
-    "Director": ALL_CODES,
+    # Director — sees ALL queues/finance/operations/reports/patients and runs
+    # day-to-day work, but cannot change system settings: no staff/role/branch/
+    # cabinet mutation (owner-only). NOT a superuser (no bypass) so these limits
+    # actually bite; the owner-visibility rule still hides the Superadmin account.
+    "Director": [c for c in ALL_CODES if c not in _DIRECTOR_CANNOT],
     "Reception": [
         "patients.read", "patients.create", "patients.update",
         # front desk staples scanned analyses (анализ на ВИЧ перед операцией и т.п.)
@@ -131,25 +145,26 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # + касса by the owner's model). Payroll stays walled off — the front
         # desk must not see staff salaries (see test_finance walled_from_reception).
         "payments.read", "payments.create", "payments.refund",
-        "queue.read", "queue.manage",
+        # queue.admin: the front desk owns the general two-track board; doctors /
+        # diagnosts / treatment rooms only get their personal workstation.
+        "queue.read", "queue.manage", "queue.admin",
         # warehouse + purchasing + stocktake (front desk owns the store)
         "inventory.read", "inventory.manage", "inventory.write_off",
         # expenses (rashod)
         "expenses.read", "expenses.manage",
         # services: front desk maintains the price list — add / edit (per ТЗ).
         "services.read", "services.create", "services.update", "branches.read",
+        "cabinets.read",
         "exams.read", "diagnoses.read",
         # Operations dept (TZ Modul 6): reception schedules referred operations
         # (date/surgeon/price) — the act of billing them onto the visit.
         "operations.read", "operations.schedule", "treatments.read",
         "devices.read", "notifications.read",
-        # scheduling: front desk books & manages the calendar
-        "appointments.read", "appointments.create", "appointments.update",
     ],
     "Cashier": [
         "patients.read", "visits.read",
         "payments.read", "payments.create", "payments.refund",
-        "queue.read", "queue.manage", "services.read",
+        "queue.read", "queue.manage", "queue.admin", "services.read", "cabinets.read",
         "expenses.read", "expenses.manage", "payroll.read",
     ],
     "Doctor": [
@@ -158,14 +173,12 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # queue.manage: a doctor runs their OWN queue — calls the next patient
         # into their cabinet, recalls, returns to waiting (the «Моя очередь·Приём»
         # workstation). Reception keeps the full two-track board.
-        "queue.read", "queue.manage", "services.read",
+        "queue.read", "queue.manage", "services.read", "cabinets.read",
         "exams.read", "exams.write", "diagnoses.read", "diagnoses.manage", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
         "treatments.read", "treatments.prescribe", "treatments.perform",
-        # scheduling: a doctor sees their day and marks arrived/done
-        "appointments.read", "appointments.update",
         # lab: a doctor refers tests and reads results (prototype: doctor nav
         # includes Лаборатория)
         "lab.read", "lab.manage",
@@ -176,12 +189,25 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "patients.read", "visits.read",
         # diagnost attaches УЗИ / scan conclusions to the patient card
         "attachments.read", "attachments.write",
-        "queue.read", "queue.manage",
+        "queue.read", "queue.manage", "cabinets.read",
         "exams.read", "diagnoses.read", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
     ],
     "Warehouse": [
         "inventory.read", "inventory.manage", "inventory.write_off",
         "branches.read", "notifications.read",
+    ],
+    # Лечебный кабинет (процедурная медсестра) — runs ONLY the treatment track
+    # «Мои процедуры» (/treatment-queue, gated treatments.perform): calls the
+    # next Л-… patient into the procedure room, dispenses/completes treatments,
+    # reads the patient card + scans. NO general queue (no queue.admin), NO
+    # personal doctor/diagnost workstation (no device_results.create), NO
+    # clinical authoring (no exams.write) and no money.
+    "TreatmentRoom": [
+        "patients.read", "visits.read",
+        "attachments.read",
+        "queue.read", "queue.manage", "cabinets.read",
+        "treatments.read", "treatments.perform",
+        "diagnoses.read",
     ],
 }

@@ -16,6 +16,7 @@ from app.core.database import SessionLocal
 from app.core.permissions import PERMISSIONS, ROLE_TEMPLATES
 from app.core.security import hash_password
 from app.models.branch import Branch
+from app.models.cabinet import Cabinet
 from app.models.catalog import Service, ServiceCategory
 from app.models.device import Device
 from app.models.diagnosis import Diagnosis
@@ -80,16 +81,22 @@ def _seed_director(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
             email=settings.seed_director_email,
             full_name="Директор клиники",
             hashed_password=hash_password(settings.seed_director_password),
-            is_superuser=True,
+            # NOT a superuser: the Director sees everything but cannot change
+            # system settings — only the Super Admin (owner) is is_superuser.
+            is_superuser=False,
             branch_id=branch.id,
         )
         director.roles = [roles["Director"]]
         db.add(director)
         db.flush()
-    elif settings.seed_demo_staff:
-        # Keep the director password in sync with the configured value so the
-        # quick-login «Директор» button always works (resets a randomized one).
-        director.hashed_password = hash_password(settings.seed_director_password)
+    else:
+        # Enforce the policy on every startup: an existing director (incl. one
+        # created before this change) must NOT retain owner-tier bypass.
+        director.is_superuser = False
+        director.roles = [roles["Director"]]
+        if settings.seed_demo_staff:
+            # Keep the password in sync so the quick-login «Директор» button works.
+            director.hashed_password = hash_password(settings.seed_director_password)
         db.flush()
 
 
@@ -109,6 +116,7 @@ _DEMO_STAFF: list[tuple[str, str, str, str, bool]] = [
     ("vrach@kozshifo.uz", "Доктор Исмоилов А.А.", "Vrach!2026", "Doctor", False),
     ("reception@kozshifo.uz", "Регистратор Юлдашева Н.", "Reception!2026", "Reception", False),
     ("diagnost@kozshifo.uz", "Диагност Рахимова М.", "Diagnost!2026", "Diagnost", False),
+    ("treatment@kozshifo.uz", "Процедурная м/с Ким О.", "Treatment!2026", "TreatmentRoom", False),
     ("kassa@kozshifo.uz", "Кассир Каримов Ш.", "Kassa!2026", "Cashier", False),
     ("sklad@kozshifo.uz", "Завсклад Турсунов Б.", "Sklad!2026", "Warehouse", False),
 ]
@@ -132,6 +140,28 @@ def _seed_demo_staff(db: Session, branch: Branch, roles: dict[str, Role]) -> Non
         user.roles = [roles[role_name]]
         if user.branch_id is None:
             user.branch_id = branch.id
+    db.flush()
+
+
+# Default consulting rooms (Кабинеты) for the main branch — the Super Admin can
+# add/rename more at runtime. Idempotent by (branch, name).
+_DEFAULT_CABINETS: list[tuple[str, str | None]] = [
+    ("Кабинет №1", None),
+    ("Кабинет №2", None),
+    ("Кабинет УЗИ", "УЗИ"),
+    ("Кабинет ЭКГ", "ЭКГ"),
+    ("Процедурный кабинет", "процедурный"),
+    ("Операционная №1", "операционная"),
+]
+
+
+def _seed_cabinets(db: Session, branch: Branch) -> None:
+    for name, kind in _DEFAULT_CABINETS:
+        exists = db.execute(
+            select(Cabinet).where(Cabinet.branch_id == branch.id, Cabinet.name == name)
+        ).scalar_one_or_none()
+        if exists is None:
+            db.add(Cabinet(branch_id=branch.id, name=name, kind=kind))
     db.flush()
 
 
@@ -301,6 +331,7 @@ def run_seed() -> None:
         branch = _seed_branch(db)
         _seed_director(db, branch, roles)
         _seed_demo_staff(db, branch, roles)
+        _seed_cabinets(db, branch)
         _seed_services(db)
         _seed_devices(db, branch)
         _seed_inventory(db)

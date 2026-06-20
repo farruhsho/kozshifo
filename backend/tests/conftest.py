@@ -17,6 +17,8 @@ os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["SEED_ON_STARTUP"] = "true"
 
 API = "/api/v1"
+SUPERADMIN_EMAIL = "superadmin@kozshifo.uz"
+SUPERADMIN_PASSWORD = "Superadmin!2026"
 DIRECTOR_EMAIL = "director@kozshifo.uz"
 DIRECTOR_PASSWORD = "Director!2026"
 
@@ -38,16 +40,35 @@ def client():
             pass
 
 
-@pytest.fixture(scope="session")
-def director_token(client) -> str:
+def _login_token(client, email: str, password: str) -> str:
     resp = client.post(
         f"{API}/auth/login",
-        data={"username": DIRECTOR_EMAIL, "password": DIRECTOR_PASSWORD},
+        data={"username": email, "password": password},
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]
 
 
+@pytest.fixture(scope="session")
+def superadmin_token(client) -> str:
+    return _login_token(client, SUPERADMIN_EMAIL, SUPERADMIN_PASSWORD)
+
+
+@pytest.fixture(scope="session")
+def director_token(client) -> str:
+    return _login_token(client, DIRECTOR_EMAIL, DIRECTOR_PASSWORD)
+
+
 @pytest.fixture
-def auth(director_token) -> dict[str, str]:
+def auth(superadmin_token) -> dict[str, str]:
+    """The god account (Super Admin / is_superuser) used for generic test setup —
+    creating staff, branches, etc. The Director can no longer do those (see
+    test_rbac_owner_visibility), so privileged setup must use the owner."""
+    return {"Authorization": f"Bearer {superadmin_token}"}
+
+
+@pytest.fixture
+def director_auth(director_token) -> dict[str, str]:
+    """Director: sees everything, runs operations, but cannot change system
+    settings (no staff/role/branch/cabinet mutation) and is NOT a superuser."""
     return {"Authorization": f"Bearer {director_token}"}

@@ -12,9 +12,10 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.security import hash_password
+from app.core.visibility import owner_user_ids
 from app.models.catalog import Service
 from app.models.diagnosis import Diagnosis
-from app.models.rbac import Role, user_roles
+from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.common import Page
 from app.schemas.user import UserCreate, UserOut, UserUpdate
@@ -63,9 +64,9 @@ def _default_prefix(full_name: str) -> str | None:
 
 
 def _is_owner(user: User) -> bool:
-    """Owner tier = the Superadmin role. The Director is also is_superuser (full
-    permission bypass) but is NOT an owner, so the rules below still hide and
-    protect the Superadmin account from the Director and everyone below."""
+    """Owner tier = the Superadmin role (the only is_superuser account). The
+    Director is a non-owner, so the rules below still hide and protect the
+    Superadmin account from the Director and everyone below."""
     return any(r.name == "Superadmin" for r in user.roles)
 
 
@@ -99,11 +100,7 @@ def list_users(
     count_stmt = select(func.count()).select_from(User)
     if not _is_owner(actor):
         # The Director (and below) never see the owner/Superadmin account(s).
-        owner_ids = (
-            select(user_roles.c.user_id)
-            .join(Role, Role.id == user_roles.c.role_id)
-            .where(Role.name == "Superadmin")
-        )
+        owner_ids = owner_user_ids()
         stmt = stmt.where(User.id.not_in(owner_ids))
         count_stmt = count_stmt.where(User.id.not_in(owner_ids))
     total = db.execute(count_stmt).scalar_one()

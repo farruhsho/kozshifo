@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from tests.conftest import API, DIRECTOR_EMAIL
+from tests.conftest import API, SUPERADMIN_EMAIL
 
 
 def _park_other_waiting(client, auth, branch_id, track, keep_id=None):
@@ -27,8 +27,9 @@ def test_health(client):
 
 
 def test_me_has_superuser_and_permissions(client, auth):
+    # `auth` is the Super Admin (owner) — the only is_superuser account.
     me = client.get(f"{API}/auth/me", headers=auth).json()
-    assert me["email"] == DIRECTOR_EMAIL
+    assert me["email"] == SUPERADMIN_EMAIL
     assert me["is_superuser"] is True
     assert "patients.create" in me["permissions"]
 

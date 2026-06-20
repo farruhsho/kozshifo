@@ -22,6 +22,7 @@ from app.core.deps import CurrentUser, require_any_permission, require_permissio
 from app.core.flow import advance_flow, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, on_hand, write_off_fefo
+from app.core.visibility import owner_user_ids
 from app.features.visits import _make_item, _recompute_total
 from app.models.catalog import Service
 from app.models.finance import Expense
@@ -200,7 +201,9 @@ def list_surgeons(db: Annotated[Session, Depends(get_db)]) -> list[User]:
     without identity-module (users.read) access; external surgeons are flagged so
     the UI can mark «приезжий»."""
     users = db.execute(
-        select(User).where(User.is_active.is_(True)).order_by(User.full_name)
+        select(User)
+        .where(User.is_active.is_(True), User.id.not_in(owner_user_ids()))
+        .order_by(User.full_name)
     ).scalars().all()
     return [
         u for u in users

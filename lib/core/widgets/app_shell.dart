@@ -16,8 +16,6 @@ import 'koz_widgets.dart';
 const Map<String, String> _navIconKey = {
   '/dashboard': 'dashboard',
   '/reception': 'reception',
-  '/worklist': 'worklist',
-  '/scheduling': 'schedule',
   '/queue': 'queue',
   '/patients': 'patients',
   '/analytics': 'analytics',
@@ -72,22 +70,6 @@ const kAppDestinations = <AppDestination>[
     '/reception',
     permissions: ['visits.create'],
   ),
-  // Doctor's «Приём сегодня» list — gated on exams.write so a doctor lands here
-  // (their first allowed destination), not on Scheduling.
-  AppDestination(
-    Icons.assignment_outlined,
-    Icons.assignment,
-    'Приём',
-    '/worklist',
-    permissions: ['exams.write'],
-  ),
-  AppDestination(
-    Icons.calendar_month_outlined,
-    Icons.calendar_month,
-    'Расписание',
-    '/scheduling',
-    permissions: ['appointments.read'],
-  ),
   AppDestination(
     Icons.payments_outlined,
     Icons.payments,
@@ -114,12 +96,14 @@ const kAppDestinations = <AppDestination>[
     '/my-queue',
     permissions: ['device_results.create'],
   ),
+  // Общая двухдорожечная очередь — только фронт-деск/директор (queue.admin).
+  // Врач/диагност/процедурная работают через своё личное место, а не здесь.
   AppDestination(
     Icons.confirmation_number_outlined,
     Icons.confirmation_number,
     'Очередь',
     '/queue',
-    permissions: ['queue.read'],
+    permissions: ['queue.admin'],
   ),
   // Процедурный кабинет: дорожка «Лечение» (Л-талоны). Виден тем, кто
   // проводит лечение (treatments.perform) — врач/процедурная сестра.
@@ -214,15 +198,17 @@ const kAppDestinations = <AppDestination>[
     'Услуги',
     '/services',
     // Reception (services.create) manages the catalog from its own menu;
-    // director (superuser) sees it too. Diagnost (services.read only) doesn't.
+    // director keeps services.create too. Diagnost (services.read only) doesn't.
     permissions: ['services.create'],
   ),
+  // Системное администрирование (сотрудники, филиалы, справочники) —
+  // только Супер Админ (users.create). Директор сюда не заходит.
   AppDestination(
     Icons.settings_outlined,
     Icons.settings,
     'Администрирование',
     '/admin',
-    permissions: ['users.read'],
+    permissions: ['users.create'],
   ),
 ];
 
@@ -243,6 +229,7 @@ String _roleLabel(List<String> roles) {
     'Reception': 'Регистратура',
     'Doctor': 'Врач',
     'Diagnost': 'Диагност',
+    'TreatmentRoom': 'Лечебный кабинет',
     'Cashier': 'Касса',
     'Warehouse': 'Склад',
   };

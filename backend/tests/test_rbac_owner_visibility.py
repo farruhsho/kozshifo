@@ -20,34 +20,38 @@ def _superadmin_id(client, owner_headers) -> str:
     return next(u["id"] for u in rows if u["email"] == SUPERADMIN_EMAIL)
 
 
-def test_director_cannot_see_or_manage_superadmin(client, auth):
+def test_director_cannot_see_or_manage_superadmin(client, director_auth):
     owner = _login(client, SUPERADMIN_EMAIL, "Superadmin!2026")
     su_id = _superadmin_id(client, owner)
 
-    # Director's user list hides the owner but shows ordinary staff.
-    rows = client.get(f"{API}/users", headers=auth, params={"limit": 200}).json()["items"]
+    # Director keeps read-only staff visibility: the owner is filtered out but
+    # ordinary staff show.
+    rows = client.get(f"{API}/users", headers=director_auth, params={"limit": 200}).json()["items"]
     assert all(u["email"] != SUPERADMIN_EMAIL for u in rows)
     assert any(u["email"] == RECEPTION_EMAIL for u in rows)
 
-    # The owner's existence is not even leaked (404, not 403).
-    assert client.get(f"{API}/users/{su_id}", headers=auth).status_code == 404
-    assert client.patch(f"{API}/users/{su_id}", headers=auth,
-                        json={"full_name": "hacked"}).status_code == 404
+    # The owner's existence is not even leaked on read (404, not 403).
+    assert client.get(f"{API}/users/{su_id}", headers=director_auth).status_code == 404
+    # The Director cannot edit ANY user now (lost users.update); the owner stays
+    # safe either way (403 missing-perm or 404 hidden).
+    assert client.patch(f"{API}/users/{su_id}", headers=director_auth,
+                        json={"full_name": "hacked"}).status_code in (403, 404)
 
     # The owner can see the owner.
     assert client.get(f"{API}/users/{su_id}", headers=owner).status_code == 200
 
 
-def test_only_owner_can_grant_superadmin_or_superuser(client, auth):
+def test_only_owner_can_grant_superadmin_or_superuser(client, director_auth):
     owner = _login(client, SUPERADMIN_EMAIL, "Superadmin!2026")
 
-    # Director may not create an owner-tier account (by role or by superuser flag).
-    by_role = client.post(f"{API}/users", headers=auth, json={
+    # Director may not create users at all now (no users.create) — so it
+    # certainly cannot mint an owner-tier account (by role or by superuser flag).
+    by_role = client.post(f"{API}/users", headers=director_auth, json={
         "email": "wannabe.super@kozshifo.uz", "full_name": "X", "password": "Passw0rd!",
         "role_names": ["Superadmin"],
     })
     assert by_role.status_code == 403, by_role.text
-    by_flag = client.post(f"{API}/users", headers=auth, json={
+    by_flag = client.post(f"{API}/users", headers=director_auth, json={
         "email": "wannabe.god@kozshifo.uz", "full_name": "Y", "password": "Passw0rd!",
         "is_superuser": True,
     })

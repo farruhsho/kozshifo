@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
+from app.core.visibility import owner_user_ids
 from app.models.catalog import Service, ServiceCategory
 from app.models.user import User
 from app.schemas.catalog import (
@@ -92,8 +93,11 @@ def assignable_doctors(
     """Staff selectable as a service's eligible doctors — for the service-form
     picker. Guarded by services.read (NOT users.read) so reception, who owns
     service CRUD, can list them without identity-module access. Inactive staff
-    are included so an already-linked-but-deactivated doctor stays removable."""
-    rows = db.execute(select(User).order_by(User.full_name)).scalars().all()
+    are included so an already-linked-but-deactivated doctor stays removable.
+    The Super Admin (owner) is filtered out — a ghost, never a service doctor."""
+    rows = db.execute(
+        select(User).where(User.id.not_in(owner_user_ids())).order_by(User.full_name)
+    ).scalars().all()
     return [
         AssignableDoctorOut(
             id=u.id,

@@ -117,15 +117,17 @@ _DIRECTOR_CANNOT: set[str] = {
     "cabinets.manage",  # Phase 4: cabinets are owner-only
 }
 
-# Starter roles (seed data only). Director is also flagged superuser at the user level.
+# Starter roles (seed data only).
 #
-# THE 3 PRIMARY ROLES a small clinic logs in as are Director / Reception / Doctor.
-# Per the owner's model, the front desk (Reception) ALSO runs the till and the
-# warehouse — one person registers, takes payment, does purchasing/stocktake and
-# prints documents. Money REVERSALS (payments.refund), clinical authoring
-# (exams.write, operations.*), and any delete stay OUT of Reception.
-# Cashier / Warehouse below remain as optional narrower roles the director can
-# assign when a larger clinic splits these duties (RBAC is fully dynamic).
+# THE PRIMARY ROLES a small clinic logs in as are Super Admin / Director /
+# Administrator / Doctor. Per the owner's model the Super Admin (owner) alone
+# changes system settings; the front office is ONE seat — the **Administrator**
+# folds reception + касса (till) + склад (warehouse) into a single role: one
+# person registers, takes payment & refunds, runs purchasing/stocktake, prints
+# documents and watches finance analytics / reports. Clinical authoring
+# (exams.write, operations prescribe/perform) stays OUT. System administration
+# (users/roles/branches/cabinets mutation) stays owner-only — even the Director
+# only has read-only visibility there.
 ROLE_TEMPLATES: dict[str, list[str]] = {
     # Superadmin — owner tier: every permission AND is_superuser at the user
     # level (bypasses checks). Only an account WITH this role may see/manage other
@@ -136,36 +138,33 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     # cabinet mutation (owner-only). NOT a superuser (no bypass) so these limits
     # actually bite; the owner-visibility rule still hides the Superadmin account.
     "Director": [c for c in ALL_CODES if c not in _DIRECTOR_CANNOT],
-    "Reception": [
+    # Administrator — the merged front office (ресепшен + касса + склад) for one
+    # branch, plus finance analytics & reports. Everything EXCEPT clinical
+    # authoring and owner-only system administration.
+    "Administrator": [
         "patients.read", "patients.create", "patients.update",
-        # front desk staples scanned analyses (анализ на ВИЧ перед операцией и т.п.)
+        # scanned analyses (УЗИ-заключения, анализ на ВИЧ перед операцией и т.п.)
         "attachments.read", "attachments.write",
         "visits.read", "visits.create", "visits.update",
-        # FULL till: front desk takes payments AND refunds (Reception = ресепшен
-        # + касса by the owner's model). Payroll stays walled off — the front
-        # desk must not see staff salaries (see test_finance walled_from_reception).
+        # FULL till incl. refunds (касса)
         "payments.read", "payments.create", "payments.refund",
-        # queue.admin: the front desk owns the general two-track board; doctors /
-        # diagnosts / treatment rooms only get their personal workstation.
+        # owns the general two-track queue board
         "queue.read", "queue.manage", "queue.admin",
-        # warehouse + purchasing + stocktake (front desk owns the store)
+        # warehouse + purchasing + stocktake (склад)
         "inventory.read", "inventory.manage", "inventory.write_off",
-        # expenses (rashod)
-        "expenses.read", "expenses.manage",
-        # services: front desk maintains the price list — add / edit (per ТЗ).
-        "services.read", "services.create", "services.update", "branches.read",
-        "cabinets.read",
+        # expenses + payroll visibility (runs клиника finances)
+        "expenses.read", "expenses.manage", "payroll.read",
+        # price list — add / edit (Услуги)
+        "services.read", "services.create", "services.update",
+        "branches.read", "cabinets.read",
         "exams.read", "diagnoses.read",
-        # Operations dept (TZ Modul 6): reception schedules referred operations
-        # (date/surgeon/price) — the act of billing them onto the visit.
+        # Operations dept (TZ Modul 6): schedule referred operations (date/surgeon/price)
         "operations.read", "operations.schedule", "treatments.read",
         "devices.read", "notifications.read",
-    ],
-    "Cashier": [
-        "patients.read", "visits.read",
-        "payments.read", "payments.create", "payments.refund",
-        "queue.read", "queue.manage", "queue.admin", "services.read", "cabinets.read",
-        "expenses.read", "expenses.manage", "payroll.read",
+        # management views: finance analytics + director-style reports + staff
+        # attendance (Аналитика / Отчёты / Сотрудники). View-only — no system
+        # administration (users/roles/branches/cabinets stay owner-only).
+        "dashboard.view", "reports.view", "attendance.read",
     ],
     "Doctor": [
         "patients.read", "visits.read", "visits.update",
@@ -193,10 +192,6 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "queue.read", "queue.manage", "cabinets.read",
         "exams.read", "diagnoses.read", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
-    ],
-    "Warehouse": [
-        "inventory.read", "inventory.manage", "inventory.write_off",
-        "branches.read", "notifications.read",
     ],
     # Лечебный кабинет (процедурная медсестра) — runs ONLY the treatment track
     # «Мои процедуры» (/treatment-queue, gated treatments.perform): calls the

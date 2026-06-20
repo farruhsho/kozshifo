@@ -29,7 +29,13 @@ import '../domain/queue_ticket.dart';
 /// Кабинет для вызова подставляется из профиля (User.cabinet), врач забирает
 /// в первую очередь направленные лично ему талоны (for_user_id).
 class QueueScreen extends ConsumerStatefulWidget {
-  const QueueScreen({super.key, this.personal = false, this.track});
+  const QueueScreen({
+    super.key,
+    this.personal = false,
+    this.track,
+    this.embedded = false,
+    this.ownOnly = false,
+  });
 
   /// Личное рабочее место (одна дорожка) вместо двухдорожечного табло ресепшена.
   final bool personal;
@@ -37,6 +43,13 @@ class QueueScreen extends ConsumerStatefulWidget {
   /// Явная дорожка ('doctor' | 'diagnostic'); в личном режиме при null
   /// выводится из прав пользователя.
   final String? track;
+
+  /// Встроенный режим (внутри вкладок «Приём»): без собственного AppBar.
+  final bool embedded;
+
+  /// Показывать только СВОИ талоны (assigned_user_id == я) + общий
+  /// нераспределённый пул (null) — «очередь, записанная на этого врача».
+  final bool ownOnly;
 
   @override
   ConsumerState<QueueScreen> createState() => _QueueScreenState();
@@ -320,7 +333,11 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
       child: Focus(
         focusNode: _hotkeys,
         child: Scaffold(
-          appBar: AppBar(
+          // Встроенный режим (вкладки «Приём») прячет свой AppBar, но Scaffold
+          // оставляем — он нужен для ScaffoldMessenger (snackbar'ы из _act).
+          appBar: widget.embedded
+              ? null
+              : AppBar(
             title: Text(screenTitle),
             actions: [
               IconButton(
@@ -380,7 +397,19 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                 child: AsyncValueWidget<List<QueueTicket>>(
                   value: tickets,
                   onRetry: () => ref.invalidate(queueListProvider(branchId)),
-                  builder: (items) {
+                  builder: (allItems) {
+                    // «Только мои»: очередь, записанная на этого врача — его
+                    // талоны (assigned == я) + общий нераспределённый пул (null).
+                    final me = ref.read(authControllerProvider).user;
+                    final items = widget.ownOnly
+                        ? allItems
+                              .where(
+                                (t) =>
+                                    t.assignedUserId == null ||
+                                    t.assignedUserId == me?.id,
+                              )
+                              .toList()
+                        : allItems;
                     // Личный режим «Приём»: на широком экране — 2 колонки (слева
                     // очередь+«Вызвать следующего», справа карточка ТЕКУЩЕГО —
                     // вызванного / на приёме — пациента: данные, файлы, переход в

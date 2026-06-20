@@ -356,7 +356,7 @@ def test_clinical_rbac(client, auth):
     created = client.post(
         f"{API}/users", headers=auth,
         json={"email": "op.cashier@kozshifo.uz", "full_name": "Кассир Операций",
-              "password": "Kassa!2026", "role_names": ["Cashier"]},
+              "password": "Kassa!2026", "role_names": ["Administrator"]},
     )
     assert created.status_code == 201, created.text
     token = client.post(

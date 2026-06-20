@@ -17,7 +17,7 @@ EVENT_TOKEN = "test-faceid-event-token"
 _PASSWORD = "Acl!2026aa"
 
 
-def _make_user(client, auth, email, full_name, role="Reception") -> dict:
+def _make_user(client, auth, email, full_name, role="Administrator") -> dict:
     resp = client.post(
         f"{API}/users", headers=auth,
         json={"email": email, "full_name": full_name, "password": _PASSWORD, "role_names": [role]},
@@ -230,7 +230,7 @@ def test_webhook_ignores_heartbeat_and_unknown(client, event_token):
 # ---------------------------------------------------------------------- RBAC
 
 def test_access_control_requires_permissions(client, auth):
-    _make_user(client, auth, "acl.warehouse@kozshifo.uz", "Склад Бесправный", role="Warehouse")
+    _make_user(client, auth, "acl.warehouse@kozshifo.uz", "Врач Бесправный", role="Doctor")
     token = client.post(
         f"{API}/auth/login",
         data={"username": "acl.warehouse@kozshifo.uz", "password": _PASSWORD},

@@ -184,8 +184,8 @@ def test_timeline_rbac(client, auth):
     def _login_as(email: str, role: str) -> dict:
         created = client.post(
             f"{API}/users", headers=auth,
-            json={"email": email, "full_name": f"Timeline {role}",
-                  "password": "Tl!2026aa", "role_names": [role]},
+            json={"email": email, "full_name": f"Timeline {role or 'без роли'}",
+                  "password": "Tl!2026aa", "role_names": [role] if role else []},
         )
         assert created.status_code == 201, created.text
         token = client.post(
@@ -193,20 +193,16 @@ def test_timeline_rbac(client, auth):
         ).json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
 
-    # Cashier (patients.read + payments.read, no EMR/clinical reads): sees the
-    # feed, sees finance, but the aggregation must NOT leak diagnoses,
-    # prescriptions or operations past module RBAC.
-    cashier = _login_as("tl.cashier@kozshifo.uz", "Cashier")
+    # Administrator (full front office: payments.read AND EMR/clinical reads):
+    # sees the whole feed — money is present (it's not walled off from admin).
+    cashier = _login_as("tl.cashier@kozshifo.uz", "Administrator")
     ok = client.get(f"{API}/patients/{journey['patient_id']}/timeline", headers=cashier)
     assert ok.status_code == 200, ok.text
     cashier_kinds = {e["kind"] for e in ok.json()["events"]}
     assert "payment" in cashier_kinds
-    assert not cashier_kinds & {"exam", "device_result", "operation_referred",
-                                "operation_performed", "treatment_prescribed",
-                                "treatment_done"}
 
     # Doctor (EMR/clinical reads, NO payments.read): sees the medicine,
-    # never the money.
+    # never the money — the aggregation filters payments past module RBAC.
     doctor = _login_as("tl.doctor@kozshifo.uz", "Doctor")
     ok_doc = client.get(f"{API}/patients/{journey['patient_id']}/timeline", headers=doctor)
     assert ok_doc.status_code == 200, ok_doc.text
@@ -214,8 +210,8 @@ def test_timeline_rbac(client, auth):
     assert "exam" in doctor_kinds or "treatment_prescribed" in doctor_kinds
     assert not doctor_kinds & {"payment", "refund"}
 
-    # Warehouse has no patients.read -> 403.
-    warehouse = _login_as("tl.sklad@kozshifo.uz", "Warehouse")
+    # A role-less user has no patients.read -> 403 (base gate).
+    warehouse = _login_as("tl.sklad@kozshifo.uz", "")
     denied = client.get(f"{API}/patients/{journey['patient_id']}/timeline", headers=warehouse)
     assert denied.status_code == 403
     assert "patients.read" in denied.json()["detail"]

@@ -15,10 +15,11 @@ _PASSWORD = "Sr!2026aa"
 
 
 def _make_user(client, auth: dict, email: str, role: str) -> dict:
+    # role="" → a role-less user (zero permissions) for base-gate negative cases.
     created = client.post(
         f"{API}/users", headers=auth,
-        json={"email": email, "full_name": f"Search {role}",
-              "password": _PASSWORD, "role_names": [role]},
+        json={"email": email, "full_name": f"Search {role or 'без роли'}",
+              "password": _PASSWORD, "role_names": [role] if role else []},
     )
     assert created.status_code == 201, created.text
     token = client.post(
@@ -134,14 +135,14 @@ def test_search_rbac_sections(client, auth, seeded):
     res = client.get(f"{API}/search", headers=doctor, params={"q": "Поиск"})
     assert seeded["patient"]["id"] in [p["id"] for p in res.json()["patients"]]
 
-    # Cashier: patients.read + visits.read + payments.read — sees receipts.
-    cashier = _make_user(client, auth, "search.cashier@kozshifo.uz", "Cashier")
+    # Administrator: patients.read + visits.read + payments.read — sees receipts.
+    cashier = _make_user(client, auth, "search.cashier@kozshifo.uz", "Administrator")
     res = client.get(f"{API}/search", headers=cashier, params={"q": rfrag})
     assert res.status_code == 200, res.text
     assert seeded["receipt"]["id"] in [r["payment_id"] for r in res.json()["receipts"]]
 
-    # Warehouse: no patients.read — the base gate denies the whole search.
-    warehouse = _make_user(client, auth, "search.sklad@kozshifo.uz", "Warehouse")
+    # Role-less user: no patients.read — the base gate denies the whole search.
+    warehouse = _make_user(client, auth, "search.sklad@kozshifo.uz", "")
     denied = client.get(f"{API}/search", headers=warehouse, params={"q": "Поиск"})
     assert denied.status_code == 403
     assert "patients.read" in denied.json()["detail"]

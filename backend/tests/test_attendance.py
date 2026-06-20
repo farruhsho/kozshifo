@@ -17,7 +17,7 @@ PUNCH_KEY = "test-faceid-key"
 _PASSWORD = "Att!2026aa"
 
 
-def _make_user(client, auth, email: str, full_name: str, role: str = "Reception") -> dict:
+def _make_user(client, auth, email: str, full_name: str, role: str = "Administrator") -> dict:
     created = client.post(
         f"{API}/users", headers=auth,
         json={"email": email, "full_name": full_name,
@@ -76,9 +76,9 @@ def test_status_roster_present_and_integration_flag(client, auth, monkeypatch):
 
 
 def test_status_requires_attendance_read(client):
-    # Reception has no attendance.read → 403 (it's a director control screen).
+    # The doctor has no attendance.read → 403 (it's an admin/director screen).
     resp = client.post(f"{API}/auth/login",
-                       data={"username": "reception@kozshifo.uz", "password": "Reception!2026"})
+                       data={"username": "vrach@kozshifo.uz", "password": "Vrach!2026"})
     assert resp.status_code == 200, resp.text
     token = resp.json()["access_token"]
     denied = client.get(f"{API}/attendance/status",
@@ -178,7 +178,7 @@ def test_punch_auto_toggles_in_then_out(client, auth, faceid_key):
 
 def test_manual_event_requires_manage_permission(client, auth):
     target = _make_user(client, auth, "att.target@kozshifo.uz", "Цель Табеля")
-    _make_user(client, auth, "att.warehouse@kozshifo.uz", "Склад Бесправный", role="Warehouse")
+    _make_user(client, auth, "att.warehouse@kozshifo.uz", "Врач Бесправный", role="Doctor")
     token = client.post(
         f"{API}/auth/login",
         data={"username": "att.warehouse@kozshifo.uz", "password": _PASSWORD},

@@ -16,10 +16,11 @@ def _make_patient(client, auth, *, last_name="Файл") -> tuple[str, str]:
 
 
 def _login(client, auth, *, email: str, role: str) -> dict[str, str]:
+    # role="" → a role-less user (zero permissions) for negative-gate cases.
     created = client.post(
         f"{API}/users", headers=auth,
-        json={"email": email, "full_name": f"Вложение {role}",
-              "password": "Files!2026", "role_names": [role]},
+        json={"email": email, "full_name": f"Вложение {role or 'без роли'}",
+              "password": "Files!2026", "role_names": [role] if role else []},
     )
     assert created.status_code == 201, created.text
     token = client.post(
@@ -102,8 +103,8 @@ def test_upload_rbac_diagnost_yes_cashier_no(client, auth):
     )
     assert ok.status_code == 201, ok.text
 
-    # Cashier lacks attachments.write → 403.
-    cashier = _login(client, auth, email="att.cashier@kozshifo.uz", role="Cashier")
+    # A role-less user lacks attachments.write → 403.
+    cashier = _login(client, auth, email="att.cashier@kozshifo.uz", role="")
     denied = client.post(
         f"{API}/patients/{patient_id}/attachments", headers=cashier,
         files={"file": ("uzi.pdf", _PDF_BYTES, "application/pdf")},

@@ -22,8 +22,8 @@ def test_revenue_trend_shape(client, auth):
 def test_revenue_trend_requires_dashboard_view(client, auth):
     created = client.post(
         f"{API}/users", headers=auth,
-        json={"email": "trend.reception@kozshifo.uz", "full_name": "Тренд Ресепшен",
-              "password": "Passw0rd!", "role_names": ["Reception"]},
+        json={"email": "trend.reception@kozshifo.uz", "full_name": "Тренд Врач",
+              "password": "Passw0rd!", "role_names": ["Doctor"]},
     )
     assert created.status_code == 201, created.text
     token = client.post(

@@ -167,8 +167,8 @@ def test_demo_staff_seeded_and_can_login(client):
     for email, password, perm in (
         ("vrach@kozshifo.uz", "Vrach!2026", "exams.write"),
         ("reception@kozshifo.uz", "Reception!2026", "visits.create"),
-        ("kassa@kozshifo.uz", "Kassa!2026", "payments.create"),
-        ("sklad@kozshifo.uz", "Sklad!2026", "inventory.manage"),
+        ("diagnost@kozshifo.uz", "Diagnost!2026", "device_results.create"),
+        ("treatment@kozshifo.uz", "Treatment!2026", "treatments.perform"),
     ):
         resp = client.post(f"{API}/auth/login",
                            data={"username": email, "password": password})

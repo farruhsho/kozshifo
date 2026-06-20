@@ -111,11 +111,11 @@ def test_stale_open_visit_insight(client, auth):
 
 
 def test_insights_rbac(client, auth):
-    # Warehouse role has no dashboard.view -> 403.
+    # Doctor role has no dashboard.view -> 403.
     created = client.post(
         f"{API}/users", headers=auth,
-        json={"email": "insights.wh@kozshifo.uz", "full_name": "Тест Склад",
-              "password": "Wh!2026ins", "role_names": ["Warehouse"]},
+        json={"email": "insights.wh@kozshifo.uz", "full_name": "Тест Врач",
+              "password": "Wh!2026ins", "role_names": ["Doctor"]},
     )
     assert created.status_code == 201, created.text
     token = client.post(

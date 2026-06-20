@@ -60,24 +60,28 @@ def _paid_visit(client, auth, *, doctor_id: str | None = None, method: str = "ca
     return visit, pay.json()["payment"]
 
 
-def test_monthly_payroll_total_walled_from_reception(client, auth):
+def test_monthly_payroll_total_visible_to_admin_walled_from_doctor(client, auth):
     import datetime
 
     month = datetime.date.today().isoformat()[:7]
-    # Director (superuser) sees the isolated payroll figure...
+    # The owner sees the payroll figure...
     dir_report = client.get(f"{_REPORTS}/monthly", headers=auth, params={"month": month})
     assert dir_report.status_code == 200, dir_report.text
     assert dir_report.json()["payroll_total"] is not None
 
-    # ...Reception runs the till (expenses.read) but has NO payroll.read, so the
-    # monthly cash report must NOT leak salary spend — payroll_total is null.
+    # ...and so does the Administrator: the merged front office now runs клиника
+    # finances (payroll.read), so the monthly report exposes salary spend to it.
     reception = _login(client, "reception@kozshifo.uz", "Reception!2026")
     rec_report = client.get(f"{_REPORTS}/monthly", headers=reception, params={"month": month})
     assert rec_report.status_code == 200, rec_report.text
     body = rec_report.json()
-    assert body["payroll_total"] is None
-    # The rest of the cash report still works for Reception.
+    assert body["payroll_total"] is not None
     assert "income_total" in body and "expense_total" in body and "net" in body
+
+    # A doctor has no expenses.read → cannot open the monthly cash report at all.
+    doctor = _login(client, "vrach@kozshifo.uz", "Vrach!2026")
+    denied = client.get(f"{_REPORTS}/monthly", headers=doctor, params={"month": month})
+    assert denied.status_code == 403
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -99,9 +103,9 @@ def test_payments_and_reports_are_branch_isolated(client, auth):
     assert branch_b.status_code == 201, branch_b.text
     branch_b = branch_b.json()
     made = client.post(f"{API}/users", headers=auth, json={
-        "email": "kassa.iso.b@kozshifo.uz", "full_name": "Кассир B",
+        "email": "kassa.iso.b@kozshifo.uz", "full_name": "Админ B",
         "password": "KassaB!2026", "branch_id": branch_b["id"],
-        "role_names": ["Cashier"],
+        "role_names": ["Administrator"],
     })
     assert made.status_code == 201, made.text
     cashier_b = _login(client, "kassa.iso.b@kozshifo.uz", "KassaB!2026")
@@ -115,8 +119,8 @@ def test_payments_and_reports_are_branch_isolated(client, auth):
                          params={"branch_id": main_id}).json()["items"]
     assert escaped == []
 
-    # The seeded MAIN cashier DOES see the MAIN receipt (isolation isn't a blanket deny).
-    kassa = _login(client, "kassa@kozshifo.uz", "Kassa!2026")
+    # The seeded MAIN administrator DOES see the MAIN receipt (isolation isn't a blanket deny).
+    kassa = _login(client, "reception@kozshifo.uz", "Reception!2026")
     mine = client.get(f"{API}/payments", headers=kassa).json()["items"]
     assert payment["id"] in [p["id"] for p in mine]
 
@@ -310,8 +314,8 @@ def test_payroll_payout_flow(client, auth):
     assert client.post(f"{_PAYROLL}/void", headers=auth,
                        json={"user_id": doctor["id"], "month": "2019-01"}).status_code == 404
 
-    # payroll.read does not grant payouts/voids: the seeded Cashier can read…
-    kassa = _login(client, "kassa@kozshifo.uz", "Kassa!2026")
+    # payroll.read does not grant payouts/voids: the Administrator can read…
+    kassa = _login(client, "reception@kozshifo.uz", "Reception!2026")
     assert client.get(_PAYROLL, headers=kassa, params={"month": month}).status_code == 200
     # …but not pay out (payroll.manage missing).
     denied = client.post(f"{_PAYROLL}/payout", headers=kassa,
@@ -445,7 +449,7 @@ def test_visits_branch_scoped_for_non_superuser(client, auth):
                                  "items": [{"service_id": svc, "quantity": 1}]}).json()["id"]
     v_main, v_other = visit_in(main), visit_in(other)
 
-    kassa = _login(client, "kassa@kozshifo.uz", "Kassa!2026")  # seeded at MAIN
+    kassa = _login(client, "reception@kozshifo.uz", "Reception!2026")  # Administrator at MAIN
     seen = {v["id"] for v in client.get(f"{API}/visits", headers=kassa,
                                         params={"limit": 200}).json()["items"]}
     assert v_other not in seen   # other branch hidden from the cashier

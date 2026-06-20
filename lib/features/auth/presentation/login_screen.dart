@@ -14,11 +14,10 @@ typedef _DemoAccount = ({String label, String email, String password, IconData i
 const _demoAccounts = <_DemoAccount>[
   (label: 'Суперадмин', email: 'superadmin@kozshifo.uz', password: 'Superadmin!2026', icon: Icons.admin_panel_settings_outlined),
   (label: 'Директор', email: 'director@kozshifo.uz', password: 'Director!2026', icon: Icons.workspace_premium_outlined),
-  (label: 'Ресепшен', email: 'reception@kozshifo.uz', password: 'Reception!2026', icon: Icons.point_of_sale_outlined),
+  (label: 'Администратор', email: 'reception@kozshifo.uz', password: 'Reception!2026', icon: Icons.point_of_sale_outlined),
   (label: 'Врач', email: 'vrach@kozshifo.uz', password: 'Vrach!2026', icon: Icons.medical_services_outlined),
   (label: 'Диагност', email: 'diagnost@kozshifo.uz', password: 'Diagnost!2026', icon: Icons.biotech_outlined),
-  (label: 'Касса', email: 'kassa@kozshifo.uz', password: 'Kassa!2026', icon: Icons.payments_outlined),
-  (label: 'Склад', email: 'sklad@kozshifo.uz', password: 'Sklad!2026', icon: Icons.inventory_2_outlined),
+  (label: 'Лечебный кабинет', email: 'treatment@kozshifo.uz', password: 'Treatment!2026', icon: Icons.medication_outlined),
 ];
 
 class LoginScreen extends ConsumerStatefulWidget {

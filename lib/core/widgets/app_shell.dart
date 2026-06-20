@@ -16,6 +16,7 @@ import 'koz_widgets.dart';
 const Map<String, String> _navIconKey = {
   '/dashboard': 'dashboard',
   '/reception': 'reception',
+  '/priem': 'worklist',
   '/queue': 'queue',
   '/patients': 'patients',
   '/analytics': 'analytics',
@@ -37,6 +38,7 @@ class AppDestination {
     this.label,
     this.route, {
     this.permissions = const <String>[],
+    this.hideForPermissions = const <String>[],
   });
   final IconData icon;
   final IconData selectedIcon;
@@ -46,9 +48,18 @@ class AppDestination {
   /// Any-of permission codes that reveal this destination (empty = public).
   final List<String> permissions;
 
-  /// Visible when the user holds ANY of the listed permissions (or it's public).
-  bool allowedFor(AuthUser? user) =>
-      permissions.isEmpty || permissions.any((p) => user?.can(p) ?? false);
+  /// Any-of permission codes that HIDE this destination even when [permissions]
+  /// match. Used to route doctor-capable users (exams.write) to the merged
+  /// «Приём» instead of the separate «Моя очередь» / «Лечение» tabs, while the
+  /// diagnost / процедурная сестра keep those standalone screens.
+  final List<String> hideForPermissions;
+
+  /// Visible when the user holds ANY of [permissions] (or it's public) and NONE
+  /// of [hideForPermissions].
+  bool allowedFor(AuthUser? user) {
+    if (hideForPermissions.any((p) => user?.can(p) ?? false)) return false;
+    return permissions.isEmpty || permissions.any((p) => user?.can(p) ?? false);
+  }
 }
 
 /// Single source of truth for shell navigation AND the router's role-aware
@@ -85,16 +96,26 @@ const kAppDestinations = <AppDestination>[
       'payroll.read',
     ],
   ),
-  // Личное рабочее место очереди — врач «Мой приём» (V), диагност «Диагностика»
-  // (D): одна дорожка, кабинет из профиля. Gate device_results.create отделяет
-  // клиническую пару (Врач+Диагност) от ресепшена; стоит ПЕРЕД «Очередь», чтобы
-  // диагност приземлялся сюда. Экран сам выводит дорожку из прав (exams.write).
+  // Объединённый кабинет врача «Приём» (exams.write): вкладки «Моя очередь»
+  // (свои V-талоны) + «Лечение» (Л-талоны). Врач приземляется сюда; диагност и
+  // процедурная сестра пользуются отдельными «Моя очередь» / «Лечение» ниже.
+  AppDestination(
+    Icons.assignment_outlined,
+    Icons.assignment,
+    'Приём',
+    '/priem',
+    permissions: ['exams.write'],
+  ),
+  // Личное рабочее место диагноста «Диагностика» (D-дорожка): кабинет из профиля,
+  // вызвал пациента → справа карта. Скрыто у врача (exams.write) — он работает во
+  // вкладке «Приём».
   AppDestination(
     Icons.assignment_ind_outlined,
     Icons.assignment_ind,
     'Моя очередь',
     '/my-queue',
     permissions: ['device_results.create'],
+    hideForPermissions: ['exams.write'],
   ),
   // Общая двухдорожечная очередь — только фронт-деск/директор (queue.admin).
   // Врач/диагност/процедурная работают через своё личное место, а не здесь.
@@ -105,14 +126,16 @@ const kAppDestinations = <AppDestination>[
     '/queue',
     permissions: ['queue.admin'],
   ),
-  // Процедурный кабинет: дорожка «Лечение» (Л-талоны). Виден тем, кто
-  // проводит лечение (treatments.perform) — врач/процедурная сестра.
+  // Процедурный кабинет: дорожка «Лечение» (Л-талоны) — процедурная сестра
+  // (treatments.perform). Скрыто у врача (exams.write): он ведёт лечение во
+  // вкладке «Приём».
   AppDestination(
     Icons.medication_outlined,
     Icons.medication,
     'Лечение',
     '/treatment-queue',
     permissions: ['treatments.perform'],
+    hideForPermissions: ['exams.write'],
   ),
   AppDestination(
     Icons.healing_outlined,
@@ -226,12 +249,10 @@ String _roleLabel(List<String> roles) {
   const m = {
     'Superadmin': 'Суперадмин',
     'Director': 'Директор',
-    'Reception': 'Регистратура',
+    'Administrator': 'Администратор',
     'Doctor': 'Врач',
     'Diagnost': 'Диагност',
     'TreatmentRoom': 'Лечебный кабинет',
-    'Cashier': 'Касса',
-    'Warehouse': 'Склад',
   };
   return m[roles.first] ?? roles.first;
 }

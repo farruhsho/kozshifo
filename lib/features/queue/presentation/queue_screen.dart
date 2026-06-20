@@ -11,6 +11,7 @@ import '../../../core/utils/url_opener.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../attachments/presentation/attachments_section.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../cabinets/data/cabinet_repository.dart';
 import '../../diagnoses/presentation/diagnostic_conclusion_card.dart';
 import '../../doctor/presentation/patient_info_card.dart';
 import '../data/queue_repository.dart';
@@ -84,7 +85,17 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     // фокус, поэтому autofocus здесь игнорировался бы — а без фокуса внутри
     // экрана F2/F3 не доходили бы до CallbackShortcuts.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _hotkeys.requestFocus();
+      if (!mounted) return;
+      _hotkeys.requestFocus();
+      // «При входе обязательно отображается выбор кабинета»: в личном режиме
+      // подставляем кабинет сотрудника по умолчанию (дропдаун «Мой кабинет»
+      // позволяет сменить). Только если ещё не выбран в этой сессии.
+      if (widget.personal && ref.read(selectedCabinetProvider) == null) {
+        final cab = ref.read(authControllerProvider).user?.cabinet;
+        if (cab != null && cab.trim().isNotEmpty) {
+          ref.read(selectedCabinetProvider.notifier).state = cab.trim();
+        }
+      }
     });
   }
 
@@ -112,6 +123,73 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             track: track,
             forUserId: mine ? me?.id : null,
           ),
+    );
+  }
+
+  /// The call destination room. In the personal workstation it is a «Мой кабинет»
+  /// dropdown fed by the branch's managed cabinet list (selected once at login,
+  /// session-scoped) so every call goes to that room; on the general board it
+  /// stays a free-text field.
+  Widget _roomField(String branchId) {
+    if (!widget.personal) {
+      return SizedBox(
+        width: 160,
+        child: TextField(
+          controller: _room,
+          decoration: const InputDecoration(labelText: 'Кабинет', isDense: true),
+        ),
+      );
+    }
+    final cabsAsync = ref.watch(cabinetsProvider(branchId));
+    return cabsAsync.when(
+      loading: () =>
+          const SizedBox(width: 220, child: LinearProgressIndicator()),
+      // No cabinets configured (or load failed) → fall back to a free-text room.
+      error: (_, _) => SizedBox(
+        width: 220,
+        child: TextField(
+          controller: _room,
+          decoration:
+              const InputDecoration(labelText: 'Мой кабинет', isDense: true),
+        ),
+      ),
+      data: (cabs) {
+        if (cabs.isEmpty) {
+          return SizedBox(
+            width: 220,
+            child: TextField(
+              controller: _room,
+              decoration: const InputDecoration(
+                  labelText: 'Мой кабинет', isDense: true),
+            ),
+          );
+        }
+        final selected = ref.watch(selectedCabinetProvider);
+        final names = cabs.map((c) => c.name).toSet();
+        final value = (selected != null && names.contains(selected)) ? selected : null;
+        // Keep the legacy _room controller in sync (used by call-next).
+        _room.text = value ?? '';
+        return SizedBox(
+          width: 240,
+          child: DropdownButtonFormField<String>(
+            initialValue: value,
+            isExpanded: true,
+            decoration:
+                const InputDecoration(labelText: 'Мой кабинет', isDense: true),
+            hint: const Text('Выберите кабинет'),
+            items: [
+              for (final c in cabs)
+                DropdownMenuItem(value: c.name, child: Text(c.name)),
+            ],
+            onChanged: _busy
+                ? null
+                : (v) {
+                    ref.read(selectedCabinetProvider.notifier).state = v;
+                    _room.text = v ?? '';
+                  },
+          ),
+        );
+      },
     );
   }
 
@@ -264,18 +342,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                   child: Row(
                     children: [
-                      SizedBox(
-                        width: 160,
-                        child: TextField(
-                          controller: _room,
-                          decoration: InputDecoration(
-                            labelText: widget.personal
-                                ? 'Мой кабинет'
-                                : 'Кабинет',
-                            isDense: true,
-                          ),
-                        ),
-                      ),
+                      _roomField(branchId),
                       const SizedBox(width: 12),
                       // «Только мои» — только на общем табло ресепшена; в личном
                       // режиме врач и так всегда забирает направленные ему.

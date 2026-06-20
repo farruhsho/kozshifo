@@ -11,6 +11,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
+import 'package:kozshifo/features/cabinets/data/cabinet_repository.dart';
+import 'package:kozshifo/features/cabinets/domain/cabinet.dart';
 import 'package:kozshifo/features/queue/data/queue_repository.dart';
 import 'package:kozshifo/features/queue/domain/queue_ticket.dart';
 import 'package:kozshifo/features/queue/presentation/queue_screen.dart';
@@ -120,6 +122,12 @@ class _OneTicketQueueRepository extends QueueRepository {
       const <Specialist>[];
 }
 
+// Personal-workstation tests render the «Мой кабинет» dropdown, which reads the
+// branch's cabinet list — override it so no real Dio call leaks a pending timer.
+final _cabinetsOverride = cabinetsProvider('br-1').overrideWith(
+  (ref) async => const [Cabinet(id: 'c7', branchId: 'br-1', name: 'Каб. 7')],
+);
+
 void main() {
   testWidgets(
     '5s auto-refresh skips ticks while a fetch is in flight and disposes '
@@ -204,6 +212,7 @@ void main() {
           overrides: [
             authControllerProvider.overrideWith(_FakeDoctorAuthController.new),
             queueRepositoryProvider.overrideWithValue(_EmptyQueueRepository()),
+            _cabinetsOverride,
           ],
           child: const MaterialApp(home: QueueScreen(personal: true)),
         ),
@@ -232,6 +241,7 @@ void main() {
           overrides: [
             authControllerProvider.overrideWith(_FakeDoctorAuthController.new),
             queueRepositoryProvider.overrideWithValue(_EmptyQueueRepository()),
+            _cabinetsOverride,
           ],
           child: const MaterialApp(
             home: QueueScreen(personal: true, track: 'treatment'),
@@ -265,6 +275,7 @@ void main() {
           overrides: [
             authControllerProvider.overrideWith(_FakeDoctorAuthController.new),
             queueRepositoryProvider.overrideWithValue(_EmptyQueueRepository()),
+            _cabinetsOverride,
           ],
           child: const MaterialApp(home: QueueScreen(personal: true)),
         ),

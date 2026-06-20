@@ -5,6 +5,8 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/utils/input_formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../cabinets/data/cabinet_repository.dart';
+import '../../cabinets/domain/cabinet.dart';
 import '../../reception/domain/service.dart';
 import '../data/admin_repository.dart';
 import '../domain/admin_branch.dart';
@@ -18,20 +20,22 @@ class AdminScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Администрирование'),
           bottom: const TabBar(
+            isScrollable: true,
             tabs: [
               Tab(text: 'Филиалы'),
+              Tab(text: 'Кабинеты'),
               Tab(text: 'Сотрудники'),
               Tab(text: 'Диагнозы'),
             ],
           ),
         ),
         body: const TabBarView(
-          children: [_BranchesTab(), _StaffTab(), _DiagnosesTab()],
+          children: [_BranchesTab(), _CabinetsTab(), _StaffTab(), _DiagnosesTab()],
         ),
       ),
     );
@@ -1686,6 +1690,190 @@ class _DiagnosisCreateDialogState
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Создать'),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══ Кабинеты (комнаты приёма) ═══════════════════════════════════════════════
+// Создаёт/редактирует ТОЛЬКО Супер Админ (cabinets.manage). Сотрудник выбирает
+// «Мой кабинет» при входе из этого списка.
+
+class _CabinetsTab extends ConsumerWidget {
+  const _CabinetsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final branchId = ref.watch(authControllerProvider).user?.branchId;
+    if (branchId == null) {
+      return const Center(child: Text('У пользователя не задан филиал.'));
+    }
+    final cabs = ref.watch(allCabinetsProvider(branchId));
+    final disabled = Theme.of(context).disabledColor;
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openCabinetDialog(context, ref, branchId, null),
+        icon: const Icon(Icons.add),
+        label: const Text('Новый кабинет'),
+      ),
+      body: AsyncValueWidget<List<Cabinet>>(
+        value: cabs,
+        onRetry: () => ref.invalidate(allCabinetsProvider(branchId)),
+        builder: (items) {
+          if (items.isEmpty) {
+            return const Center(child: Text('Кабинетов пока нет.'));
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.only(bottom: 88),
+            itemCount: items.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, i) {
+              final c = items[i];
+              return ListTile(
+                leading: Icon(Icons.meeting_room_outlined,
+                    color: c.isActive
+                        ? Theme.of(context).colorScheme.primary
+                        : disabled),
+                title: Text(c.name,
+                    style: c.isActive ? null : TextStyle(color: disabled)),
+                subtitle: c.kind != null && c.kind!.trim().isNotEmpty
+                    ? Text(c.kind!)
+                    : null,
+                trailing: c.isActive
+                    ? null
+                    : Chip(
+                        label: const Text('выкл'),
+                        labelStyle: TextStyle(color: disabled),
+                        side: BorderSide.none,
+                        visualDensity: VisualDensity.compact,
+                      ),
+                onTap: () => _openCabinetDialog(context, ref, branchId, c),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openCabinetDialog(BuildContext context, WidgetRef ref,
+      String branchId, Cabinet? cabinet) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _CabinetDialog(branchId: branchId, cabinet: cabinet),
+    );
+    if (ok == true && context.mounted) {
+      ref.invalidate(allCabinetsProvider(branchId));
+      ref.invalidate(cabinetsProvider(branchId));
+      _showSnack(context,
+          cabinet == null ? 'Кабинет создан' : 'Кабинет обновлён');
+    }
+  }
+}
+
+class _CabinetDialog extends ConsumerStatefulWidget {
+  const _CabinetDialog({required this.branchId, this.cabinet});
+
+  final String branchId;
+  final Cabinet? cabinet;
+
+  @override
+  ConsumerState<_CabinetDialog> createState() => _CabinetDialogState();
+}
+
+class _CabinetDialogState extends ConsumerState<_CabinetDialog> {
+  late final TextEditingController _name =
+      TextEditingController(text: widget.cabinet?.name ?? '');
+  late final TextEditingController _kind =
+      TextEditingController(text: widget.cabinet?.kind ?? '');
+  late bool _active = widget.cabinet?.isActive ?? true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _kind.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Название обязательно');
+      return;
+    }
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final repo = ref.read(cabinetRepositoryProvider);
+      final kind = _kind.text.trim().isEmpty ? null : _kind.text.trim();
+      if (widget.cabinet == null) {
+        await repo.create(branchId: widget.branchId, name: name, kind: kind);
+      } else {
+        await repo.update(widget.cabinet!.id,
+            name: name, kind: kind, isActive: _active);
+      }
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final editing = widget.cabinet != null;
+    return AlertDialog(
+      title: Text(editing ? 'Кабинет' : 'Новый кабинет'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _name,
+            autofocus: true,
+            decoration:
+                const InputDecoration(labelText: 'Название (напр. Кабинет №1)'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _kind,
+            decoration: const InputDecoration(
+                labelText: 'Тип (необязательно, напр. УЗИ)'),
+          ),
+          if (editing) ...[
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Активен'),
+              value: _active,
+              onChanged: (v) => setState(() => _active = v),
+            ),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 12),
+            Text(_error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : Text(editing ? 'Сохранить' : 'Создать'),
         ),
       ],
     );

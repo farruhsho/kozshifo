@@ -416,6 +416,20 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   financial-close gate (unschedule/cancel keep refund-first as they de-bill). Flutter: «Изменить цену» +
   «Закрыть счёт» actions + «счёт закрыт» badge. Gates: pytest 304 · flutter 167 · analyze clean.
 
+- **ERP optimization wave — Phase 3a/3b: ✅ done** (insights engine). **3a smart notifications:**
+  the insight rules are now a pure, shared `dashboard.compute_insights(db)`; `GET /dashboard/insights`
+  = compute + Telegram-push of criticals; **new `GET /notifications/active`** (notifications.read) returns
+  that LIVE, computed-on-read set — a notification exists only while its problem exists. The stored
+  `GET /notifications` journal is now history/delivery-log only. Flutter «Уведомления» consumes the live
+  endpoint (deep-linking insight cards) and **dropped the fake client-side dismissal**. **3b hanging
+  visits:** `GET /dashboard/hanging-visits` (dashboard.view) returns the actual stuck patients in **5
+  categories** with per-state freshness thresholds (no_doctor>4h critical, in_doctor>3h, diagnostic
+  done w/o result file [no today-window], operation in_progress/performed/scheduled-past, treatment
+  prescribed); `GET /visits` gained a `flow_status` CSV filter; Flutter shows a «Зависшие визиты»
+  dashboard panel (expandable, tap → patient card). Gates: pytest 313 · flutter 168 · analyze clean.
+  **Phase 3c (dashboard period filters Today/…/Custom) is the remaining Phase-3 piece** — it overlaps
+  Phase 6 director-analytics, so the per-entity breakdowns will be built period-aware there.
+
 ## 2. Repo map (where things live)
 
 ```

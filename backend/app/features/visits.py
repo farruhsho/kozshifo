@@ -70,6 +70,9 @@ def list_visits(
     patient_id: UUID | None = None,
     branch_id: UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
+    flow_status: str | None = Query(
+        None, description="Filter by flow_status (comma-separated for several, "
+                          "e.g. in_doctor or registered,waiting_doctor)"),
     owing: bool = Query(False, description="Only visits that still owe money (payable > paid)"),
     opened_from: datetime | None = None,
     opened_to: datetime | None = None,
@@ -83,6 +86,11 @@ def list_visits(
         stmt = stmt.where(Visit.branch_id == branch_id)
     if status_filter:
         stmt = stmt.where(Visit.status == status_filter)
+    # flow_status deep-link (hanging-visit drill-down): one value or a CSV list.
+    if flow_status:
+        states = [s.strip() for s in flow_status.split(",") if s.strip()]
+        if states:
+            stmt = stmt.where(Visit.flow_status.in_(states))
     # opened_at date-window (half-open [from, to) of absolute UTC instants — the
     # visit-history screen passes the selected local day bounds as UTC). opened_at
     # is UTCDateTime (aware UTC on both Postgres and SQLite), so the comparison is

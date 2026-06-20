@@ -12,6 +12,7 @@ import '../data/dashboard_repository.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
 import '../domain/finance_by_direction.dart';
+import '../domain/hanging_visit.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
@@ -56,6 +57,7 @@ class DashboardScreen extends ConsumerWidget {
             ref.invalidate(regionTrendProvider);
             ref.invalidate(patientsByDistrictProvider);
             ref.invalidate(financeByDirectionProvider);
+            ref.invalidate(hangingVisitsProvider);
           },
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -64,6 +66,7 @@ class DashboardScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const _InsightsPanel(),
+                const _HangingVisitsPanel(),
                 const SizedBox(height: 20),
                 _KpiGrid(data: data),
                 const _FinanceByDirectionPanel(),
@@ -168,6 +171,83 @@ class _InsightCard extends StatelessWidget {
                   const Icon(Icons.chevron_right, size: 20),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// «Зависшие визиты» — 5 категорий застрявших случаев с конкретными
+/// пациентами (owner brief 2026-06-20). Самоочищается: когда проблема решена,
+/// визит пропадает. Панель скрыта, если зависших нет (или пока грузится/ошибка).
+class _HangingVisitsPanel extends ConsumerWidget {
+  const _HangingVisitsPanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref.watch(hangingVisitsProvider).maybeWhen(
+          data: (categories) {
+            if (categories.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 20),
+                Text('Зависшие визиты',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                for (final c in categories) _HangingCategoryCard(category: c),
+              ],
+            );
+          },
+          orElse: () => const SizedBox.shrink(),
+        );
+  }
+}
+
+class _HangingCategoryCard extends StatelessWidget {
+  const _HangingCategoryCard({required this.category});
+
+  final HangingCategory category;
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        category.isCritical ? Theme.of(context).colorScheme.error : AppColors.amber;
+    final extra = category.count - category.visits.length;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        leading: Icon(
+            category.isCritical
+                ? Icons.error_outline
+                : Icons.warning_amber_outlined,
+            color: color),
+        title: Text(category.label,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        trailing: Chip(
+          label: Text('${category.count}',
+              style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+          side: BorderSide(color: color.withValues(alpha: 0.4)),
+        ),
+        children: [
+          for (final v in category.visits)
+            ListTile(
+              dense: true,
+              title: Text(v.patientName),
+              subtitle: Text(v.detail),
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              // Тап ведёт прямо в медкарту пациента, чтобы закрыть проблему.
+              onTap: () => context.go('/patients/${v.patientId}/card'),
+            ),
+          if (extra > 0)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text('… и ещё $extra',
+                  style: const TextStyle(color: AppColors.muted)),
+            ),
+        ],
       ),
     );
   }

@@ -6,6 +6,7 @@ import '../../../core/network/dio_client.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
 import '../domain/finance_by_direction.dart';
+import '../domain/hanging_visit.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
@@ -35,6 +36,18 @@ class DashboardRepository {
       final resp = await _dio.get('/dashboard/insights');
       return (resp.data as List<dynamic>)
           .map((e) => Insight.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Зависшие визиты по 5 категориям с конкретными пациентами (самоочищается).
+  Future<List<HangingCategory>> hangingVisits() async {
+    try {
+      final resp = await _dio.get('/dashboard/hanging-visits');
+      return (resp.data as List<dynamic>)
+          .map((e) => HangingCategory.fromJson(e as Map<String, dynamic>))
           .toList();
     } on DioException catch (e) {
       throw ApiException.from(e);
@@ -162,6 +175,11 @@ final dashboardSummaryProvider =
 
 final insightsProvider = FutureProvider.autoDispose<List<Insight>>((ref) {
   return ref.watch(dashboardRepositoryProvider).insights();
+});
+
+final hangingVisitsProvider =
+    FutureProvider.autoDispose<List<HangingCategory>>((ref) {
+  return ref.watch(dashboardRepositoryProvider).hangingVisits();
 });
 
 /// «Источники пациентов» за текущий месяц (с 1-го числа по сегодня).

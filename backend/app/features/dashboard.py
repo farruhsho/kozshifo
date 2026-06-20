@@ -23,7 +23,7 @@ from typing import Annotated, Literal, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -875,6 +875,184 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
     found = compute_insights(db)
     _notify_critical_insights(db, [i for i in found if i.severity == "critical"])
     return found
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Hanging visits — «застрявшие» случаи, сгруппированные по 5 категориям
+# (owner brief 2026-06-20). В отличие от инсайтов-счётчиков, отдаёт КОНКРЕТНЫХ
+# пациентов, чтобы директор видел и мог открыть каждый зависший визит.
+# ════════════════════════════════════════════════════════════════════════════
+
+# Стадия считается «зависшей» после этого времени (свежая работа — это норма).
+_HANGING_NO_DOCTOR_AGE = timedelta(hours=4)   # зарегистрирован, к врачу не попал
+_HANGING_IN_DOCTOR_AGE = timedelta(hours=3)   # на приёме, не завершён
+_HANGING_ROW_CAP = 50                         # максимум строк-пациентов на категорию
+
+# flow_status пациента, который ещё НЕ дошёл до врача (до in_doctor).
+_PRE_DOCTOR_FLOW = (
+    "registered", "awaiting_assignment", "waiting_diagnostic",
+    "in_diagnostic", "waiting_doctor",
+)
+
+
+class HangingVisitRow(BaseModel):
+    visit_id: uuid.UUID
+    visit_no: str
+    patient_id: uuid.UUID
+    patient_name: str
+    flow_status: str
+    opened_at: datetime
+    detail: str
+
+
+class HangingCategory(BaseModel):
+    category: str  # no_doctor | in_doctor | diag_no_result | op_not_closed | treatment_unfinished
+    label: str
+    severity: Literal["warning", "critical"]
+    count: int  # total matched (visits list may be capped at _HANGING_ROW_CAP)
+    route: str | None = None
+    visits: list[HangingVisitRow]
+
+
+def _hanging_row(visit: Visit, detail: str) -> HangingVisitRow:
+    return HangingVisitRow(
+        visit_id=visit.id, visit_no=visit.visit_no,
+        patient_id=visit.patient_id, patient_name=visit.patient.full_name,
+        flow_status=visit.flow_status, opened_at=visit.opened_at, detail=detail,
+    )
+
+
+def _category(category: str, label: str, severity: str, route: str | None,
+              rows: list[HangingVisitRow]) -> HangingCategory | None:
+    """Build a category, capping the visit rows; None when nothing is stuck."""
+    if not rows:
+        return None
+    return HangingCategory(category=category, label=label, severity=severity,
+                           route=route, count=len(rows), visits=rows[:_HANGING_ROW_CAP])
+
+
+@router.get("/hanging-visits", response_model=list[HangingCategory],
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCategory]:
+    """Зависшие визиты в пяти категориях, с конкретными пациентами:
+    (1) зарегистрирован, но не дошёл до врача; (2) был у врача, приём не завершён;
+    (3) назначена диагностика, но нет результата; (4) операция не закрыта;
+    (5) лечение не завершено. Самоочищается — визит исчезает, как только проблема
+    решена (вычисляется на чтение по текущему состоянию)."""
+    now = datetime.now(timezone.utc)
+    out: list[HangingCategory] = []
+
+    def _hours(opened: datetime) -> int:
+        delta = now - (opened if opened.tzinfo else opened.replace(tzinfo=timezone.utc))
+        return max(0, int(delta.total_seconds() // 3600))
+
+    # ── (1) Зарегистрирован, но не дошёл до врача (до in_doctor, открыт >4ч).
+    cat1 = db.execute(
+        select(Visit).where(
+            Visit.status == "open",
+            Visit.flow_status.in_(_PRE_DOCTOR_FLOW),
+            Visit.opened_at < now - _HANGING_NO_DOCTOR_AGE,
+        ).order_by(Visit.opened_at)
+    ).scalars().all()
+    out.append(_category(
+        "no_doctor", "Зарегистрирован, не дошёл до врача", "critical", "/patients",
+        [_hanging_row(v, f"В системе уже {_hours(v.opened_at)} ч, к врачу не попал")
+         for v in cat1]))
+
+    # ── (2) Был у врача, но приём не завершён (in_doctor дольше порога).
+    cat2 = db.execute(
+        select(Visit).where(
+            Visit.status == "open",
+            Visit.flow_status == "in_doctor",
+            Visit.opened_at < now - _HANGING_IN_DOCTOR_AGE,
+        ).order_by(Visit.opened_at)
+    ).scalars().all()
+    out.append(_category(
+        "in_doctor", "На приёме, не завершён", "warning", "/patients",
+        [_hanging_row(v, f"На приёме, приём не закрыт ({_hours(v.opened_at)} ч)")
+         for v in cat2]))
+
+    # ── (3) Назначена диагностика, но НЕТ результата: диагностический талон
+    #    выполнен (done), но к визиту не прикреплён ни один файл-результат.
+    #    Окно «только сегодня» снято — ловим и вчерашние зависшие случаи.
+    done_diag = (
+        select(QueueTicket.visit_id)
+        .where(QueueTicket.track == "diagnostic", QueueTicket.status == "done",
+               QueueTicket.visit_id.is_not(None))
+        .distinct().subquery()
+    )
+    no_result_ids = db.execute(
+        select(done_diag.c.visit_id)
+        .outerjoin(Attachment, Attachment.visit_id == done_diag.c.visit_id)
+        .where(Attachment.id.is_(None))
+    ).scalars().all()
+    cat3 = db.execute(
+        select(Visit).where(Visit.id.in_(no_result_ids), Visit.status == "open")
+        .order_by(Visit.opened_at)
+    ).scalars().all() if no_result_ids else []
+    out.append(_category(
+        "diag_no_result", "Диагностика без результата", "warning", "/patients",
+        [_hanging_row(v, "Диагностика выполнена, результат не прикреплён")
+         for v in cat3]))
+
+    # ── (4) Операция не закрыта: выполняется/выполнена, но не завершена, ИЛИ
+    #    запланирована на прошедшую дату (не состоялась/забыта).
+    ops = db.execute(
+        select(Operation).where(
+            or_(
+                Operation.status.in_(("in_progress", "performed")),
+                and_(Operation.status == "scheduled",
+                     Operation.scheduled_at.is_not(None),
+                     Operation.scheduled_at < now),
+            )
+        ).order_by(Operation.scheduled_at)
+    ).scalars().all()
+    op_by_visit: dict[uuid.UUID, Operation] = {}
+    for op in ops:
+        op_by_visit.setdefault(op.visit_id, op)
+    visits4 = {
+        v.id: v for v in db.execute(
+            select(Visit).where(Visit.id.in_(op_by_visit.keys()))
+        ).scalars().all()
+    } if op_by_visit else {}
+    _OP_STATUS_RU = {"scheduled": "запланирована", "in_progress": "идёт",
+                     "performed": "выполнена"}
+    rows4: list[HangingVisitRow] = []
+    for visit_id, op in op_by_visit.items():
+        visit = visits4.get(visit_id)
+        if visit is None:
+            continue
+        detail = f"Операция «{op.type_name}» — {_OP_STATUS_RU.get(op.status, op.status)}, не закрыта"
+        if op.status == "scheduled":
+            detail = f"Операция «{op.type_name}» запланирована, дата прошла — не состоялась/не закрыта"
+        rows4.append(_hanging_row(visit, detail))
+    out.append(_category(
+        "op_not_closed", "Операция не закрыта", "warning", "/operations", rows4))
+
+    # ── (5) Лечение назначено, но не завершено (status prescribed).
+    treatments = db.execute(
+        select(Treatment).where(Treatment.status == "prescribed")
+        .order_by(Treatment.created_at)
+    ).scalars().all()
+    tr_by_visit: dict[uuid.UUID, Treatment] = {}
+    for tr in treatments:
+        tr_by_visit.setdefault(tr.visit_id, tr)
+    visits5 = {
+        v.id: v for v in db.execute(
+            select(Visit).where(Visit.id.in_(tr_by_visit.keys()))
+        ).scalars().all()
+    } if tr_by_visit else {}
+    rows5 = [
+        _hanging_row(v, f"Лечение «{tr_by_visit[vid].name}» назначено, не выполнено")
+        for vid, v in visits5.items()
+    ]
+    out.append(_category(
+        "treatment_unfinished", "Лечение не завершено", "warning", "/patients", rows5))
+
+    # Только непустые категории; критичные — первыми.
+    result = [c for c in out if c is not None]
+    result.sort(key=lambda c: 0 if c.severity == "critical" else 1)
+    return result
 
 
 # ════════════════════════════════════════════════════════════════════════════

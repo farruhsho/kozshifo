@@ -15,6 +15,8 @@ abstract class Insight with _$Insight {
     required String title,
     required String detail,
     String? value,
+    // Client deep-link: tapping the card opens this section to fix the problem.
+    String? route,
   }) = _Insight;
 
   factory Insight.fromJson(Map<String, dynamic> json) => _$InsightFromJson(json);

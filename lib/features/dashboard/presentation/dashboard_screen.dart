@@ -138,20 +138,32 @@ class _InsightCard extends StatelessWidget {
         : insight.isWarning
             ? (Icons.warning_amber_outlined, AppColors.amber)
             : (Icons.info_outline, AppColors.blue);
+    final chip = insight.value == null
+        ? null
+        : Chip(
+            label: Text(insight.value!,
+                style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+            side: BorderSide(color: color.withValues(alpha: 0.4)),
+          );
+    final clickable = insight.route != null;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
+        // Кликабельное уведомление: ведёт сразу к проблемному разделу.
+        onTap: clickable ? () => context.go(insight.route!) : null,
         leading: Icon(icon, color: color),
         title: Text(insight.title,
             style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text(insight.detail),
-        trailing: insight.value == null
-            ? null
-            : Chip(
-                label: Text(insight.value!,
-                    style: TextStyle(
-                        color: color, fontWeight: FontWeight.bold)),
-                side: BorderSide(color: color.withValues(alpha: 0.4)),
+        trailing: !clickable
+            ? chip
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ?chip,
+                  const SizedBox(width: 4),
+                  const Icon(Icons.chevron_right, size: 20),
+                ],
               ),
       ),
     );

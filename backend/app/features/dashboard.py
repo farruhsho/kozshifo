@@ -37,11 +37,12 @@ from app.core.dates import (
 )
 from app.core.deps import require_permission
 from app.core.notify import notify
+from app.models.attachment import Attachment
 from app.models.call import CallDevice, CallRecord
 from app.models.finance import Expense
 from app.models.inventory import Product, StockBatch, StockMovement
 from app.models.notification import Notification
-from app.models.operation import Operation
+from app.models.operation import Operation, Treatment
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -530,6 +531,28 @@ class InsightOut(BaseModel):
     title: str
     detail: str
     value: str | None = None
+    # Client deep-link: tapping the insight card opens this director-accessible
+    # section so the problem can be fixed at once. Resolved by code (below).
+    route: str | None = None
+
+
+# Each insight code → the section the director jumps to when the card is tapped.
+# Every target is reachable by the Director role (dashboard.view + reads).
+_INSIGHT_ROUTES: dict[str, str] = {
+    "low_stock": "/inventory",
+    "expiring_lots": "/inventory",
+    "queue_overload": "/queue",
+    "stale_open_visits": "/patients",
+    "unpaid_balance": "/finance",
+    "cancellation_spike": "/analytics",
+    "revenue_drop": "/analytics",
+    "missed_calls": "/calls",
+    "call_device_offline": "/calls",
+    "missing_primary_doctor": "/patients",
+    "unfilled_treatments": "/patients",
+    "stale_operations": "/operations",
+    "missing_diagnostic_attachments": "/patients",
+}
 
 
 def _notify_critical_insights(db: Session, criticals: list[InsightOut]) -> None:
@@ -767,6 +790,74 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
                 detail=detail + " — звонки могут теряться, проверьте телефон",
                 value=str(len(offline)),
             ))
+
+    # ── missing_primary_doctor (warning): visits held «Ожидает назначения» —
+    #    a patient registered but with no doctor assigned yet (Phase-3 hold).
+    no_doctor = db.execute(
+        select(func.count()).select_from(Visit)
+        .where(Visit.status == "open", Visit.flow_status == "awaiting_assignment")
+    ).scalar_one()
+    if no_doctor:
+        found.append(InsightOut(
+            code="missing_primary_doctor", severity="warning",
+            title="Пациент без врача",
+            detail=f"Визитов без назначенного врача: {no_doctor} — направьте к врачу",
+            value=str(no_doctor),
+        ))
+
+    # ── missing_diagnostic_attachments (warning): visits whose diagnostics were
+    #    completed today but no result file (УЗИ/ВИЧ/анализ) is attached.
+    done_diag = (
+        select(QueueTicket.visit_id)
+        .where(QueueTicket.track == "diagnostic", QueueTicket.status == "done",
+               QueueTicket.created_at >= day, QueueTicket.visit_id.is_not(None))
+        .distinct().subquery()
+    )
+    no_results = db.execute(
+        select(func.count()).select_from(done_diag)
+        .outerjoin(Attachment, Attachment.visit_id == done_diag.c.visit_id)
+        .where(Attachment.id.is_(None))
+    ).scalar_one()
+    if no_results:
+        found.append(InsightOut(
+            code="missing_diagnostic_attachments", severity="warning",
+            title="Нет результатов диагностики",
+            detail=f"Визитов без прикреплённых результатов: {no_results} — "
+                   "загрузите УЗИ/ВИЧ/анализы",
+            value=str(no_results),
+        ))
+
+    # ── stale_operations (warning): operations performed/in-progress but not
+    #    closed (результат не внесён, операция не завершена).
+    open_ops = db.execute(
+        select(func.count()).select_from(Operation)
+        .where(Operation.status.in_(("in_progress", "performed")))
+    ).scalar_one()
+    if open_ops:
+        found.append(InsightOut(
+            code="stale_operations", severity="warning",
+            title="Операция не закрыта",
+            detail=f"Операций не завершено: {open_ops} — внесите результат и закройте",
+            value=str(open_ops),
+        ))
+
+    # ── unfilled_treatments (warning): prescriptions awaiting dispensing —
+    #    лечение назначено, но не заполнено/не выдано.
+    unfilled = db.execute(
+        select(func.count()).select_from(Treatment)
+        .where(Treatment.status == "prescribed")
+    ).scalar_one()
+    if unfilled:
+        found.append(InsightOut(
+            code="unfilled_treatments", severity="warning",
+            title="Лечение не заполнено",
+            detail=f"Назначений лечения ожидает выполнения: {unfilled} — заполните/выдайте",
+            value=str(unfilled),
+        ))
+
+    # Attach the click-through route to every fired insight (clickable cards).
+    for i in found:
+        i.route = _INSIGHT_ROUTES.get(i.code)
 
     # Critical first, info last; stable sort keeps the rule order within a tier.
     found.sort(key=lambda i: _SEVERITY_RANK[i.severity])

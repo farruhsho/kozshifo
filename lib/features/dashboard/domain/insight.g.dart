@@ -12,6 +12,7 @@ _Insight _$InsightFromJson(Map<String, dynamic> json) => _Insight(
   title: json['title'] as String,
   detail: json['detail'] as String,
   value: json['value'] as String?,
+  route: json['route'] as String?,
 );
 
 Map<String, dynamic> _$InsightToJson(_Insight instance) => <String, dynamic>{
@@ -20,4 +21,5 @@ Map<String, dynamic> _$InsightToJson(_Insight instance) => <String, dynamic>{
   'title': instance.title,
   'detail': instance.detail,
   'value': instance.value,
+  'route': instance.route,
 };

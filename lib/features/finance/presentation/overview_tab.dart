@@ -25,8 +25,12 @@ class OverviewTab extends ConsumerStatefulWidget {
   ConsumerState<OverviewTab> createState() => _OverviewTabState();
 }
 
+/// How to rank doctors in the «Топ врачей» card.
+enum _DoctorSort { revenue, visits, profit }
+
 class _OverviewTabState extends ConsumerState<OverviewTab> {
   late String _month = ym(DateTime.now());
+  _DoctorSort _doctorSort = _DoctorSort.revenue;
 
   ReportRange get _range {
     final parts = _month.split('-');
@@ -41,6 +45,13 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
     ref.invalidate(financialReportProvider(_range));
     ref.invalidate(byDoctorReportProvider(_range));
   }
+
+  static const _methodLabels = <String, String>{
+    'cash': 'Наличные',
+    'card': 'Карта',
+    'qr': 'QR',
+    'transfer': 'Перевод',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -72,6 +83,8 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
                 _kpiRow(context, r),
                 const SizedBox(height: 16),
                 _pieCard(context, r),
+                const SizedBox(height: 16),
+                _incomeByMethodCard(context, r),
               ],
             ),
           ),
@@ -80,6 +93,8 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
             _profitByDoctorCard(context),
             const SizedBox(height: 16),
             _expensesByCategoryCard(context),
+            const SizedBox(height: 16),
+            _topPatientsCard(context),
             const SizedBox(height: 16),
           ],
           _debtorsCard(context),
@@ -246,7 +261,129 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
     );
   }
 
-  // ── Profit by doctor (reports.view) — clickable → salary detail ──────────
+  // ── Income by method (наличные/карта/QR/перевод) — «откуда деньги» ───────
+
+  Widget _incomeByMethodCard(BuildContext context, MonthlyReport r) {
+    final entries = _methodLabels.entries
+        .map((e) => (
+              label: e.value,
+              value: double.tryParse(r.incomeByMethod[e.key] ?? '') ?? 0,
+              raw: r.incomeByMethod[e.key] ?? '0.00',
+            ))
+        .where((e) => e.value > 0)
+        .toList();
+    final maxValue =
+        entries.fold<double>(0, (a, e) => e.value > a ? e.value : a);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Приход по способам оплаты',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (entries.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text('Поступлений за месяц нет'),
+              )
+            else
+              for (final e in entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(child: Text(e.label)),
+                          Text(formatMoney(e.raw),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: maxValue <= 0 ? 0 : e.value / maxValue,
+                          minHeight: 7,
+                          color: Colors.green.shade600,
+                          backgroundColor: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Top patients (reports.view) — «от кого сколько прибыли» ──────────────
+
+  Widget _topPatientsCard(BuildContext context) {
+    final rows = ref.watch(byPatientReportProvider(_range));
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Топ пациентов по оплатам',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            AsyncValueWidget<List<PatientSpendRow>>(
+              value: rows,
+              onRetry: () => ref.invalidate(byPatientReportProvider(_range)),
+              builder: (items) {
+                if (items.isEmpty) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('Нет данных за период'),
+                  );
+                }
+                final top = items.take(8).toList();
+                return Column(
+                  children: [
+                    for (final p in top)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.person_outline),
+                        title: Text(p.fullName),
+                        subtitle: Text('${p.visits} виз.'),
+                        trailing: Text(formatMoney(p.totalPaid),
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Top doctors (reports.view) — sort by revenue/visits/profit, clickable ─
+
+  double _doctorSortKey(DoctorReportRow d) => switch (_doctorSort) {
+        _DoctorSort.revenue => double.tryParse(d.revenue) ?? 0,
+        _DoctorSort.visits => d.visits.toDouble(),
+        _DoctorSort.profit => double.tryParse(d.netProfit) ?? 0,
+      };
+
+  /// The metric shown on the right, matching the active sort.
+  String _doctorTrailing(DoctorReportRow d) => switch (_doctorSort) {
+        _DoctorSort.revenue => formatMoney(d.revenue),
+        _DoctorSort.visits => '${d.visits} виз.',
+        _DoctorSort.profit => formatMoney(d.netProfit),
+      };
 
   Widget _profitByDoctorCard(BuildContext context) {
     final rows = ref.watch(byDoctorReportProvider(_range));
@@ -256,19 +393,37 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Прибыль по врачам',
+            Text('Топ врачей',
                 style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final (mode, label) in const [
+                  (_DoctorSort.revenue, 'Выручка'),
+                  (_DoctorSort.visits, 'Пациентов'),
+                  (_DoctorSort.profit, 'Прибыль'),
+                ])
+                  ChoiceChip(
+                    label: Text(label),
+                    selected: _doctorSort == mode,
+                    onSelected: (_) => setState(() => _doctorSort = mode),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
             AsyncValueWidget<List<DoctorReportRow>>(
               value: rows,
               onRetry: () => ref.invalidate(byDoctorReportProvider(_range)),
-              builder: (items) {
-                if (items.isEmpty) {
+              builder: (data) {
+                if (data.isEmpty) {
                   return const Padding(
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: Text('Нет данных за период'),
                   );
                 }
+                final items = [...data]
+                  ..sort((a, b) => _doctorSortKey(b).compareTo(_doctorSortKey(a)));
                 return Column(
                   children: [
                     for (final d in items)
@@ -277,8 +432,8 @@ class _OverviewTabState extends ConsumerState<OverviewTab> {
                         contentPadding: EdgeInsets.zero,
                         title: Text(d.doctorName),
                         subtitle: Text(
-                            'Выручка ${formatMoney(d.revenue)} · зарплата ${formatMoney(d.payrollExpense)}'),
-                        trailing: Text(formatMoney(d.netProfit),
+                            'Выручка ${formatMoney(d.revenue)} · ${d.visits} виз. · прибыль ${formatMoney(d.netProfit)}'),
+                        trailing: Text(_doctorTrailing(d),
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold)),
                         // Кликабельно: детализация зарплаты врача за месяц.

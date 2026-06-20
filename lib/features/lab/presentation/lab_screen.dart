@@ -8,7 +8,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
-import '../../scheduling/data/scheduling_repository.dart';
+import '../../patients/data/patient_search.dart';
 import '../data/lab_repository.dart';
 import '../domain/lab_order.dart';
 

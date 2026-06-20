@@ -25,9 +25,7 @@ import '../features/patients/presentation/patient_visits_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
-import '../features/scheduling/presentation/scheduling_screen.dart';
 import '../features/splash/splash_screen.dart';
-import '../features/worklist/presentation/worklist_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final notifier = _RouterNotifier(ref);
@@ -49,11 +47,6 @@ final routerProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/reception',
             builder: (_, _) => const ReceptionScreen(),
-          ),
-          GoRoute(path: '/worklist', builder: (_, _) => const WorklistScreen()),
-          GoRoute(
-            path: '/scheduling',
-            builder: (_, _) => const SchedulingScreen(),
           ),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
           // Личное рабочее место очереди: одна дорожка (врач «Мой приём» /

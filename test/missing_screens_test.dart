@@ -1,5 +1,5 @@
 // Render smoke tests for the prototype screens added to the shell:
-// Analytics, Notifications, Lab, Worklist. Each mounts the real screen
+// Analytics, Notifications, Lab. Each mounts the real screen
 // with its data providers overridden (no network) + a fake authenticated user,
 // then asserts a key element renders and that no exception was thrown (catches
 // overflow / null-deref / provider-misuse the analyzer cannot see).
@@ -20,9 +20,6 @@ import 'package:kozshifo/features/lab/presentation/lab_screen.dart';
 import 'package:kozshifo/features/notifications/data/notifications_repository.dart';
 import 'package:kozshifo/features/notifications/domain/app_notification.dart';
 import 'package:kozshifo/features/notifications/presentation/notifications_screen.dart';
-import 'package:kozshifo/features/scheduling/data/scheduling_repository.dart';
-import 'package:kozshifo/features/scheduling/domain/appointment.dart';
-import 'package:kozshifo/features/worklist/presentation/worklist_screen.dart';
 
 const _user = AuthUser(
   id: 'u-doc',
@@ -112,27 +109,6 @@ void main() {
     expect(find.text('Лаборатория'), findsOneWidget);
     expect(find.text('ОКТ макулы'), findsOneWidget);
     expect(find.text('Результат'), findsOneWidget); // enter-result action
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Worklist renders the doctor day list', (tester) async {
-    _desktop(tester);
-    await tester.pumpWidget(_host(const WorklistScreen(), [
-      scheduleProvider.overrideWith((ref, arg) async => [
-            Appointment(
-              id: 'a1', appointmentNo: 'AP-1', branchId: 'b1', patientId: 'p1',
-              patientName: 'Тошматова Зухра', doctorId: 'u-doc', service: 'Консультация',
-              startsAt: '2026-06-14T05:00:00Z', endsAt: '2026-06-14T05:30:00Z',
-              status: 'arrived', createdAt: '2026-06-14T05:00:00Z',
-            ),
-          ]),
-    ]));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Приём'), findsOneWidget);
-    expect(find.text('Тошматова Зухра'), findsOneWidget);
-    expect(find.text('Начать осмотр'), findsOneWidget); // primary CTA
-    expect(find.byTooltip('Завершить приём'), findsOneWidget); // arrived → done
     expect(tester.takeException(), isNull);
   });
 }

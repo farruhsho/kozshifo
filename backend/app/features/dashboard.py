@@ -35,14 +35,15 @@ from app.core.dates import (
     local_month_bounds_utc,
     local_month_date_range,
 )
-from app.core.deps import require_permission
+from app.core.deps import CurrentUser, require_permission
 from app.core.notify import notify
 from app.models.attachment import Attachment
 from app.models.call import CallDevice, CallRecord
+from app.models.catalog import Service, ServiceCategory
 from app.models.finance import Expense
 from app.models.inventory import Product, StockBatch, StockMovement
 from app.models.notification import Notification
-from app.models.operation import Operation, Treatment
+from app.models.operation import Operation, OperationType, Treatment
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -863,6 +864,150 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
     found.sort(key=lambda i: _SEVERITY_RANK[i.severity])
     _notify_critical_insights(db, [i for i in found if i.severity == "critical"])
     return found
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Finance by direction — доход/расход/прибыль split across the 4 clinic
+# directions (Приём / Диагностика / Лечение / Операции) for day/week/month/year.
+# ════════════════════════════════════════════════════════════════════════════
+
+# (key, RU label). «lechenie» revenue comes from services categorised «Лечение».
+_FINANCE_DIRECTIONS: list[tuple[str, str]] = [
+    ("priem", "Приём врачей"),
+    ("diagnostika", "Диагностика"),
+    ("lechenie", "Лечение"),
+    ("operatsii", "Операции"),
+]
+
+
+class DirectionFinanceRow(BaseModel):
+    direction: str
+    label: str
+    revenue: Decimal
+    expense: Decimal
+    profit: Decimal
+
+
+class FinanceByDirectionReport(BaseModel):
+    period: str                 # day | week | month | year (ending on `date`)
+    date_from: date
+    date_to: date
+    rows: list[DirectionFinanceRow]
+    total_revenue: Decimal
+    total_expense: Decimal      # ВСЕ расходы клиники за период + COGS операций
+    total_profit: Decimal
+
+
+@router.get("/finance-by-direction", response_model=FinanceByDirectionReport,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def finance_by_direction(
+    db: Annotated[Session, Depends(get_db)],
+    actor: CurrentUser,
+    period: Literal["day", "week", "month", "year"] = "month",
+    d: date | None = Query(None, alias="date"),
+    branch_id: UUID | None = None,
+) -> FinanceByDirectionReport:
+    """Director finance panel: per-direction Доход/Расход/Прибыль + a clinic total.
+
+    Доход — Σ billed (paid+) visit-item amounts, bucketed by the item's service:
+    operations (services linked to an OperationType) → Операции; is_diagnostic →
+    Диагностика; category «Лечение» → Лечение; else → Приём. Direct Расход is
+    modelled for Операции only (consumables COGS + finance «Операции» expenses) —
+    other directions' costs are shared overhead, captured in total_expense (ВСЕ
+    expenses of the period + COGS). Window ends on `date` (default today):
+    day = that day · week = trailing 7 days · month = MTD · year = YTD.
+    """
+    today = d or business_today()
+    if period == "day":
+        df = today
+    elif period == "week":
+        df = today - timedelta(days=6)
+    elif period == "month":
+        df = today.replace(day=1)
+    else:
+        df = today.replace(month=1, day=1)
+    start = local_day_bounds_utc(df)[0]
+    end = local_day_bounds_utc(today)[1]
+    branch = branch_id if branch_id is not None else (
+        None if actor.is_superuser else actor.branch_id)
+
+    op_service_ids = set(db.execute(
+        select(OperationType.service_id).where(OperationType.service_id.is_not(None))
+    ).scalars().all())
+
+    def _direction_of(sid, is_diag: bool, cat_name: str | None) -> str:
+        if sid in op_service_ids:
+            return "operatsii"
+        if is_diag:
+            return "diagnostika"
+        if cat_name and "леч" in cat_name.lower():
+            return "lechenie"
+        return "priem"
+
+    revenue = {key: Decimal("0") for key, _ in _FINANCE_DIRECTIONS}
+    item_stmt = (
+        select(VisitItem.total, VisitItem.service_id, Service.is_diagnostic,
+               ServiceCategory.name)
+        .join(Visit, VisitItem.visit_id == Visit.id)
+        .join(Service, VisitItem.service_id == Service.id)
+        .outerjoin(ServiceCategory, Service.category_id == ServiceCategory.id)
+        .where(Visit.opened_at >= start, Visit.opened_at < end,
+               VisitItem.status.in_(("paid", "in_progress", "done")))
+    )
+    if branch is not None:
+        item_stmt = item_stmt.where(Visit.branch_id == branch)
+    for total, sid, is_diag, cat_name in db.execute(item_stmt).all():
+        revenue[_direction_of(sid, bool(is_diag), cat_name)] += Decimal(total)
+
+    # Операции direct cost: COGS of consumables written off for operations
+    # performed in the window + finance expenses logged under «Операции».
+    op_stmt = (
+        select(Operation.id)
+        .join(Visit, Operation.visit_id == Visit.id)
+        .where(Operation.status.in_(Operation.DONE_STATUSES),
+               Operation.performed_at >= start, Operation.performed_at < end)
+    )
+    if branch is not None:
+        op_stmt = op_stmt.where(Visit.branch_id == branch)
+    op_ids = list(db.execute(op_stmt).scalars().all())
+    cogs = Decimal("0")
+    if op_ids:
+        cogs = Decimal(db.execute(
+            select(func.coalesce(
+                func.sum(func.abs(StockMovement.quantity) * StockBatch.unit_cost), 0))
+            .select_from(StockMovement)
+            .join(StockBatch, StockBatch.id == StockMovement.batch_id)
+            .where(StockMovement.ref_type == "operation",
+                   StockMovement.ref_id.in_(op_ids),
+                   StockMovement.movement_type == "write_off")
+        ).scalar_one())
+
+    def _expense_sum(category: str | None) -> Decimal:
+        stmt = select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.expense_date >= df, Expense.expense_date <= today)
+        if category is not None:
+            stmt = stmt.where(Expense.category == _OPERATIONS_EXPENSE_CATEGORY)
+        if branch is not None:
+            stmt = stmt.where(Expense.branch_id == branch)
+        return Decimal(db.execute(stmt).scalar_one())
+
+    ops_expense = cogs + _expense_sum(_OPERATIONS_EXPENSE_CATEGORY)
+    expense = {key: Decimal("0") for key, _ in _FINANCE_DIRECTIONS}
+    expense["operatsii"] = ops_expense
+
+    rows = [
+        DirectionFinanceRow(direction=key, label=label,
+                            revenue=revenue[key], expense=expense[key],
+                            profit=revenue[key] - expense[key])
+        for key, label in _FINANCE_DIRECTIONS
+    ]
+    total_revenue = sum(revenue.values(), Decimal("0"))
+    total_expense = _expense_sum(None) + cogs   # all overhead + operations COGS
+    return FinanceByDirectionReport(
+        period=period, date_from=df, date_to=today, rows=rows,
+        total_revenue=total_revenue, total_expense=total_expense,
+        total_profit=total_revenue - total_expense,
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════

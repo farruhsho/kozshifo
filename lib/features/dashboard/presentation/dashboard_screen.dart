@@ -11,6 +11,7 @@ import '../../auth/application/auth_controller.dart';
 import '../data/dashboard_repository.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
+import '../domain/finance_by_direction.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
@@ -54,6 +55,7 @@ class DashboardScreen extends ConsumerWidget {
             ref.invalidate(expenseBreakdownProvider);
             ref.invalidate(regionTrendProvider);
             ref.invalidate(patientsByDistrictProvider);
+            ref.invalidate(financeByDirectionProvider);
           },
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -64,6 +66,7 @@ class DashboardScreen extends ConsumerWidget {
                 const _InsightsPanel(),
                 const SizedBox(height: 20),
                 _KpiGrid(data: data),
+                const _FinanceByDirectionPanel(),
                 const _RevenueTrendPanel(),
                 const _ExpenseBreakdownPanel(),
                 const _OperationsFunnelPanel(),
@@ -165,6 +168,103 @@ class _InsightCard extends StatelessWidget {
                   const Icon(Icons.chevron_right, size: 20),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// «Финансы по направлениям» — Доход/Расход/Прибыль по 4 направлениям
+/// (приём/диагностика/лечение/операции) + итог за день/неделю/месяц/год.
+class _FinanceByDirectionPanel extends ConsumerStatefulWidget {
+  const _FinanceByDirectionPanel();
+
+  @override
+  ConsumerState<_FinanceByDirectionPanel> createState() =>
+      _FinanceByDirectionPanelState();
+}
+
+class _FinanceByDirectionPanelState
+    extends ConsumerState<_FinanceByDirectionPanel> {
+  String _period = 'month';
+  static const _labels = {
+    'day': 'День',
+    'week': 'Неделя',
+    'month': 'Месяц',
+    'year': 'Год',
+  };
+
+  Widget _row(String a, String b, String c, String d,
+      {bool header = false, bool bold = false}) {
+    final style = header
+        ? TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Theme.of(context).hintColor,
+            fontSize: 12)
+        : (bold ? const TextStyle(fontWeight: FontWeight.bold) : null);
+    Widget cell(String t, {int flex = 3, TextAlign align = TextAlign.right}) =>
+        Expanded(flex: flex, child: Text(t, style: style, textAlign: align));
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(children: [
+        cell(a, flex: 4, align: TextAlign.left),
+        cell(b),
+        cell(c),
+        cell(d),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final report = ref.watch(financeByDirectionProvider(_period));
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Финансы по направлениям',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<String>(
+              segments: [
+                for (final e in _labels.entries)
+                  ButtonSegment(value: e.key, label: Text(e.value)),
+              ],
+              selected: {_period},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) => setState(() => _period = s.first),
+            ),
+          ),
+          const SizedBox(height: 12),
+          AsyncValueWidget<FinanceByDirection>(
+            value: report,
+            onRetry: () => ref.invalidate(financeByDirectionProvider(_period)),
+            builder: (r) => Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                child: Column(
+                  children: [
+                    _row('Направление', 'Доход', 'Расход', 'Прибыль',
+                        header: true),
+                    const Divider(height: 8),
+                    for (final d in r.rows)
+                      _row(d.label, formatMoney(d.revenue),
+                          formatMoney(d.expense), formatMoney(d.profit)),
+                    const Divider(height: 8),
+                    _row('Итого по клинике', formatMoney(r.totalRevenue),
+                        formatMoney(r.totalExpense), formatMoney(r.totalProfit),
+                        bold: true),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -15,6 +15,7 @@ import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/dashboard/data/dashboard_repository.dart';
 import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
 import 'package:kozshifo/features/dashboard/domain/director_analytics.dart';
+import 'package:kozshifo/features/dashboard/domain/finance_by_direction.dart';
 import 'package:kozshifo/features/dashboard/domain/insight.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
 import 'package:kozshifo/features/dashboard/domain/region_report.dart';
@@ -183,6 +184,17 @@ void main() {
         patientsByDistrictProvider.overrideWith((ref, region) async => DistrictReport.fromJson(const {
               'region': 'Ферганская', 'total': 1,
               'districts': [{'district': 'Маргилан', 'new_count': 1, 'returning_count': 0, 'total': 1}],
+            })),
+        // The finance-by-direction panel (default period «month») watches its
+        // own provider — stub it so the screen fires no real Dio call.
+        financeByDirectionProvider('month').overrideWith((ref) async =>
+            FinanceByDirection.fromJson(const {
+              'period': 'month', 'date_from': '2026-06-01', 'date_to': '2026-06-20',
+              'rows': [
+                {'direction': 'priem', 'label': 'Приём врачей',
+                 'revenue': '100000', 'expense': '0', 'profit': '100000'},
+              ],
+              'total_revenue': '100000', 'total_expense': '0', 'total_profit': '100000',
             })),
       ];
 

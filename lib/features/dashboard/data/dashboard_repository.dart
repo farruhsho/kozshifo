@@ -5,6 +5,7 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/network/dio_client.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
+import '../domain/finance_by_direction.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
 import '../domain/region_report.dart';
@@ -102,6 +103,18 @@ class DashboardRepository {
     }
   }
 
+  /// «Финансы по направлениям» — доход/расход/прибыль по 4 направлениям
+  /// (приём/диагностика/лечение/операции) за период day|week|month|year.
+  Future<FinanceByDirection> financeByDirection({String period = 'month'}) async {
+    try {
+      final resp = await _dio.get('/dashboard/finance-by-direction',
+          queryParameters: {'period': period});
+      return FinanceByDirection.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// «Структура расходов» за месяц — по категориям (с payroll).
   Future<ExpenseBreakdown> expenseBreakdown({String? month}) async {
     try {
@@ -184,6 +197,11 @@ final operationsSummaryProvider =
     FutureProvider.autoDispose<OperationsSummary>((ref) {
   return ref.watch(dashboardRepositoryProvider).operationsSummary();
 });
+
+/// «Финансы по направлениям» — ключ = период (day|week|month|year).
+final financeByDirectionProvider = FutureProvider.autoDispose
+    .family<FinanceByDirection, String>((ref, period) =>
+        ref.watch(dashboardRepositoryProvider).financeByDirection(period: period));
 
 /// «Структура расходов» за текущий месяц.
 final expenseBreakdownProvider =

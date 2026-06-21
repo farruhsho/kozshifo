@@ -452,7 +452,20 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   referral/treatment) already exist and are now unblocked — no permission change made (a strict
   "only the diagnostician records diagnoses" would mean dropping `diagnoses.record` from Doctor;
   left for owner confirmation since the doctor's 025-8 ташхис is a separate `exams.write` path).
-  Gates: pytest 322 · flutter 168 · analyze clean.
+  Gates: pytest 322 · flutter 168 · analyze clean. **Owner decided 2026-06-21: keep `diagnoses.record`
+  for BOTH doctor and diagnost (no change).**
+
+- **ERP optimization wave — Phase 5 (debt management): ✅ done.** «Управление задолженностями» built as a
+  **view over unpaid visit balances + the Payment ledger — no separate `Debt` table** (a stored copy would
+  drift from the live balance), **no migration**. `GET /debts` (debtors, highest first; small `limit` feeds
+  the dashboard TOP-debtors card) and `GET /debts/patient/{id}` (owing visits with amount/date/services/
+  remaining + full payment history date/sum/cashier/comment), gated new `debts.read` (Reception/Cashier;
+  Director auto). **Repayment — incl. partial — reuses `POST /payments`** (`issue_queue_ticket:false`), one
+  payment path. Flutter `lib/features/debt/`: models + repo (`debtors`/`patientDebt`/`repay`) + providers
+  (`debtorsProvider`/`topDebtorsProvider`/`patientDebtProvider`), a «Долги» screen + per-patient detail
+  (repay dialog amount≤remaining/method/comment, history with refunds), routes `/debts` + `/debts/:id`
+  (guard inherits `debts.read`), «Долги» nav, and a «ТОП должников» dashboard card. Gates: pytest 324 ·
+  flutter 168 · analyze clean.
 
 ## 2. Repo map (where things live)
 

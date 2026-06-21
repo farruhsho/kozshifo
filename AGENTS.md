@@ -513,7 +513,24 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   archived vs archivable) + `POST /admin/archive/run?older_than_days=` (stamps archived_at on old finished
   visits/operations + old notifications, idempotent — wire to a nightly job if wanted); the stored
   `GET /notifications` journal now excludes archived. Flutter `lib/features/archive/` («Архив» screen + nav).
-  Gates: pytest 336 · flutter 168 · analyze clean. **Only Phase 8 (document viewer) remains.**
+  Gates: pytest 336 · flutter 168 · analyze clean.
+
+- **ERP optimization wave — Phase 8 (document viewer): ✅ done (WAVE COMPLETE — all 8 phases).** In-card
+  document viewing: `showDocumentViewer` / `DocumentViewerDialog` (lib/features/attachments/) — an
+  Информация / Просмотр toggle + toolbar (zoom −/+/reset for images · fullscreen · download · print). Images
+  use `InteractiveViewer` + `Image.memory`; **PDFs render inline on web via a browser `<iframe>` (blob URL)**
+  — `inline_pdf.dart` conditional import (`inline_pdf_web.dart` registers an iframe view factory via
+  `dart:ui_web` + `package:web`; `inline_pdf_io.dart` falls back to "open externally"). **No `pdfx`/native PDF
+  dep** (avoids the §6 build_runner native-hook gotcha); the web iframe reuses the same blob+iframe interop as
+  `printBytes`. `AttachmentsSection` opens the viewer on tap / a «Просмотр» button. Gates: flutter 169 · analyze
+  clean (backend untouched, pytest 336). ⚠️ Run `flutter build web` before deploy to fully validate the web
+  iframe path (analyze covers it; a dart2js build is the final check).
+
+  **WAVE SUMMARY (owner brief 2026-06-20, branch `feat/erp-optimization-2026-06-20`, pushed):** all 8 phases
+  shipped — 1 lab-removal+inventory-UX · 2 flexible op cost · 3 insights/notifications/hanging/dashboard
+  filters · 4 «талон» facade+fix · 5 debt module · 6 director analytics+report export (PDF/Excel) · 7 super
+  admin (audit/roles/monitoring/archive) · 8 document viewer. Migrations: `32eb64bbf044`, `b6d2f8a1c3e5`,
+  `c5f1a2d3b4e6`, `d7a3f1b9c2e4`, `e9b4c2a7f1d8` (head). Final gates: pytest 336 · flutter 169 · analyze clean.
 
 ## 2. Repo map (where things live)
 

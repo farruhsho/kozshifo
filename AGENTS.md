@@ -489,6 +489,20 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   menu (CSV/Excel/PDF). Gates: pytest 328 · flutter 168 · analyze clean. Deferred: per-entity report-constructor
   filters (doctor/service/etc. as query params) — period filter + per-entity breakdowns already cover most needs.
 
+- **ERP optimization wave — Phase 7a/7b (Super Admin pt.1): ✅ done.** **Audit «who/what/when/device»:**
+  `AuditLog` gained `user_agent` (migration `c5f1a2d3b4e6`, head now `c5f1a2d3b4e6`); `record_audit` fills
+  `ip_address`+`user_agent` from a **request-scoped ContextVar** (`core/audit.set_request_context`) set by an
+  audit middleware in `main.py`, so the device is recorded on EVERY mutation (ContextVar copies into the
+  threadpool running sync endpoints). New `GET /admin/audit-logs` (`audit.read`) — filters actor/entity_type/
+  action/date + pagination + joined actor name/email (`features/audit.py`, `schemas/audit.py`). Flutter
+  `lib/features/audit/` (model + repo + «Аудит действий» screen), route `/audit` + nav (gated `audit.read`); the
+  network `Page` import is aliased to dodge Flutter's `Page`. **Custom roles:** 4 editable starter roles
+  (Старший ресепшен / Главный врач / Старшая медсестра / Операционный менеджер) seeded via
+  `STARTER_ROLE_TEMPLATES` + `_seed_starter_roles` as `is_system=False` (created once; owner can edit/delete).
+  Gates: pytest 332 · flutter 168 · analyze clean. **Phase 7c/7d remain** (sessions+monitoring, archive — each a
+  migration). Gotcha: a test deleting a seeded role mutated the shared session DB and flaked — removed (the
+  `is_system=False` assert already proves deletability).
+
 ## 2. Repo map (where things live)
 
 ```

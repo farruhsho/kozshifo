@@ -643,8 +643,8 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             ? ref.read(queueRepositoryProvider).recall(t.id)
             : ref.read(queueRepositoryProvider).leave(t.id),
         successMessage: v == 'recall'
-            ? 'Талон ${t.ticketNumber} вызван повторно'
-            : 'Талон ${t.ticketNumber} возвращён в ожидание',
+            ? 'Номер ${t.ticketNumber} вызван повторно'
+            : 'Номер ${t.ticketNumber} возвращён в ожидание',
       ),
       itemBuilder: (_) => [
         // «Вызвать повторно» — только для вызванного: на приёме (serving)
@@ -670,7 +670,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                     t.id,
                     room: _room.text.trim().isEmpty ? null : _room.text.trim(),
                   ),
-              successMessage: 'Талон ${t.ticketNumber} вызван',
+              successMessage: 'Номер ${t.ticketNumber} вызван',
             ),
       child: const Text('Вызвать'),
     ),

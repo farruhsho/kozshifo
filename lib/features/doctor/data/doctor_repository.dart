@@ -206,6 +206,18 @@ class DoctorRepository {
     }
   }
 
+  /// Завершить приём врача ПО ВИЗИТУ: сервер через flow engine переводит визит в
+  /// follow_up/completed и сам закрывает активный талон врача, если он есть. Не
+  /// требует активного талона (owner brief 2026-06-20 — «Нет активного талона»
+  /// больше не блокирует завершение приёма).
+  Future<void> finishAppointment(String visitId) async {
+    try {
+      await _dio.post('/visits/$visitId/finish-appointment');
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Copies a refractometer DeviceResult into the visit's exam (OD/OS sph/cyl/axis).
   Future<EyeExam> applyRefraction(String visitId, String resultId) async {
     try {

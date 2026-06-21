@@ -17,7 +17,6 @@ import '../../clinical/presentation/treatments_section.dart';
 import '../../devices/data/devices_repository.dart';
 import '../../devices/domain/device_result.dart';
 import '../../patients/data/patients_repository.dart';
-import '../../queue/data/queue_repository.dart';
 import '../data/doctor_repository.dart';
 import '../data/exam_draft_store.dart';
 import '../domain/exam_template.dart';
@@ -334,36 +333,16 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     }
   }
 
-  /// «Завершить приём»: закрывает активный талон V-дорожки текущего визита —
-  /// flow engine на сервере сам переведёт визит в follow_up/completed.
+  /// «Завершить приём»: работает ОТ ВИЗИТА — flow engine на сервере переводит
+  /// визит в follow_up/completed и сам закрывает активный талон врача, если он
+  /// есть. Больше не зависит от наличия активного талона (owner brief
+  /// 2026-06-20: ошибка «Нет активного талона» устранена).
   Future<void> _finishAppointment() async {
     final visitId = _visitId;
     if (visitId == null) return;
-    final user = ref.read(authControllerProvider).user;
-    // Талон живёт в филиале визита; филиал врача — fallback.
-    final visitBranchId = ref
-        .read(patientVisitsProvider(widget.patientId))
-        .valueOrNull
-        ?.where((v) => v.id == visitId)
-        .map((v) => v.branchId)
-        .firstOrNull;
-    final branchId = visitBranchId ?? user?.branchId;
-    if (branchId == null) {
-      _snack('У пользователя не задан филиал', error: true);
-      return;
-    }
     setState(() => _finishing = true);
     try {
-      final repo = ref.read(queueRepositoryProvider);
-      final tickets = await repo.list(branchId: branchId, track: 'doctor');
-      final ticket = tickets
-          .where((t) => t.visitId == visitId && t.isActive)
-          .firstOrNull;
-      if (ticket == null) {
-        _snack('Нет активного талона приёма');
-        return;
-      }
-      await repo.done(ticket.id);
+      await ref.read(doctorRepositoryProvider).finishAppointment(visitId);
       if (!mounted) return;
       ref.invalidate(patientVisitsProvider(widget.patientId));
       ref.invalidate(patientTimelineProvider(widget.patientId));

@@ -656,7 +656,7 @@ def compute_insights(db: Session) -> list[InsightOut]:
             found.append(InsightOut(
                 code="queue_overload", severity="warning",
                 title="Очередь перегружена",
-                detail=f"{label} ({track}): {count} ожидающих талонов "
+                detail=f"{label} ({track}): {count} ожидающих в очереди "
                        f"(порог {_QUEUE_OVERLOAD_WAITING}) — добавить приёмные мощности",
                 value=str(count),
             ))

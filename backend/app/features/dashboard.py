@@ -1056,6 +1056,109 @@ def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCateg
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# Period summary — заголовочные метрики за выбранный период (owner brief
+# 2026-06-20): Сегодня / Вчера / Неделя / Месяц / Квартал / Год / Произвольный.
+# Все диаграммы дашборда могут пересчитываться за период через эту ручку.
+# ════════════════════════════════════════════════════════════════════════════
+
+_PERIOD_PRESETS = ("today", "yesterday", "week", "month", "quarter", "year", "custom")
+
+
+def _resolve_period_dates(
+    period: str, date_from: date | None, date_to: date | None,
+) -> tuple[datetime, datetime, date, date]:
+    """Map a period preset (+ optional custom dates) to a half-open UTC instant
+    window [start, end) AND the inclusive local DATE range [from, to] (the latter
+    for plain DATE columns like Expense.expense_date). Presets are «to date»
+    (through the end of the local today)."""
+    today = business_today()
+    if period == "custom":
+        if date_from is None or date_to is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "custom period requires date_from and date_to")
+        if date_to < date_from:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "date_to must be on or after date_from")
+        df, dt = date_from, date_to
+    elif period == "today":
+        df = dt = today
+    elif period == "yesterday":
+        df = dt = today - timedelta(days=1)
+    elif period == "week":
+        df, dt = today - timedelta(days=6), today  # rolling 7 days incl. today
+    elif period == "month":
+        df, dt = today.replace(day=1), today
+    elif period == "quarter":
+        q_first = 3 * ((today.month - 1) // 3) + 1
+        df, dt = today.replace(month=q_first, day=1), today
+    elif period == "year":
+        df, dt = today.replace(month=1, day=1), today
+    else:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"unknown period {period!r} (allowed: {', '.join(_PERIOD_PRESETS)})")
+    start = local_day_bounds_utc(df)[0]
+    end = local_day_bounds_utc(dt)[1]
+    return start, end, df, dt
+
+
+class PeriodSummary(BaseModel):
+    period: str
+    date_from: date
+    date_to: date
+    revenue: Decimal     # Σ completed payments in window
+    expenses: Decimal    # Σ expenses (by expense_date) in window
+    profit: Decimal      # revenue − expenses
+    new_patients: int    # patients registered in window
+    visits: int          # visits opened in window
+    operations: int      # operations performed in window
+    diagnostics: int     # diagnostic tickets completed in window
+    treatments: int      # treatments performed in window
+
+
+@router.get("/period-summary", response_model=PeriodSummary,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def period_summary(
+    db: Annotated[Session, Depends(get_db)],
+    period: str = Query("month", description="today|yesterday|week|month|quarter|year|custom"),
+    date_from: date | None = Query(None, description="custom period start (local date)"),
+    date_to: date | None = Query(None, description="custom period end (local date, inclusive)"),
+) -> PeriodSummary:
+    """Headline metrics recomputed for ANY period — powers the dashboard's period
+    filter. Каждая метрика считается за выбранное окно (auto-recalc на клиенте при
+    смене периода)."""
+    start, end, df, dt = _resolve_period_dates(period, date_from, date_to)
+
+    def _count(model, ts_col, *extra) -> int:
+        return int(db.execute(
+            select(func.count()).select_from(model)
+            .where(ts_col >= start, ts_col < end, *extra)
+        ).scalar_one())
+
+    revenue = Decimal(db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0))
+        .where(Payment.status == "completed",
+               Payment.created_at >= start, Payment.created_at < end)
+    ).scalar_one())
+    expenses = Decimal(db.execute(
+        select(func.coalesce(func.sum(Expense.amount), 0))
+        .where(Expense.expense_date >= df, Expense.expense_date <= dt)
+    ).scalar_one())
+
+    return PeriodSummary(
+        period=period, date_from=df, date_to=dt,
+        revenue=revenue, expenses=expenses, profit=revenue - expenses,
+        new_patients=_count(Patient, Patient.created_at),
+        visits=_count(Visit, Visit.opened_at),
+        operations=_count(Operation, Operation.performed_at,
+                          Operation.status.in_(Operation.DONE_STATUSES)),
+        diagnostics=_count(QueueTicket, QueueTicket.created_at,
+                           QueueTicket.track == "diagnostic", QueueTicket.status == "done"),
+        treatments=_count(Treatment, Treatment.performed_at, Treatment.status == "done"),
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # Finance by direction — доход/расход/прибыль split across the 4 clinic
 # directions (Приём / Диагностика / Лечение / Операции) for day/week/month/year.
 # ════════════════════════════════════════════════════════════════════════════

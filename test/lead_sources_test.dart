@@ -16,8 +16,10 @@ import 'package:kozshifo/features/dashboard/data/dashboard_repository.dart';
 import 'package:kozshifo/features/dashboard/domain/dashboard_summary.dart';
 import 'package:kozshifo/features/dashboard/domain/director_analytics.dart';
 import 'package:kozshifo/features/dashboard/domain/finance_by_direction.dart';
+import 'package:kozshifo/features/dashboard/domain/hanging_visit.dart';
 import 'package:kozshifo/features/dashboard/domain/insight.dart';
 import 'package:kozshifo/features/dashboard/domain/lead_source.dart';
+import 'package:kozshifo/features/dashboard/domain/period_summary.dart';
 import 'package:kozshifo/features/dashboard/domain/region_report.dart';
 import 'package:kozshifo/features/dashboard/domain/revenue_trend.dart';
 import 'package:kozshifo/features/dashboard/presentation/dashboard_screen.dart';
@@ -195,6 +197,18 @@ void main() {
                  'revenue': '100000', 'expense': '0', 'profit': '100000'},
               ],
               'total_revenue': '100000', 'total_expense': '0', 'total_profit': '100000',
+            })),
+        // «Зависшие визиты» panel — stub empty so it hides (no real Dio call).
+        hangingVisitsProvider.overrideWith((ref) async => const <HangingCategory>[]),
+        // «Сводка за период» panel (default preset «month») — stub so its
+        // AsyncValueWidget resolves instead of spinning (which would hang
+        // pumpAndSettle); the family key matches the panel's default query.
+        periodSummaryProvider((period: 'month', from: null, to: null))
+            .overrideWith((ref) async => PeriodSummary.fromJson(const {
+              'period': 'month', 'date_from': '2026-06-01', 'date_to': '2026-06-21',
+              'revenue': '100000', 'expenses': '0', 'profit': '100000',
+              'new_patients': 1, 'visits': 1, 'operations': 0,
+              'diagnostics': 0, 'treatments': 0,
             })),
       ];
 

@@ -499,9 +499,21 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   network `Page` import is aliased to dodge Flutter's `Page`. **Custom roles:** 4 editable starter roles
   (Старший ресепшен / Главный врач / Старшая медсестра / Операционный менеджер) seeded via
   `STARTER_ROLE_TEMPLATES` + `_seed_starter_roles` as `is_system=False` (created once; owner can edit/delete).
-  Gates: pytest 332 · flutter 168 · analyze clean. **Phase 7c/7d remain** (sessions+monitoring, archive — each a
-  migration). Gotcha: a test deleting a seeded role mutated the shared session DB and flaked — removed (the
-  `is_system=False` assert already proves deletability).
+  Gates: pytest 332 · flutter 168 · analyze clean. Gotcha: a test deleting a seeded role mutated the shared
+  session DB and flaked — removed (the `is_system=False` assert already proves deletability).
+
+- **ERP optimization wave — Phase 7c/7d (Super Admin pt.2): ✅ done (Phase 7 COMPLETE).** **7c monitoring:**
+  `UserSession` (login history; migration `d7a3f1b9c2e4`) created on login; `core/monitoring.py` holds an
+  **in-memory** registry — online last-seen (touched O(1) in `get_current_user`, no DB write on the hot path),
+  ring buffers of slow requests + 5xx errors, and uptime (a `_monitor` middleware times every request). New
+  `GET /admin/monitoring` + `GET /admin/sessions` (gated `audit.read`); Flutter `lib/features/monitoring/`
+  («Мониторинг» screen + nav). In-memory state resets on restart / isn't shared across workers (fine for a
+  single clinic server; Redis for scale). **7d archive:** `archived_at` on visits/operations/notifications
+  (migration `e9b4c2a7f1d8`, head now `e9b4c2a7f1d8`); new `archive.manage` perm; `GET /admin/archive` (summary
+  archived vs archivable) + `POST /admin/archive/run?older_than_days=` (stamps archived_at on old finished
+  visits/operations + old notifications, idempotent — wire to a nightly job if wanted); the stored
+  `GET /notifications` journal now excludes archived. Flutter `lib/features/archive/` («Архив» screen + nav).
+  Gates: pytest 336 · flutter 168 · analyze clean. **Only Phase 8 (document viewer) remains.**
 
 ## 2. Repo map (where things live)
 

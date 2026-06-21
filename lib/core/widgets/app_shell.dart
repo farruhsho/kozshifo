@@ -210,6 +210,14 @@ const kAppDestinations = <AppDestination>[
     '/audit',
     permissions: ['audit.read'],
   ),
+  // Системный мониторинг (онлайн/входы/ошибки/сессии) — директор + Супер Админ.
+  AppDestination(
+    Icons.monitor_heart_outlined,
+    Icons.monitor_heart,
+    'Мониторинг',
+    '/monitoring',
+    permissions: ['audit.read'],
+  ),
   // Системное администрирование (сотрудники, филиалы, справочники) —
   // только Супер Админ (users.create). Директор сюда не заходит.
   AppDestination(

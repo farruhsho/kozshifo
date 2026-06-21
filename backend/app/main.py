@@ -11,8 +11,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
+import time
+
 from app import __version__
 from app.api import api_router
+from app.core import monitoring
 from app.core.audit import set_request_context
 from app.core.config import settings
 from app.core.database import create_all
@@ -79,6 +82,21 @@ def create_app() -> FastAPI:
         client_ip = request.client.host if request.client else None
         set_request_context(ip=client_ip, user_agent=request.headers.get("user-agent"))
         return await call_next(request)
+
+    # System monitoring: time every request; record slow ones + server errors
+    # into the in-memory ring buffers (Super Admin → системный мониторинг).
+    @app.middleware("http")
+    async def _monitor(request: Request, call_next):
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            monitoring.record_request(request.method, request.url.path, 500,
+                                      (time.perf_counter() - start) * 1000)
+            raise
+        monitoring.record_request(request.method, request.url.path, response.status_code,
+                                  (time.perf_counter() - start) * 1000)
+        return response
 
     @app.middleware("http")
     async def _limit_request_body(request: Request, call_next):

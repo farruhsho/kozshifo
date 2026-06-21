@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.deps import CurrentUser
 from app.core.security import create_access_token, create_refresh_token, decode_token, verify_password
 from app.models.user import User
+from app.models.user_session import UserSession
 from app.schemas.auth import CurrentUserOut, RefreshRequest, Token
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -39,11 +40,15 @@ def login(
     if user is None or not user.is_active or not verify_password(form.password, user.hashed_password):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password")
 
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
     record_audit(
         db, action="login", entity_type="user", entity_id=user.id, actor_id=user.id,
         summary=f"Login: {user.email}",
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip,
     )
+    # Persist the login session (Super Admin monitoring → login history).
+    db.add(UserSession(user_id=user.id, ip_address=client_ip, user_agent=user_agent))
     db.commit()
     return _issue_token_pair(user)
 

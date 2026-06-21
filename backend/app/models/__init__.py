@@ -20,6 +20,7 @@ from app.models.payment import Payment
 from app.models.queue import QueueTicket
 from app.models.rbac import Permission, Role, role_permissions, user_permissions, user_roles
 from app.models.user import User
+from app.models.user_session import UserSession
 from app.models.visit import Visit, VisitItem
 
 __all__ = [
@@ -57,6 +58,7 @@ __all__ = [
     "Supplier",
     "Treatment",
     "User",
+    "UserSession",
     "Visit",
     "VisitDiagnosis",
     "VisitItem",

@@ -59,6 +59,9 @@ class Visit(UUIDPKMixin, TimestampMixin, Base):
         UTCDateTime, server_default=func.now(), nullable=False
     )
     closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # Auto-archive (Super Admin): old completed/cancelled visits get a timestamp
+    # so they can be filtered out of active views. NULL = live.
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     patient: Mapped["Patient"] = relationship(lazy="joined")  # noqa: F821
     items: Mapped[list["VisitItem"]] = relationship(

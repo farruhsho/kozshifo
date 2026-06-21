@@ -98,6 +98,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("reports.view", "reports", "View director reports (financial / clinical / CRM) + CSV export"),
     ("audit.read", "audit", "View audit log"),
+    ("archive.manage", "audit", "View archive & auto-archive old records"),
 ]
 
 ALL_CODES: list[str] = [code for code, _, _ in PERMISSIONS]

@@ -218,6 +218,14 @@ const kAppDestinations = <AppDestination>[
     '/monitoring',
     permissions: ['audit.read'],
   ),
+  // Архив (авто-архив старых визитов/операций/уведомлений) — директор + Супер Админ.
+  AppDestination(
+    Icons.archive_outlined,
+    Icons.archive,
+    'Архив',
+    '/archive',
+    permissions: ['archive.manage'],
+  ),
   // Системное администрирование (сотрудники, филиалы, справочники) —
   // только Супер Админ (users.create). Директор сюда не заходит.
   AppDestination(

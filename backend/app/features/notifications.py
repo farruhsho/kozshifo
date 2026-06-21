@@ -42,7 +42,7 @@ def list_notifications(
     event: str | None = Query(None, description="Filter by event code, e.g. low_stock"),
     limit: int = Query(50, ge=1, le=200),
 ) -> list[Notification]:
-    stmt = select(Notification)
+    stmt = select(Notification).where(Notification.archived_at.is_(None))
     if event:
         stmt = stmt.where(Notification.event == event)
     stmt = stmt.order_by(Notification.created_at.desc()).limit(limit)

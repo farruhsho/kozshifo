@@ -140,6 +140,8 @@ class Operation(UUIDPKMixin, TimestampMixin, Base):
     financially_closed_by_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Auto-archive (Super Admin): old completed/cancelled operations. NULL = live.
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     operation_type: Mapped[OperationType] = relationship(lazy="joined")
     patient: Mapped["Patient"] = relationship(lazy="joined")  # noqa: F821

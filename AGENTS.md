@@ -467,6 +467,18 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   (guard inherits `debts.read`), «Долги» nav, and a «ТОП должников» dashboard card. Gates: pytest 324 ·
   flutter 168 · analyze clean.
 
+- **ERP optimization wave — Phase 6a (director analytics): ✅ done.** `reports.py` is already period-aware
+  (`date_from`/`date_to`). Enriched: **by-doctor** +distinct_patients / repeat_patients (>1 lifetime visit) /
+  avg_check / avg_consult_minutes (efficiency from queue `called_at→done_at`, computed in Python for cross-DB);
+  **by-diagnostician** +studies (done diagnostic tickets) / avg_minutes; **by-operation/SurgeonRow** +cogs /
+  profit per surgeon (COGS from the stock ledger per-op, same join as the operations day-summary) + clinic-wide
+  cogs/profit; **new `GET /reports/profit-by-region`** (+`.csv`) — revenue + new patients per region. CSVs
+  extended. Gotcha fixed: a count-only aggregate over `Payment` needs `.select_from(Payment)` or the FROM
+  resolves to `Visit` and the join is ambiguous. Gates: pytest 326. **Phase 6b/6c remain:** report constructor
+  (extra filters + PDF via reportlab + Excel via openpyxl) and the Flutter reports UI surfacing the new columns
+  + a profit-by-region tab + export toggle. (Treatment revenue analytics has no clean price source — `Treatment`
+  has no `service_id` — so it's deferred pending owner input.)
+
 ## 2. Repo map (where things live)
 
 ```

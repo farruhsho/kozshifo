@@ -479,6 +479,16 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   + a profit-by-region tab + export toggle. (Treatment revenue analytics has no clean price source — `Treatment`
   has no `service_id` — so it's deferred pending owner input.)
 
+- **ERP optimization wave — Phase 6b/6c: ✅ done (Phase 6 COMPLETE).** **6b export:** `+openpyxl`;
+  `core/report_export.py` `build_xlsx` (openpyxl) + `build_pdf` (reportlab, **reuses the bundled DejaVu font
+  via `print_forms._register_fonts()`** so Cyrillic doesn't tofu); `reports.py` got `_xlsx`/`_pdf` helpers, each
+  report's header+rows extracted into a shared `_<name>_table`, and `.xlsx`/`.pdf` endpoints for all 7 reports
+  (inherit `reports.view`). **6c Flutter:** the reports models gained the new columns + a `RegionRevenueRow`;
+  the repo got `ReportFormat{csv,xlsx,pdf}` + `download(slug, range, format)` + `profitByRegion`; the reports
+  screen shows the new doctor/diagnostician/surgeon columns, a new «Прибыль по регионам» tab, and an «Экспорт»
+  menu (CSV/Excel/PDF). Gates: pytest 328 · flutter 168 · analyze clean. Deferred: per-entity report-constructor
+  filters (doctor/service/etc. as query params) — period filter + per-entity breakdowns already cover most needs.
+
 ## 2. Repo map (where things live)
 
 ```

@@ -146,6 +146,31 @@ def test_by_diagnostician_has_studies_and_time(client, auth):
         assert "studies" in r and "avg_minutes" in r
 
 
+def test_xlsx_and_pdf_export(client, auth):
+    # XLSX — ZIP magic bytes + spreadsheet content-type.
+    for path in ("financial.xlsx", "by-doctor.xlsx"):
+        resp = client.get(f"{API}/reports/{path}", headers=auth)
+        assert resp.status_code == 200, resp.text
+        assert "spreadsheetml" in resp.headers["content-type"]
+        assert resp.content[:4] == b"PK\x03\x04"
+
+    # PDF — %PDF magic bytes + pdf content-type.
+    for path in ("financial.pdf", "by-operation.pdf"):
+        resp = client.get(f"{API}/reports/{path}", headers=auth)
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:4] == b"%PDF"
+
+
+def test_pdf_uses_cyrillic_font():
+    # Building a PDF must register the bundled DejaVu font (NOT the Helvetica
+    # fallback) so Cyrillic renders without tofu — mirrors the print_forms guard.
+    from app.core import print_forms, report_export
+
+    report_export.build_pdf("Тест", ["Колонка"], [["Значение"]])
+    assert print_forms.FONT == "CardFont"
+
+
 def test_bad_range_rejected_and_rbac_enforced(client, auth):
     bad = client.get(f"{API}/reports/financial", headers=auth,
                      params={"date_from": "2026-06-30", "date_to": "2026-06-01"})

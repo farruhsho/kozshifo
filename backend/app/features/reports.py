@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.core.dates import business_today, local_day_bounds_utc
 from app.core.database import get_db
 from app.core.deps import require_permission
+from app.core.report_export import build_pdf, build_xlsx
 from app.models.diagnosis import VisitDiagnosis
 from app.models.finance import Expense
 from app.models.inventory import StockBatch, StockMovement
@@ -77,6 +78,26 @@ def _csv(filename: str, header: Sequence[str], rows: Iterable[Sequence]) -> Resp
     return Response(
         content="﻿" + buf.getvalue(),
         media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _xlsx(filename: str, title: str, header: Sequence[str], rows: Iterable[Sequence]) -> Response:
+    """XLSX (.xlsx) download — same columns as the CSV, but native Excel numbers
+    + a bold header (mirrors _csv)."""
+    return Response(
+        content=build_xlsx(title, list(header), [list(r) for r in rows]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _pdf(filename: str, title: str, header: Sequence[str], rows: Iterable[Sequence]) -> Response:
+    """PDF download — a printable A4-landscape table of the same columns (mirrors
+    _csv); Cyrillic renders via the bundled DejaVu font."""
+    return Response(
+        content=build_pdf(title, list(header), [list(r) for r in rows]),
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -176,17 +197,39 @@ def financial_report(db: Annotated[Session, Depends(get_db)],
     return _financial(db, df, dt, start, end)
 
 
-@router.get("/financial.csv")
-def financial_report_csv(db: Annotated[Session, Depends(get_db)],
-                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
-    df, dt, start, end = _resolve_range(date_from, date_to)
+def _financial_table(db: Session, df: date, dt: date, start: datetime,
+                     end: datetime) -> tuple[str, list[str], list[list]]:
     r = _financial(db, df, dt, start, end)
-    rows = [["Доход", "", r.income]]
+    rows: list[list] = [["Доход", "", r.income]]
     rows += [["  Доход — метод", m.label, m.amount] for m in r.by_method]
     rows += [["Расход", "", r.expenses]]
     rows += [["  Расход — категория", c.label, c.amount] for c in r.by_category]
     rows += [["Прибыль", "", r.profit]]
-    return _csv(f"financial_{df}_{dt}.csv", ["Раздел", "Статья", "Сумма"], rows)
+    return f"Финансовый отчёт ({df} — {dt})", ["Раздел", "Статья", "Сумма"], rows
+
+
+@router.get("/financial.csv")
+def financial_report_csv(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    _, header, rows = _financial_table(db, df, dt, start, end)
+    return _csv(f"financial_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/financial.xlsx")
+def financial_report_xlsx(db: Annotated[Session, Depends(get_db)],
+                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _financial_table(db, df, dt, start, end)
+    return _xlsx(f"financial_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/financial.pdf")
+def financial_report_pdf(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _financial_table(db, df, dt, start, end)
+    return _pdf(f"financial_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -296,17 +339,39 @@ def by_doctor(db: Annotated[Session, Depends(get_db)],
     return _by_doctor(db, df, dt, start, end)
 
 
-@router.get("/by-doctor.csv")
-def by_doctor_csv(db: Annotated[Session, Depends(get_db)],
-                  date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
-    df, dt, start, end = _resolve_range(date_from, date_to)
+def _by_doctor_table(db: Session, df: date, dt: date, start: datetime,
+                     end: datetime) -> tuple[str, list[str], list[list]]:
     rows = [[r.doctor_name, r.revenue, r.visits, r.distinct_patients, r.repeat_patients,
              r.avg_check, r.payroll_expense, r.net_profit,
              "" if r.avg_consult_minutes is None else r.avg_consult_minutes]
             for r in _by_doctor(db, df, dt, start, end)]
-    return _csv(f"by_doctor_{df}_{dt}.csv",
-                ["Врач", "Выручка", "Визитов", "Пациентов", "Повторных",
-                 "Средний чек", "Зарплата", "Чистая прибыль", "Ср. время приёма (мин)"], rows)
+    header = ["Врач", "Выручка", "Визитов", "Пациентов", "Повторных",
+              "Средний чек", "Зарплата", "Чистая прибыль", "Ср. время приёма (мин)"]
+    return f"По врачам ({df} — {dt})", header, rows
+
+
+@router.get("/by-doctor.csv")
+def by_doctor_csv(db: Annotated[Session, Depends(get_db)],
+                  date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    _, header, rows = _by_doctor_table(db, df, dt, start, end)
+    return _csv(f"by_doctor_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-doctor.xlsx")
+def by_doctor_xlsx(db: Annotated[Session, Depends(get_db)],
+                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_doctor_table(db, df, dt, start, end)
+    return _xlsx(f"by_doctor_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-doctor.pdf")
+def by_doctor_pdf(db: Annotated[Session, Depends(get_db)],
+                  date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_doctor_table(db, df, dt, start, end)
+    return _pdf(f"by_doctor_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -358,15 +423,37 @@ def by_diagnostician(db: Annotated[Session, Depends(get_db)],
     return _by_diagnostician(db, start, end)
 
 
+def _by_diagnostician_table(db: Session, df: date, dt: date, start: datetime,
+                            end: datetime) -> tuple[str, list[str], list[list]]:
+    rows = [[r.name, r.conclusions, r.studies,
+             "" if r.avg_minutes is None else r.avg_minutes]
+            for r in _by_diagnostician(db, start, end)]
+    header = ["Диагност", "Заключений", "Исследований", "Ср. время (мин)"]
+    return f"По диагностам ({df} — {dt})", header, rows
+
+
 @router.get("/by-diagnostician.csv")
 def by_diagnostician_csv(db: Annotated[Session, Depends(get_db)],
                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.name, r.conclusions, r.studies,
-             "" if r.avg_minutes is None else r.avg_minutes]
-            for r in _by_diagnostician(db, start, end)]
-    return _csv(f"by_diagnostician_{df}_{dt}.csv",
-                ["Диагност", "Заключений", "Исследований", "Ср. время (мин)"], rows)
+    _, header, rows = _by_diagnostician_table(db, df, dt, start, end)
+    return _csv(f"by_diagnostician_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-diagnostician.xlsx")
+def by_diagnostician_xlsx(db: Annotated[Session, Depends(get_db)],
+                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_diagnostician_table(db, df, dt, start, end)
+    return _xlsx(f"by_diagnostician_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-diagnostician.pdf")
+def by_diagnostician_pdf(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_diagnostician_table(db, df, dt, start, end)
+    return _pdf(f"by_diagnostician_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -417,13 +504,37 @@ def by_patient(db: Annotated[Session, Depends(get_db)],
     return _by_patient(db, start, end, limit)
 
 
+def _by_patient_table(db: Session, df: date, dt: date, start: datetime, end: datetime,
+                      limit: int) -> tuple[str, list[str], list[list]]:
+    rows = [[r.mrn or "", r.full_name, r.total_paid, r.visits] for r in _by_patient(db, start, end, limit)]
+    return f"Топ пациентов ({df} — {dt})", ["MRN", "Пациент", "Оплачено", "Визитов"], rows
+
+
 @router.get("/by-patient.csv")
 def by_patient_csv(db: Annotated[Session, Depends(get_db)],
                    date_from: _DateFrom = None, date_to: _DateTo = None,
                    limit: int = Query(500, ge=1, le=2000)) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.mrn or "", r.full_name, r.total_paid, r.visits] for r in _by_patient(db, start, end, limit)]
-    return _csv(f"by_patient_{df}_{dt}.csv", ["MRN", "Пациент", "Оплачено", "Визитов"], rows)
+    _, header, rows = _by_patient_table(db, df, dt, start, end, limit)
+    return _csv(f"by_patient_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-patient.xlsx")
+def by_patient_xlsx(db: Annotated[Session, Depends(get_db)],
+                    date_from: _DateFrom = None, date_to: _DateTo = None,
+                    limit: int = Query(500, ge=1, le=2000)) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_patient_table(db, df, dt, start, end, limit)
+    return _xlsx(f"by_patient_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-patient.pdf")
+def by_patient_pdf(db: Annotated[Session, Depends(get_db)],
+                   date_from: _DateFrom = None, date_to: _DateTo = None,
+                   limit: int = Query(500, ge=1, le=2000)) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_patient_table(db, df, dt, start, end, limit)
+    return _pdf(f"by_patient_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -457,12 +568,34 @@ def by_region(db: Annotated[Session, Depends(get_db)],
     return _by_region(db, start, end)
 
 
+def _by_region_table(db: Session, df: date, dt: date, start: datetime,
+                     end: datetime) -> tuple[str, list[str], list[list]]:
+    rows = [[r.region, r.new_patients] for r in _by_region(db, start, end)]
+    return f"По регионам ({df} — {dt})", ["Регион", "Новых пациентов"], rows
+
+
 @router.get("/by-region.csv")
 def by_region_csv(db: Annotated[Session, Depends(get_db)],
                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.region, r.new_patients] for r in _by_region(db, start, end)]
-    return _csv(f"by_region_{df}_{dt}.csv", ["Регион", "Новых пациентов"], rows)
+    _, header, rows = _by_region_table(db, df, dt, start, end)
+    return _csv(f"by_region_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-region.xlsx")
+def by_region_xlsx(db: Annotated[Session, Depends(get_db)],
+                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_region_table(db, df, dt, start, end)
+    return _xlsx(f"by_region_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-region.pdf")
+def by_region_pdf(db: Annotated[Session, Depends(get_db)],
+                  date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_region_table(db, df, dt, start, end)
+    return _pdf(f"by_region_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -550,15 +683,37 @@ def by_operation(db: Annotated[Session, Depends(get_db)],
     return _by_operation(db, df, dt, start, end)
 
 
+def _by_operation_table(db: Session, df: date, dt: date, start: datetime,
+                        end: datetime) -> tuple[str, list[str], list[list]]:
+    r = _by_operation(db, df, dt, start, end)
+    rows = [[s.surgeon_name, s.count, s.revenue, s.cogs, s.profit] for s in r.by_surgeon]
+    rows.append(["ИТОГО", r.count, r.revenue, r.cogs, r.profit])
+    header = ["Хирург", "Операций", "Выручка", "Расход", "Прибыль"]
+    return f"Операции по хирургам ({df} — {dt})", header, rows
+
+
 @router.get("/by-operation.csv")
 def by_operation_csv(db: Annotated[Session, Depends(get_db)],
                      date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    r = _by_operation(db, df, dt, start, end)
-    rows = [[s.surgeon_name, s.count, s.revenue, s.cogs, s.profit] for s in r.by_surgeon]
-    rows.append(["ИТОГО", r.count, r.revenue, r.cogs, r.profit])
-    return _csv(f"by_operation_{df}_{dt}.csv",
-                ["Хирург", "Операций", "Выручка", "Расход", "Прибыль"], rows)
+    _, header, rows = _by_operation_table(db, df, dt, start, end)
+    return _csv(f"by_operation_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-operation.xlsx")
+def by_operation_xlsx(db: Annotated[Session, Depends(get_db)],
+                      date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_operation_table(db, df, dt, start, end)
+    return _xlsx(f"by_operation_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-operation.pdf")
+def by_operation_pdf(db: Annotated[Session, Depends(get_db)],
+                     date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_operation_table(db, df, dt, start, end)
+    return _pdf(f"by_operation_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -607,10 +762,32 @@ def profit_by_region(db: Annotated[Session, Depends(get_db)],
     return _profit_by_region(db, start, end)
 
 
+def _profit_by_region_table(db: Session, df: date, dt: date, start: datetime,
+                            end: datetime) -> tuple[str, list[str], list[list]]:
+    rows = [[r.region, r.revenue, r.new_patients] for r in _profit_by_region(db, start, end)]
+    header = ["Регион", "Выручка", "Новых пациентов"]
+    return f"Прибыль по регионам ({df} — {dt})", header, rows
+
+
 @router.get("/profit-by-region.csv")
 def profit_by_region_csv(db: Annotated[Session, Depends(get_db)],
                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.region, r.revenue, r.new_patients] for r in _profit_by_region(db, start, end)]
-    return _csv(f"profit_by_region_{df}_{dt}.csv",
-                ["Регион", "Выручка", "Новых пациентов"], rows)
+    _, header, rows = _profit_by_region_table(db, df, dt, start, end)
+    return _csv(f"profit_by_region_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/profit-by-region.xlsx")
+def profit_by_region_xlsx(db: Annotated[Session, Depends(get_db)],
+                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _profit_by_region_table(db, df, dt, start, end)
+    return _xlsx(f"profit_by_region_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/profit-by-region.pdf")
+def profit_by_region_pdf(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _profit_by_region_table(db, df, dt, start, end)
+    return _pdf(f"profit_by_region_{df}_{dt}.pdf", title, header, rows)

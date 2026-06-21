@@ -430,6 +430,16 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   **Phase 3c (dashboard period filters Today/…/Custom) is the remaining Phase-3 piece** — it overlaps
   Phase 6 director-analytics, so the per-entity breakdowns will be built period-aware there.
 
+- **ERP optimization wave — Phase 3c: ✅ done (Phase 3 COMPLETE).** Dashboard period filter:
+  `_resolve_period_dates(period, date_from, date_to)` (presets Today/Yesterday/Week/Month/Quarter/Year
+  «to date» + Custom range, 422-validated) + **`GET /dashboard/period-summary`** (dashboard.view) →
+  revenue/expenses/profit/new_patients/visits/operations/diagnostics/treatments for the window. Flutter:
+  `PeriodSummary` model, `periodSummaryProvider` family keyed by a `PeriodQuery` record, a «Сводка за
+  период» dashboard panel (preset chips + `showDateRangePicker`, 8 metric tiles, auto-recompute on
+  change). Per-entity (doctor/diagnostician/region) period breakdowns are deferred to Phase 6 (built
+  period-aware there). Gates: pytest 318 · flutter 168 · analyze clean. **Branch pushed to origin**
+  (`feat/erp-optimization-2026-06-20`); no PR yet (no gh).
+
 ## 2. Repo map (where things live)
 
 ```

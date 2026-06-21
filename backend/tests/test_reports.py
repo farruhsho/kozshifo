@@ -111,6 +111,41 @@ def test_csv_export_is_excel_friendly(client, auth):
     assert "Врач" in doc_csv.content.decode("utf-8-sig")
 
 
+def test_by_doctor_enriched_and_profit_by_region(client, auth):
+    branch_id = _branch(client, auth)
+    doc = _doctor(client, auth, "report.doc.enriched@kozshifo.uz")
+    _paid_visit(client, auth, branch_id, doc["id"])  # patient region = Ферганская
+
+    by_doctor = client.get(f"{API}/reports/by-doctor", headers=auth).json()
+    mine = next(r for r in by_doctor if r["doctor_id"] == doc["id"])
+    assert mine["distinct_patients"] >= 1
+    assert float(mine["avg_check"]) > 0
+    assert "repeat_patients" in mine and "avg_consult_minutes" in mine
+
+    # profit-by-region: the paid visit's region (Ферганская) shows positive revenue.
+    region = client.get(f"{API}/reports/profit-by-region", headers=auth).json()
+    fergana = next((r for r in region if r["region"] == "Ферганская"), None)
+    assert fergana is not None and float(fergana["revenue"]) > 0
+
+    # by-operation now carries clinic-wide cogs/profit + per-surgeon profit fields.
+    ops = client.get(f"{API}/reports/by-operation", headers=auth).json()
+    assert "cogs" in ops and "profit" in ops
+    for s in ops["by_surgeon"]:
+        assert {"cogs", "profit"} <= set(s)
+
+    # CSV for the new region report is Excel-friendly.
+    csv = client.get(f"{API}/reports/profit-by-region.csv", headers=auth)
+    assert csv.status_code == 200
+    assert "Регион" in csv.content.decode("utf-8-sig")
+
+
+def test_by_diagnostician_has_studies_and_time(client, auth):
+    dx = client.get(f"{API}/reports/by-diagnostician", headers=auth).json()
+    assert isinstance(dx, list)
+    for r in dx:
+        assert "studies" in r and "avg_minutes" in r
+
+
 def test_bad_range_rejected_and_rbac_enforced(client, auth):
     bad = client.get(f"{API}/reports/financial", headers=auth,
                      params={"date_from": "2026-06-30", "date_to": "2026-06-01"})

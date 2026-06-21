@@ -11,8 +11,12 @@ import '../domain/reports.dart';
 
 final _fmt = DateFormat('dd.MM.yyyy');
 
+/// «12.5 мин» либо «—», если время не определено.
+String _minutes(double? v) => v == null ? '—' : '${v.toStringAsFixed(1)} мин';
+
 /// Модуль «Отчёты» директора: диапазон дат + вкладки (Финансы / Врачи /
-/// Диагносты / Операции / Регионы / Пациенты) с таблицами и выгрузкой CSV.
+/// Диагносты / Операции / Прибыль по регионам / Регионы / Пациенты) с
+/// таблицами и выгрузкой CSV / Excel / PDF.
 class ReportsScreen extends ConsumerStatefulWidget {
   const ReportsScreen({super.key});
 
@@ -61,15 +65,18 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     });
   }
 
-  Future<void> _downloadCsv(String slug) async {
+  Future<void> _download(String slug, ReportFormat format) async {
     final messenger = ScaffoldMessenger.of(context);
     final errorColor = Theme.of(context).colorScheme.error;
     try {
-      final bytes = await ref.read(reportsRepositoryProvider).csv(slug, _range);
+      final bytes = await ref
+          .read(reportsRepositoryProvider)
+          .download(slug, _range, format: format);
       final name =
           '${slug}_${_fmt.format(_from)}_${_fmt.format(_to)}'.replaceAll('.', '-');
-      await saveBytes(bytes, '$name.csv', 'text/csv');
-      messenger.showSnackBar(const SnackBar(content: Text('CSV выгружен')));
+      await saveBytes(bytes, '$name.${format.extension}', format.mime);
+      messenger.showSnackBar(SnackBar(
+          content: Text('${format.extension.toUpperCase()} выгружен')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(
         content: Text(e is ApiException ? e.message : '$e'),
@@ -81,7 +88,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 6,
+      length: 7,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Отчёты'),
@@ -92,6 +99,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               Tab(text: 'Врачи'),
               Tab(text: 'Диагносты'),
               Tab(text: 'Операции'),
+              Tab(text: 'Прибыль по регионам'),
               Tab(text: 'Регионы'),
               Tab(text: 'Пациенты'),
             ],
@@ -108,6 +116,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                   _byDoctorTab(),
                   _byDiagnosticianTab(),
                   _byOperationTab(),
+                  _profitByRegionTab(),
                   _byRegionTab(),
                   _byPatientTab(),
                 ],
@@ -154,7 +163,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 
-  /// Каркас вкладки: заголовок + кнопка CSV + прокручиваемое тело.
+  /// Каркас вкладки: меню «Экспорт» (CSV/Excel/PDF) + прокручиваемое тело.
   Widget _tab({required String csvSlug, required Widget child}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -163,10 +172,21 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         children: [
           Align(
             alignment: Alignment.centerRight,
-            child: OutlinedButton.icon(
-              onPressed: () => _downloadCsv(csvSlug),
-              icon: const Icon(Icons.download, size: 18),
-              label: const Text('Скачать CSV'),
+            child: PopupMenuButton<ReportFormat>(
+              tooltip: 'Экспорт',
+              onSelected: (f) => _download(csvSlug, f),
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: ReportFormat.csv, child: Text('CSV')),
+                PopupMenuItem(value: ReportFormat.xlsx, child: Text('Excel')),
+                PopupMenuItem(value: ReportFormat.pdf, child: Text('PDF')),
+              ],
+              child: AbsorbPointer(
+                child: OutlinedButton.icon(
+                  onPressed: () {},
+                  icon: const Icon(Icons.download, size: 18),
+                  label: const Text('Экспорт'),
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 8),
@@ -241,9 +261,29 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           onRetry: () => ref.invalidate(byDoctorReportProvider(_range)),
           builder: (rows) => rows.isEmpty
               ? const _Empty()
-              : _table(['Врач', 'Выручка', 'Визитов'], [
+              : _table([
+                  'Врач',
+                  'Выручка',
+                  'Визитов',
+                  'Пациентов',
+                  'Повторных',
+                  'Средний чек',
+                  'Зарплата',
+                  'Чистая прибыль',
+                  'Ср. время приёма',
+                ], [
                   for (final r in rows)
-                    [r.doctorName, formatMoney(r.revenue), formatInt(r.visits)],
+                    [
+                      r.doctorName,
+                      formatMoney(r.revenue),
+                      formatInt(r.visits),
+                      formatInt(r.distinctPatients),
+                      formatInt(r.repeatPatients),
+                      formatMoney(r.avgCheck),
+                      formatMoney(r.payrollExpense),
+                      formatMoney(r.netProfit),
+                      _minutes(r.avgConsultMinutes),
+                    ],
                 ]),
         ),
       );
@@ -256,8 +296,14 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
           onRetry: () => ref.invalidate(byDiagnosticianReportProvider(_range)),
           builder: (rows) => rows.isEmpty
               ? const _Empty()
-              : _table(['Диагност', 'Заключений'], [
-                  for (final r in rows) [r.name, formatInt(r.conclusions)],
+              : _table(['Диагност', 'Заключений', 'Исследований', 'Ср. время'], [
+                  for (final r in rows)
+                    [
+                      r.name,
+                      formatInt(r.conclusions),
+                      formatInt(r.studies),
+                      _minutes(r.avgMinutes),
+                    ],
                 ]),
         ),
       );
@@ -278,18 +324,43 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                   _kpi('Операций', formatInt(r.count),
                       Theme.of(context).colorScheme.primary),
                   _kpi('Выручка', formatMoney(r.revenue), Colors.green),
+                  _kpi('Расход', formatMoney(r.cogs),
+                      Theme.of(context).colorScheme.error),
+                  _kpi('Прибыль', formatMoney(r.profit),
+                      Theme.of(context).colorScheme.primary),
                 ],
               ),
               const SizedBox(height: 16),
               if (r.bySurgeon.isEmpty)
                 const _Empty()
               else
-                _table(['Хирург', 'Операций', 'Выручка'], [
+                _table(['Хирург', 'Операций', 'Выручка', 'Расход', 'Прибыль'], [
                   for (final s in r.bySurgeon)
-                    [s.surgeonName, formatInt(s.count), formatMoney(s.revenue)],
+                    [
+                      s.surgeonName,
+                      formatInt(s.count),
+                      formatMoney(s.revenue),
+                      formatMoney(s.cogs),
+                      formatMoney(s.profit),
+                    ],
                 ]),
             ],
           ),
+        ),
+      );
+
+  // ── Прибыль по регионам ──────────────────────────────────────────────────────
+  Widget _profitByRegionTab() => _tab(
+        csvSlug: 'profit-by-region',
+        child: AsyncValueWidget<List<RegionRevenueRow>>(
+          value: ref.watch(profitByRegionReportProvider(_range)),
+          onRetry: () => ref.invalidate(profitByRegionReportProvider(_range)),
+          builder: (rows) => rows.isEmpty
+              ? const _Empty()
+              : _table(['Регион', 'Выручка', 'Новых пациентов'], [
+                  for (final r in rows)
+                    [r.region, formatMoney(r.revenue), formatInt(r.newPatients)],
+                ]),
         ),
       );
 

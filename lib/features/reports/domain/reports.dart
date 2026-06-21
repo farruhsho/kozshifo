@@ -4,6 +4,7 @@
 
 int _int(Object? v) => (v as num?)?.toInt() ?? 0;
 String _money(Object? v) => (v ?? '0').toString();
+double? _numOrNull(Object? v) => (v as num?)?.toDouble();
 
 /// Строка «метка — сумма» (метод оплаты / категория расхода).
 class AmountRow {
@@ -49,40 +50,61 @@ class FinancialReport {
       );
 }
 
-/// Доход, визиты, выплаченная зарплата и чистая прибыль по врачу.
+/// Доход, визиты, пациенты, средний чек, зарплата и чистая прибыль по врачу.
 class DoctorReportRow {
   const DoctorReportRow({
     required this.doctorId,
     required this.doctorName,
     required this.revenue,
     required this.visits,
+    required this.distinctPatients,
+    required this.repeatPatients,
+    required this.avgCheck,
     required this.payrollExpense,
     required this.netProfit,
+    required this.avgConsultMinutes,
   });
   final String? doctorId;
   final String doctorName;
   final String revenue;
   final int visits;
+  final int distinctPatients;
+  final int repeatPatients;
+  final String avgCheck;
   final String payrollExpense;
   final String netProfit;
+  final double? avgConsultMinutes;
   factory DoctorReportRow.fromJson(Map<String, dynamic> j) => DoctorReportRow(
         doctorId: j['doctor_id']?.toString(),
         doctorName: (j['doctor_name'] ?? '—').toString(),
         revenue: _money(j['revenue']),
         visits: _int(j['visits']),
+        distinctPatients: _int(j['distinct_patients']),
+        repeatPatients: _int(j['repeat_patients']),
+        avgCheck: _money(j['avg_check']),
         payrollExpense: _money(j['payroll_expense']),
         netProfit: _money(j['net_profit']),
+        avgConsultMinutes: _numOrNull(j['avg_consult_minutes']),
       );
 }
 
-/// Заключения по диагносту.
+/// Заключения, исследования и среднее время по диагносту.
 class DiagnosticianRow {
-  const DiagnosticianRow({required this.name, required this.conclusions});
+  const DiagnosticianRow({
+    required this.name,
+    required this.conclusions,
+    required this.studies,
+    required this.avgMinutes,
+  });
   final String name;
   final int conclusions;
+  final int studies;
+  final double? avgMinutes;
   factory DiagnosticianRow.fromJson(Map<String, dynamic> j) => DiagnosticianRow(
         name: (j['name'] ?? '—').toString(),
         conclusions: _int(j['conclusions']),
+        studies: _int(j['studies']),
+        avgMinutes: _numOrNull(j['avg_minutes']),
       );
 }
 
@@ -117,36 +139,65 @@ class RegionReportRow {
       );
 }
 
-/// Одна строка по хирургу в отчёте операций.
+/// Выручка и новые пациенты по региону за период (profit-by-region).
+class RegionRevenueRow {
+  const RegionRevenueRow({
+    required this.region,
+    required this.revenue,
+    required this.newPatients,
+  });
+  final String region;
+  final String revenue;
+  final int newPatients;
+  factory RegionRevenueRow.fromJson(Map<String, dynamic> j) => RegionRevenueRow(
+        region: (j['region'] ?? '—').toString(),
+        revenue: _money(j['revenue']),
+        newPatients: _int(j['new_patients']),
+      );
+}
+
+/// Одна строка по хирургу в отчёте операций: операции, выручка, расход, прибыль.
 class SurgeonReportRow {
   const SurgeonReportRow({
     required this.surgeonName,
     required this.count,
     required this.revenue,
+    required this.cogs,
+    required this.profit,
   });
   final String surgeonName;
   final int count;
   final String revenue;
+  final String cogs;
+  final String profit;
   factory SurgeonReportRow.fromJson(Map<String, dynamic> j) => SurgeonReportRow(
         surgeonName: (j['surgeon_name'] ?? '—').toString(),
         count: _int(j['count']),
         revenue: _money(j['revenue']),
+        cogs: _money(j['cogs']),
+        profit: _money(j['profit']),
       );
 }
 
-/// Отчёт по операциям: всего + по хирургам.
+/// Отчёт по операциям: всего (выручка/расход/прибыль) + по хирургам.
 class OperationsReport {
   const OperationsReport({
     required this.count,
     required this.revenue,
+    required this.cogs,
+    required this.profit,
     required this.bySurgeon,
   });
   final int count;
   final String revenue;
+  final String cogs;
+  final String profit;
   final List<SurgeonReportRow> bySurgeon;
   factory OperationsReport.fromJson(Map<String, dynamic> j) => OperationsReport(
         count: _int(j['count']),
         revenue: _money(j['revenue']),
+        cogs: _money(j['cogs']),
+        profit: _money(j['profit']),
         bySurgeon: ((j['by_surgeon'] as List<dynamic>?) ?? const [])
             .map((e) => SurgeonReportRow.fromJson(e as Map<String, dynamic>))
             .toList(),

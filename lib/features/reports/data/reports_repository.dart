@@ -10,6 +10,21 @@ import '../domain/reports.dart';
 final reportsRepositoryProvider =
     Provider<ReportsRepository>((ref) => ReportsRepository(ref.watch(dioProvider)));
 
+/// Формат выгрузки отчёта. Каждый отчёт `/reports/<slug>` имеет варианты
+/// `.csv`, `.xlsx`, `.pdf`, отдающие файл байтами.
+enum ReportFormat {
+  csv(extension: 'csv', mime: 'text/csv'),
+  xlsx(
+      extension: 'xlsx',
+      mime:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+  pdf(extension: 'pdf', mime: 'application/pdf');
+
+  const ReportFormat({required this.extension, required this.mime});
+  final String extension;
+  final String mime;
+}
+
 /// Все отчёты директора (право `reports.view`). Диапазон дат — локальные даты
 /// YYYY-MM-DD; без параметров бэкенд берёт текущий месяц по сегодня.
 class ReportsRepository {
@@ -53,11 +68,17 @@ class ReportsRepository {
   Future<OperationsReport> byOperation(ReportRange r) =>
       _get('/reports/by-operation', r, (d) => OperationsReport.fromJson(d as Map<String, dynamic>));
 
-  /// Скачивает CSV отчёта ([slug] = financial|by-doctor|…) за тот же диапазон.
-  Future<Uint8List> csv(String slug, ReportRange r) async {
+  Future<List<RegionRevenueRow>> profitByRegion(ReportRange r) =>
+      _get('/reports/profit-by-region', r,
+          (d) => (d as List).map((e) => RegionRevenueRow.fromJson(e as Map<String, dynamic>)).toList());
+
+  /// Скачивает отчёт ([slug] = financial|by-doctor|…) в нужном [format] за
+  /// диапазон [r]. Возвращает байты файла (csv/xlsx/pdf).
+  Future<Uint8List> download(String slug, ReportRange r,
+      {ReportFormat format = ReportFormat.csv}) async {
     try {
       final resp = await _dio.get<List<int>>(
-        '/reports/$slug.csv',
+        '/reports/$slug.${format.extension}',
         queryParameters: _range(r),
         options: Options(responseType: ResponseType.bytes),
       );
@@ -66,6 +87,10 @@ class ReportsRepository {
       throw ApiException.from(e);
     }
   }
+
+  /// Скачивает CSV отчёта за диапазон. Тонкая обёртка над [download].
+  Future<Uint8List> csv(String slug, ReportRange r) =>
+      download(slug, r, format: ReportFormat.csv);
 }
 
 // ── Провайдеры по диапазону дат (record-ключ — value-равенство) ──────────────
@@ -93,3 +118,7 @@ final byRegionReportProvider =
 final byOperationReportProvider =
     FutureProvider.autoDispose.family<OperationsReport, ReportRange>(
         (ref, r) => ref.watch(reportsRepositoryProvider).byOperation(r));
+
+final profitByRegionReportProvider =
+    FutureProvider.autoDispose.family<List<RegionRevenueRow>, ReportRange>(
+        (ref, r) => ref.watch(reportsRepositoryProvider).profitByRegion(r));

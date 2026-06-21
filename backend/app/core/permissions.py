@@ -51,6 +51,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("payments.read", "finance", "View payments"),
     ("payments.create", "finance", "Take payments"),
     ("payments.refund", "finance", "Refund payments"),
+    ("debts.read", "finance", "View patient debts / top debtors"),
     # Queue
     ("queue.read", "queue", "View queue & TV board"),
     ("queue.manage", "queue", "Call / serve / skip tickets"),
@@ -141,7 +142,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # FULL till: front desk takes payments AND refunds (Reception = ресепшен
         # + касса by the owner's model). Payroll stays walled off — the front
         # desk must not see staff salaries (see test_finance walled_from_reception).
-        "payments.read", "payments.create", "payments.refund",
+        "payments.read", "payments.create", "payments.refund", "debts.read",
         # queue.admin: the front desk owns the general two-track board; doctors /
         # diagnosts / treatment rooms only get their personal workstation.
         "queue.read", "queue.manage", "queue.admin",
@@ -160,7 +161,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
     ],
     "Cashier": [
         "patients.read", "visits.read",
-        "payments.read", "payments.create", "payments.refund",
+        "payments.read", "payments.create", "payments.refund", "debts.read",
         "queue.read", "queue.manage", "queue.admin", "services.read", "cabinets.read",
         "expenses.read", "expenses.manage", "payroll.read",
     ],

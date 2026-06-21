@@ -84,6 +84,15 @@ const kAppDestinations = <AppDestination>[
       'payroll.read',
     ],
   ),
+  // Долги (debt management) — список должников + детализация по пациенту +
+  // частичное погашение. Стоит сразу после Финансы. Gate: debts.read.
+  AppDestination(
+    Icons.account_balance_wallet_outlined,
+    Icons.account_balance_wallet,
+    'Долги',
+    '/debts',
+    permissions: ['debts.read'],
+  ),
   // Личное рабочее место очереди — врач «Мой приём» (V), диагност «Диагностика»
   // (D): одна дорожка, кабинет из профиля. Gate device_results.create отделяет
   // клиническую пару (Врач+Диагност) от ресепшена; стоит ПЕРЕД «Очередь», чтобы

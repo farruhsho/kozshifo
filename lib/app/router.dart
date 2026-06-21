@@ -14,6 +14,8 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/calls/presentation/call_devices_screen.dart';
 import '../features/calls/presentation/calls_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
+import '../features/debt/presentation/debts_screen.dart';
+import '../features/debt/presentation/patient_debt_detail_screen.dart';
 import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
 import '../features/finance/presentation/finance_screen.dart';
@@ -98,6 +100,14 @@ final routerProvider = Provider<GoRouter>((ref) {
                 PatientHistoryScreen(patientId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/finance', builder: (_, _) => const FinanceScreen()),
+          GoRoute(path: '/debts', builder: (_, _) => const DebtsScreen()),
+          // Detail under the /debts prefix → inherits the Долги destination's
+          // debts.read redirect guard (same pattern as /patients/:id/*).
+          GoRoute(
+            path: '/debts/:id',
+            builder: (_, state) =>
+                PatientDebtDetailScreen(patientId: state.pathParameters['id']!),
+          ),
           GoRoute(
             path: '/attendance',
             builder: (_, _) => const AttendanceScreen(),

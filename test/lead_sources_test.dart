@@ -23,6 +23,8 @@ import 'package:kozshifo/features/dashboard/domain/period_summary.dart';
 import 'package:kozshifo/features/dashboard/domain/region_report.dart';
 import 'package:kozshifo/features/dashboard/domain/revenue_trend.dart';
 import 'package:kozshifo/features/dashboard/presentation/dashboard_screen.dart';
+import 'package:kozshifo/features/debt/data/debt_repository.dart';
+import 'package:kozshifo/features/debt/domain/debtor_row.dart';
 
 void main() {
   // Backend contract: total + sources[] sorted by count desc, all channels
@@ -200,6 +202,8 @@ void main() {
             })),
         // «Зависшие визиты» panel — stub empty so it hides (no real Dio call).
         hangingVisitsProvider.overrideWith((ref) async => const <HangingCategory>[]),
+        // «ТОП должников» panel — stub empty so it hides (no real Dio call).
+        topDebtorsProvider.overrideWith((ref) async => const <DebtorRow>[]),
         // «Сводка за период» panel (default preset «month») — stub so its
         // AsyncValueWidget resolves instead of spinning (which would hang
         // pumpAndSettle); the family key matches the panel's default query.

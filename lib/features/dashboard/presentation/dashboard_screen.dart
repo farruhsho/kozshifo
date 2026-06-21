@@ -8,6 +8,8 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../debt/data/debt_repository.dart';
+import '../../debt/domain/debtor_row.dart';
 import '../data/dashboard_repository.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
@@ -72,6 +74,7 @@ class DashboardScreen extends ConsumerWidget {
                 const SizedBox(height: 20),
                 _KpiGrid(data: data),
                 const _PeriodSummaryPanel(),
+                const _TopDebtorsPanel(),
                 const _FinanceByDirectionPanel(),
                 const _RevenueTrendPanel(),
                 const _ExpenseBreakdownPanel(),
@@ -392,6 +395,71 @@ class _PeriodMetricTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// «ТОП должников» — топ-5 пациентов с самым крупным долгом. Использует
+/// maybeWhen→SizedBox.shrink (без спиннера / AsyncValueWidget), чтобы панель
+/// никогда не блокировала pumpAndSettle в виджет-тестах и тихо скрывалась у
+/// пользователей без debts.read (провайдер вернёт ошибку → shrink).
+class _TopDebtorsPanel extends ConsumerWidget {
+  const _TopDebtorsPanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref.watch(topDebtorsProvider).maybeWhen(
+          data: (rows) {
+            if (rows.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('ТОП должников',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold)),
+                    ),
+                    TextButton(
+                      onPressed: () => context.go('/debts'),
+                      child: const Text('Все долги'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Card(
+                  child: Column(
+                    children: [for (final r in rows) _TopDebtorRow(row: r)],
+                  ),
+                ),
+              ],
+            );
+          },
+          orElse: () => const SizedBox.shrink(),
+        );
+  }
+}
+
+class _TopDebtorRow extends StatelessWidget {
+  const _TopDebtorRow({required this.row});
+
+  final DebtorRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      dense: true,
+      onTap: () => context.go('/debts/${row.patientId}'),
+      title: Text(row.patientName, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: Text(
+        formatMoney(row.totalDebt),
+        style: TextStyle(color: scheme.error, fontWeight: FontWeight.bold),
       ),
     );
   }

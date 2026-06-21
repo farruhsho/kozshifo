@@ -207,3 +207,26 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "diagnoses.read",
     ],
 }
+
+# Example CUSTOM roles seeded ONCE as editable starters (is_system=False), per the
+# owner's Super-Admin brief («создание собственных ролей» — Старший ресепшен /
+# Главный врач / Старшая медсестра / Операционный менеджер). Unlike ROLE_TEMPLATES
+# (system roles re-synced every seed), these are created only if absent and never
+# overwritten, so the owner can rename / retune / delete them.
+STARTER_ROLE_TEMPLATES: dict[str, list[str]] = {
+    "Старший ресепшен": ROLE_TEMPLATES["Reception"] + [
+        "reports.view", "dashboard.view",
+    ],
+    "Главный врач": ROLE_TEMPLATES["Doctor"] + [
+        "reports.view", "dashboard.view", "operations.schedule",
+    ],
+    "Старшая медсестра": ROLE_TEMPLATES["TreatmentRoom"] + [
+        "inventory.read", "devices.read", "attendance.read",
+    ],
+    "Операционный менеджер": [
+        "patients.read", "visits.read", "queue.read",
+        "operations.read", "operations.schedule", "operations.manage",
+        "inventory.read", "treatments.read", "expenses.read",
+        "reports.view", "dashboard.view", "cabinets.read", "services.read",
+    ],
+}

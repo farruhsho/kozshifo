@@ -202,6 +202,14 @@ const kAppDestinations = <AppDestination>[
     // director keeps services.create too. Diagnost (services.read only) doesn't.
     permissions: ['services.create'],
   ),
+  // Аудит действий (кто/что/когда/устройство) — директор + Супер Админ.
+  AppDestination(
+    Icons.fact_check_outlined,
+    Icons.fact_check,
+    'Аудит',
+    '/audit',
+    permissions: ['audit.read'],
+  ),
   // Системное администрирование (сотрудники, филиалы, справочники) —
   // только Супер Админ (users.create). Директор сюда не заходит.
   AppDestination(

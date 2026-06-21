@@ -6,6 +6,7 @@ import '../core/widgets/app_shell.dart';
 import '../features/access_control/presentation/access_control_screen.dart';
 import '../features/admin/presentation/admin_screen.dart';
 import '../features/analytics/presentation/analytics_screen.dart';
+import '../features/audit/presentation/audit_log_screen.dart';
 import '../features/reports/presentation/reports_screen.dart';
 import '../features/attendance/presentation/attendance_screen.dart';
 import '../features/auth/application/auth_controller.dart';
@@ -127,6 +128,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(path: '/services', builder: (_, _) => const ServicesScreen()),
           GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
+          GoRoute(path: '/audit', builder: (_, _) => const AuditLogScreen()),
         ],
       ),
     ],

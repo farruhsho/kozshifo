@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.permissions import PERMISSIONS, ROLE_TEMPLATES
+from app.core.permissions import PERMISSIONS, ROLE_TEMPLATES, STARTER_ROLE_TEMPLATES
 from app.core.security import hash_password
 from app.models.branch import Branch
 from app.models.cabinet import Cabinet
@@ -62,6 +62,20 @@ def _seed_roles(db: Session, perms: dict[str, Permission]) -> dict[str, Role]:
         roles[name] = role
     db.flush()
     return roles
+
+
+def _seed_starter_roles(db: Session, perms: dict[str, Permission]) -> None:
+    """Editable example custom roles (is_system=False) — created ONCE if absent and
+    never overwritten, so the owner can customise or delete them. Distinct from
+    _seed_roles, which keeps the system roles in sync on every run."""
+    for name, codes in STARTER_ROLE_TEMPLATES.items():
+        if db.execute(select(Role).where(Role.name == name)).scalar_one_or_none() is not None:
+            continue
+        role = Role(name=name, description=f"{name} (пример роли)", is_system=False)
+        # dict.fromkeys dedups while preserving order (composed lists may repeat).
+        role.permissions = [perms[c] for c in dict.fromkeys(codes) if c in perms]
+        db.add(role)
+    db.flush()
 
 
 def _seed_branch(db: Session) -> Branch:
@@ -351,6 +365,7 @@ def run_seed() -> None:
     try:
         perms = _seed_permissions(db)
         roles = _seed_roles(db, perms)
+        _seed_starter_roles(db, perms)
         branch = _seed_branch(db)
         _seed_director(db, branch, roles)
         _seed_demo_staff(db, branch, roles)

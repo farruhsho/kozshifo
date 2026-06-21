@@ -440,6 +440,20 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   period-aware there). Gates: pytest 318 · flutter 168 · analyze clean. **Branch pushed to origin**
   (`feat/erp-optimization-2026-06-20`); no PR yet (no gh).
 
+- **ERP optimization wave — Phase 4 («Талон» facade + fix): ✅ done.** Owner chose the **facade
+  path** — the `queue_tickets` table / numbering / TV board stay internal. **The «Нет активного талона»
+  bug is fixed**: new `POST /visits/{id}/finish-appointment` (require_any_permission `exams.write` |
+  `queue.manage`) advances the visit flow (→ follow_up/completed) **off the visit**, closing an active
+  doctor ticket if one exists but never requiring one; the doctor card's «Завершить приём» now calls
+  `doctorRepository.finishAppointment(visitId)` (no more ticket lookup / error). **Terminology «талон»
+  → «номер»/«очередь»** across UI, the receipt PDF (now «НОМЕР В ОЧЕРЕДИ»), the TV voice phrase, and the
+  queue-overload insight — internal identifiers (`QueueTicket`, `ticket_number`, table) untouched.
+  Role-scoped clinical actions (diagnost conclusions via `diagnoses.record` + attachments; doctor
+  referral/treatment) already exist and are now unblocked — no permission change made (a strict
+  "only the diagnostician records diagnoses" would mean dropping `diagnoses.record` from Doctor;
+  left for owner confirmation since the doctor's 025-8 ташхис is a separate `exams.write` path).
+  Gates: pytest 322 · flutter 168 · analyze clean.
+
 ## 2. Repo map (where things live)
 
 ```

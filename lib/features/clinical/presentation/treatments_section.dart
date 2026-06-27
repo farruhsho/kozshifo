@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../inventory/data/inventory_repository.dart';
+import '../../reception/data/reception_repository.dart';
 import '../data/clinical_repository.dart';
 import '../domain/treatment.dart';
 
@@ -172,8 +174,10 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
   final _name = TextEditingController();
   final _quantity = TextEditingController();
   final _instructions = TextEditingController();
+  final _price = TextEditingController();
   String _kind = 'procedure';
   String? _productId;
+  String? _serviceId; // optional paid service → bills the visit
   bool _saving = false;
 
   @override
@@ -181,6 +185,7 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
     _name.dispose();
     _quantity.dispose();
     _instructions.dispose();
+    _price.dispose();
     super.dispose();
   }
 
@@ -206,6 +211,11 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
                 ? _quantity.text.trim().replaceAll(',', '.')
                 : null,
             instructions: instructions.isEmpty ? null : instructions,
+            serviceId: _serviceId,
+            // Цену шлём только при выбранной услуге; пусто → каталожная цена.
+            unitPrice: _serviceId != null && _price.text.trim().isNotEmpty
+                ? _price.text.trim().replaceAll(',', '.')
+                : null,
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -222,6 +232,7 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
   @override
   Widget build(BuildContext context) {
     final products = ref.watch(productsProvider);
+    final services = ref.watch(activeServicesProvider);
 
     return AlertDialog(
       title: const Text('Новое назначение'),
@@ -291,6 +302,52 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
                     const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(labelText: 'Количество'),
                 onChanged: (_) => setState(() {}),
+              ),
+            ],
+            const SizedBox(height: 12),
+            // Опциональная привязка к платной услуге → биллит визиту (доход
+            // лечения; иначе клиническое назначение без оплаты).
+            services.when(
+              data: (items) => DropdownButtonFormField<String?>(
+                initialValue: _serviceId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                    labelText: 'Платная услуга (необязательно)'),
+                items: [
+                  const DropdownMenuItem<String?>(
+                      value: null, child: Text('— без оплаты —')),
+                  for (final s in items.where((s) => s.isActive))
+                    DropdownMenuItem<String?>(
+                      value: s.id,
+                      child: Text('${s.name} · ${formatMoney(s.price)}',
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: (id) => setState(() {
+                  _serviceId = id;
+                  // Префилл цены из услуги — её можно переопределить.
+                  if (id != null) {
+                    _price.text = items.firstWhere((s) => s.id == id).price;
+                  } else {
+                    _price.clear();
+                  }
+                }),
+              ),
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: LinearProgressIndicator(),
+              ),
+              error: (e, _) => Text('$e',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ),
+            if (_serviceId != null) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _price,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                    labelText: 'Цена', helperText: 'Можно изменить'),
               ),
             ],
             const SizedBox(height: 12),

@@ -20,10 +20,11 @@ from app.core.deps import CurrentUser, require_permission
 from app.core.flow import advance_flow, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, write_off_fefo
+from app.features.visits import _make_item, _recompute_total
 from app.models.inventory import Product
 from app.models.operation import Treatment
 from app.models.patient import Patient
-from app.models.visit import Visit
+from app.models.visit import Visit, VisitItem
 from app.schemas.operation import TreatmentCreate, TreatmentOut
 
 router = APIRouter(tags=["Treatments"])
@@ -65,9 +66,21 @@ def prescribe_treatment(
         product_id=payload.product_id,
         quantity=payload.quantity,
         instructions=payload.instructions,
+        service_id=payload.service_id,
+        unit_price=payload.unit_price,
     )
     db.add(treatment)
     db.flush()
+    # Optional billing: a paid procedure bills a VisitItem at unit_price (or the
+    # service's catalog price), so the revenue surfaces in finance/reports and the
+    # consumables it dispenses are no longer written off without a matching charge.
+    # The service's category drives its finance direction («Лечение» → лечение).
+    if payload.service_id is not None:
+        item = _make_item(db, payload.service_id, 1, unit_price=payload.unit_price)
+        visit.items.append(item)
+        _recompute_total(visit)
+        db.flush()  # assign the item id for the billing trace
+        treatment.visit_item_id = item.id
     advance_flow(db, visit, "treatment_prescribed")  # workflow engine (same transaction)
     record_audit(db, action="prescribe", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
@@ -186,13 +199,25 @@ def cancel_treatment(
     if treatment.status != "prescribed":
         raise HTTPException(status.HTTP_409_CONFLICT,
                             f"Only a prescribed treatment can be cancelled (status: {treatment.status})")
+    visit = db.get(Visit, treatment.visit_id)
+    # De-bill the linked service line first (mirrors operations: a paid line needs
+    # a refund before it can be removed, else the money would silently disappear).
+    if treatment.visit_item_id is not None and visit is not None:
+        item = db.get(VisitItem, treatment.visit_item_id)
+        if item is not None:
+            if item.status != "ordered":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The treatment line is already paid — refund the payment before cancelling")
+            visit.items.remove(item)  # delete-orphan cascade removes the row
+            _recompute_total(visit)
+        treatment.visit_item_id = None
     treatment.status = "cancelled"
     record_audit(db, action="cancel", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id,
                  summary=f"Cancelled treatment «{treatment.name}»")
     db.flush()
     # The lifecycle must stop advertising a plan that no longer exists.
-    visit = db.get(Visit, treatment.visit_id)
     if visit is not None:
         recompute_plan(db, visit)
     db.commit()

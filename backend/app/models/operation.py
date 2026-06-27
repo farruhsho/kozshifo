@@ -193,6 +193,18 @@ class Treatment(UUIDPKMixin, TimestampMixin, Base):
     )
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional billing: a treatment may be a paid service (процедура с ценой). When
+    # service_id is set, prescribe bills a VisitItem at unit_price (or the catalog
+    # price) and links it here, so the revenue surfaces in dashboards/reports and
+    # cancel can de-bill it. Unbilled treatments (service_id NULL) keep the old
+    # behaviour — a clinical-only prescription with no charge.
+    service_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("services.id", ondelete="SET NULL"), nullable=True
+    )
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    visit_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("visit_items.id", ondelete="SET NULL"), nullable=True
+    )
     # prescribed -> done | cancelled
     status: Mapped[str] = mapped_column(String(16), default="prescribed", index=True, nullable=False)
     performed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

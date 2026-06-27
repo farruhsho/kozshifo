@@ -211,6 +211,10 @@ class TreatmentCreate(BaseModel):
     quantity: Decimal | None = Field(default=None, gt=0)
     instructions: str | None = None
     doctor_id: UUID | None = None
+    # Optional billing: when set, the treatment is billed as a paid service.
+    # unit_price overrides the catalog price; omit both → unbilled (clinical-only).
+    service_id: UUID | None = None
+    unit_price: Decimal | None = Field(default=None, ge=0)
 
 
 class TreatmentOut(BaseModel):
@@ -228,3 +232,6 @@ class TreatmentOut(BaseModel):
     status: str
     performed_at: datetime | None
     created_at: datetime
+    service_id: UUID | None = None
+    unit_price: Decimal | None = None
+    visit_item_id: UUID | None = None

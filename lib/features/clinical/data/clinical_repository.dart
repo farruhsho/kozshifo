@@ -390,6 +390,8 @@ class ClinicalRepository {
     String? productId,
     String? quantity,
     String? instructions,
+    String? serviceId,
+    String? unitPrice,
   }) async {
     try {
       final resp = await _dio.post(
@@ -400,6 +402,8 @@ class ClinicalRepository {
           'product_id': ?productId,
           'quantity': ?quantity,
           'instructions': ?instructions,
+          'service_id': ?serviceId,
+          'unit_price': ?unitPrice,
         },
       );
       return Treatment.fromJson(resp.data as Map<String, dynamic>);

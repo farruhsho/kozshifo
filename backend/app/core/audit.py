@@ -7,12 +7,26 @@ atomically with the change it describes.
 """
 from __future__ import annotations
 
+import contextvars
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.models.audit import AuditLog
+
+# Per-request client context (ip + user-agent), set by the audit middleware so
+# EVERY mutation's audit row records «с какого устройства» — not just login.
+# A ContextVar is request-scoped and is copied into the threadpool that runs
+# sync endpoints, so record_audit (called deep in sync services) still sees it.
+_request_ctx: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "audit_request_ctx", default={}
+)
+
+
+def set_request_context(*, ip: str | None, user_agent: str | None) -> None:
+    """Called once per HTTP request by the audit middleware (main.py)."""
+    _request_ctx.set({"ip": ip, "user_agent": user_agent})
 
 
 def record_audit(
@@ -26,7 +40,9 @@ def record_audit(
     summary: str | None = None,
     changes: dict[str, Any] | None = None,
     ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> AuditLog:
+    ctx = _request_ctx.get()
     log = AuditLog(
         action=action,
         entity_type=entity_type,
@@ -35,7 +51,10 @@ def record_audit(
         branch_id=branch_id,
         summary=summary,
         changes=changes,
-        ip_address=ip_address,
+        # Explicit args win; otherwise fall back to the request context so the
+        # device/IP is captured uniformly across all call sites.
+        ip_address=ip_address or ctx.get("ip"),
+        user_agent=user_agent or ctx.get("user_agent"),
     )
     db.add(log)
     return log

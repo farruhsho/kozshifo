@@ -44,6 +44,9 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise _CREDENTIALS_EXC
+    # «Online now» tracking — O(1) in-memory touch, no DB write on the hot path.
+    from app.core import monitoring
+    monitoring.touch_user(user.id)
     return user
 
 

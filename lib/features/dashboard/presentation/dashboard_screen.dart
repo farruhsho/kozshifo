@@ -8,12 +8,16 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../debt/data/debt_repository.dart';
+import '../../debt/domain/debtor_row.dart';
 import '../data/dashboard_repository.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
 import '../domain/finance_by_direction.dart';
+import '../domain/hanging_visit.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
+import '../domain/period_summary.dart';
 import '../domain/region_report.dart';
 import '../domain/revenue_trend.dart';
 
@@ -56,6 +60,8 @@ class DashboardScreen extends ConsumerWidget {
             ref.invalidate(regionTrendProvider);
             ref.invalidate(patientsByDistrictProvider);
             ref.invalidate(financeByDirectionProvider);
+            ref.invalidate(hangingVisitsProvider);
+            ref.invalidate(periodSummaryProvider);
           },
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -64,8 +70,11 @@ class DashboardScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const _InsightsPanel(),
+                const _HangingVisitsPanel(),
                 const SizedBox(height: 20),
                 _KpiGrid(data: data),
+                const _PeriodSummaryPanel(),
+                const _TopDebtorsPanel(),
                 const _FinanceByDirectionPanel(),
                 const _RevenueTrendPanel(),
                 const _ExpenseBreakdownPanel(),
@@ -168,6 +177,289 @@ class _InsightCard extends StatelessWidget {
                   const Icon(Icons.chevron_right, size: 20),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// «Зависшие визиты» — 5 категорий застрявших случаев с конкретными
+/// пациентами (owner brief 2026-06-20). Самоочищается: когда проблема решена,
+/// визит пропадает. Панель скрыта, если зависших нет (или пока грузится/ошибка).
+class _HangingVisitsPanel extends ConsumerWidget {
+  const _HangingVisitsPanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref.watch(hangingVisitsProvider).maybeWhen(
+          data: (categories) {
+            if (categories.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 20),
+                Text('Зависшие визиты',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 12),
+                for (final c in categories) _HangingCategoryCard(category: c),
+              ],
+            );
+          },
+          orElse: () => const SizedBox.shrink(),
+        );
+  }
+}
+
+class _HangingCategoryCard extends StatelessWidget {
+  const _HangingCategoryCard({required this.category});
+
+  final HangingCategory category;
+
+  @override
+  Widget build(BuildContext context) {
+    final color =
+        category.isCritical ? Theme.of(context).colorScheme.error : AppColors.amber;
+    final extra = category.count - category.visits.length;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        leading: Icon(
+            category.isCritical
+                ? Icons.error_outline
+                : Icons.warning_amber_outlined,
+            color: color),
+        title: Text(category.label,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        trailing: Chip(
+          label: Text('${category.count}',
+              style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+          side: BorderSide(color: color.withValues(alpha: 0.4)),
+        ),
+        children: [
+          for (final v in category.visits)
+            ListTile(
+              dense: true,
+              title: Text(v.patientName),
+              subtitle: Text(v.detail),
+              trailing: const Icon(Icons.chevron_right, size: 20),
+              // Тап ведёт прямо в медкарту пациента, чтобы закрыть проблему.
+              onTap: () => context.go('/patients/${v.patientId}/card'),
+            ),
+          if (extra > 0)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text('… и ещё $extra',
+                  style: const TextStyle(color: AppColors.muted)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// «Сводка за период» — единый фильтр периода (owner brief 2026-06-20):
+/// Сегодня/Вчера/Неделя/Месяц/Квартал/Год/Произвольный. Метрики (выручка,
+/// расход, прибыль, пациенты, визиты, операции, диагностика, лечение)
+/// автоматически пересчитываются при смене периода.
+class _PeriodSummaryPanel extends ConsumerStatefulWidget {
+  const _PeriodSummaryPanel();
+
+  @override
+  ConsumerState<_PeriodSummaryPanel> createState() =>
+      _PeriodSummaryPanelState();
+}
+
+class _PeriodSummaryPanelState extends ConsumerState<_PeriodSummaryPanel> {
+  String _period = 'month';
+  DateTimeRange? _range;
+
+  static const _presets = <(String, String)>[
+    ('today', 'Сегодня'), ('yesterday', 'Вчера'), ('week', 'Неделя'),
+    ('month', 'Месяц'), ('quarter', 'Квартал'), ('year', 'Год'),
+  ];
+
+  static String _two(int n) => n.toString().padLeft(2, '0');
+  static String _iso(DateTime d) => '${d.year}-${_two(d.month)}-${_two(d.day)}';
+  static String _ru(DateTime d) => '${_two(d.day)}.${_two(d.month)}.${d.year}';
+
+  PeriodQuery get _query => _period == 'custom' && _range != null
+      ? (period: 'custom', from: _iso(_range!.start), to: _iso(_range!.end))
+      : (period: _period, from: null, to: null);
+
+  Future<void> _pickRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 3),
+      lastDate: now,
+      initialDateRange: _range,
+    );
+    if (picked != null) {
+      setState(() {
+        _range = picked;
+        _period = 'custom';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Сводка за период',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final p in _presets)
+                ChoiceChip(
+                  label: Text(p.$2),
+                  selected: _period == p.$1,
+                  onSelected: (_) => setState(() => _period = p.$1),
+                ),
+              ChoiceChip(
+                avatar: const Icon(Icons.date_range, size: 18),
+                label: Text(_period == 'custom' && _range != null
+                    ? '${_ru(_range!.start)} — ${_ru(_range!.end)}'
+                    : 'Период'),
+                selected: _period == 'custom',
+                onSelected: (_) => _pickRange(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          AsyncValueWidget<PeriodSummary>(
+            value: ref.watch(periodSummaryProvider(_query)),
+            onRetry: () => ref.invalidate(periodSummaryProvider(_query)),
+            builder: _metrics,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _metrics(PeriodSummary s) {
+    final tiles = <(String, String)>[
+      ('Выручка', formatMoney(s.revenue)),
+      ('Расход', formatMoney(s.expenses)),
+      ('Прибыль', formatMoney(s.profit)),
+      ('Пациенты', '${s.newPatients}'),
+      ('Визиты', '${s.visits}'),
+      ('Операции', '${s.operations}'),
+      ('Диагностика', '${s.diagnostics}'),
+      ('Лечение', '${s.treatments}'),
+    ];
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        for (final t in tiles) _PeriodMetricTile(label: t.$1, value: t.$2),
+      ],
+    );
+  }
+}
+
+class _PeriodMetricTile extends StatelessWidget {
+  const _PeriodMetricTile({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 170,
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(value,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 18)),
+              const SizedBox(height: 4),
+              Text(label,
+                  style: const TextStyle(
+                      color: AppColors.muted, fontSize: 12.5)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// «ТОП должников» — топ-5 пациентов с самым крупным долгом. Использует
+/// maybeWhen→SizedBox.shrink (без спиннера / AsyncValueWidget), чтобы панель
+/// никогда не блокировала pumpAndSettle в виджет-тестах и тихо скрывалась у
+/// пользователей без debts.read (провайдер вернёт ошибку → shrink).
+class _TopDebtorsPanel extends ConsumerWidget {
+  const _TopDebtorsPanel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref.watch(topDebtorsProvider).maybeWhen(
+          data: (rows) {
+            if (rows.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text('ТОП должников',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.bold)),
+                    ),
+                    TextButton(
+                      onPressed: () => context.go('/debts'),
+                      child: const Text('Все долги'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Card(
+                  child: Column(
+                    children: [for (final r in rows) _TopDebtorRow(row: r)],
+                  ),
+                ),
+              ],
+            );
+          },
+          orElse: () => const SizedBox.shrink(),
+        );
+  }
+}
+
+class _TopDebtorRow extends StatelessWidget {
+  const _TopDebtorRow({required this.row});
+
+  final DebtorRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      dense: true,
+      onTap: () => context.go('/debts/${row.patientId}'),
+      title: Text(row.patientName, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: Text(
+        formatMoney(row.totalDebt),
+        style: TextStyle(color: scheme.error, fontWeight: FontWeight.bold),
       ),
     );
   }

@@ -6,8 +6,10 @@ import '../../../core/network/dio_client.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
 import '../domain/finance_by_direction.dart';
+import '../domain/hanging_visit.dart';
 import '../domain/insight.dart';
 import '../domain/lead_source.dart';
+import '../domain/period_summary.dart';
 import '../domain/region_report.dart';
 import '../domain/revenue_trend.dart';
 
@@ -36,6 +38,33 @@ class DashboardRepository {
       return (resp.data as List<dynamic>)
           .map((e) => Insight.fromJson(e as Map<String, dynamic>))
           .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Зависшие визиты по 5 категориям с конкретными пациентами (самоочищается).
+  Future<List<HangingCategory>> hangingVisits() async {
+    try {
+      final resp = await _dio.get('/dashboard/hanging-visits');
+      return (resp.data as List<dynamic>)
+          .map((e) => HangingCategory.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Метрики за выбранный период (date_from/date_to — даты YYYY-MM-DD только для
+  /// custom; для пресетов сервер сам считает окно).
+  Future<PeriodSummary> periodSummary(PeriodQuery q) async {
+    try {
+      final resp = await _dio.get('/dashboard/period-summary', queryParameters: {
+        'period': q.period,
+        'date_from': ?q.from,
+        'date_to': ?q.to,
+      });
+      return PeriodSummary.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -163,6 +192,19 @@ final dashboardSummaryProvider =
 final insightsProvider = FutureProvider.autoDispose<List<Insight>>((ref) {
   return ref.watch(dashboardRepositoryProvider).insights();
 });
+
+final hangingVisitsProvider =
+    FutureProvider.autoDispose<List<HangingCategory>>((ref) {
+  return ref.watch(dashboardRepositoryProvider).hangingVisits();
+});
+
+/// Ключ периода для [periodSummaryProvider]: пресет + опц. custom-даты
+/// (YYYY-MM-DD). Record → value-equality, поэтому family кэширует по периоду.
+typedef PeriodQuery = ({String period, String? from, String? to});
+
+final periodSummaryProvider =
+    FutureProvider.autoDispose.family<PeriodSummary, PeriodQuery>(
+        (ref, q) => ref.watch(dashboardRepositoryProvider).periodSummary(q));
 
 /// «Источники пациентов» за текущий месяц (с 1-го числа по сегодня).
 /// Дефолтный диапазон совпадает с бэкендовским «month-to-date», но шлём явно,

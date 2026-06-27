@@ -22,7 +22,6 @@ const Map<String, String> _navIconKey = {
   '/analytics': 'analytics',
   '/finance': 'finance',
   '/inventory': 'inventory',
-  '/lab': 'lab',
   '/notifications': 'notifications',
   '/admin': 'settings',
   '/devices': 'devices',
@@ -96,6 +95,15 @@ const kAppDestinations = <AppDestination>[
       'payroll.read',
     ],
   ),
+  // Долги (debt management) — список должников + детализация по пациенту +
+  // частичное погашение. Стоит сразу после Финансы. Gate: debts.read.
+  AppDestination(
+    Icons.account_balance_wallet_outlined,
+    Icons.account_balance_wallet,
+    'Долги',
+    '/debts',
+    permissions: ['debts.read'],
+  ),
   // Объединённый кабинет врача «Приём» (exams.write): вкладки «Моя очередь»
   // (свои V-талоны) + «Лечение» (Л-талоны). Врач приземляется сюда; диагност и
   // процедурная сестра пользуются отдельными «Моя очередь» / «Лечение» ниже.
@@ -106,9 +114,10 @@ const kAppDestinations = <AppDestination>[
     '/priem',
     permissions: ['exams.write'],
   ),
-  // Личное рабочее место диагноста «Диагностика» (D-дорожка): кабинет из профиля,
-  // вызвал пациента → справа карта. Скрыто у врача (exams.write) — он работает во
-  // вкладке «Приём».
+  // Личное рабочее место очереди — врач «Мой приём» (V), диагност «Диагностика»
+  // (D): одна дорожка, кабинет из профиля. Gate device_results.create отделяет
+  // клиническую пару (Врач+Диагност) от ресепшена; стоит ПЕРЕД «Очередь», чтобы
+  // диагност приземлялся сюда. Экран сам выводит дорожку из прав (exams.write).
   AppDestination(
     Icons.assignment_ind_outlined,
     Icons.assignment_ind,
@@ -195,13 +204,6 @@ const kAppDestinations = <AppDestination>[
     permissions: ['inventory.read'],
   ),
   AppDestination(
-    Icons.science_outlined,
-    Icons.science,
-    'Лаборатория',
-    '/lab',
-    permissions: ['lab.read'],
-  ),
-  AppDestination(
     Icons.face_outlined,
     Icons.face,
     'Face ID',
@@ -223,6 +225,30 @@ const kAppDestinations = <AppDestination>[
     // Reception (services.create) manages the catalog from its own menu;
     // director keeps services.create too. Diagnost (services.read only) doesn't.
     permissions: ['services.create'],
+  ),
+  // Аудит действий (кто/что/когда/устройство) — директор + Супер Админ.
+  AppDestination(
+    Icons.fact_check_outlined,
+    Icons.fact_check,
+    'Аудит',
+    '/audit',
+    permissions: ['audit.read'],
+  ),
+  // Системный мониторинг (онлайн/входы/ошибки/сессии) — директор + Супер Админ.
+  AppDestination(
+    Icons.monitor_heart_outlined,
+    Icons.monitor_heart,
+    'Мониторинг',
+    '/monitoring',
+    permissions: ['audit.read'],
+  ),
+  // Архив (авто-архив старых визитов/операций/уведомлений) — директор + Супер Админ.
+  AppDestination(
+    Icons.archive_outlined,
+    Icons.archive,
+    'Архив',
+    '/archive',
+    permissions: ['archive.manage'],
   ),
   // Системное администрирование (сотрудники, филиалы, справочники) —
   // только Супер Админ (users.create). Директор сюда не заходит.

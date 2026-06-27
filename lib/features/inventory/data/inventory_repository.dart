@@ -58,12 +58,15 @@ class InventoryRepository {
   }
 
   /// Product catalog (Page envelope; we only need the items for dropdowns).
-  Future<List<Product>> products({String? q}) async {
+  /// [productType] (medicine | consumable | material | instrument), when set,
+  /// restricts the catalog to that class — e.g. a consumables checkbox picker.
+  Future<List<Product>> products({String? q, String? productType}) async {
     try {
       // 500 = backend max page size. Searchable pickers are the real fix once
       // the catalog outgrows one page (tracked in AGENTS.md §7 leftovers).
       final resp = await _dio.get('/inventory/products', queryParameters: {
         'q': ?q,
+        'product_type': ?productType,
         'offset': 0,
         'limit': 500,
       });

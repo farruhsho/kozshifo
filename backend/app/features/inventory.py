@@ -125,6 +125,9 @@ def list_products(
     db: Annotated[Session, Depends(get_db)],
     q: str | None = Query(None, description="Search by name, SKU or barcode"),
     category_id: UUID | None = None,
+    product_type: str | None = Query(
+        None, description="Filter by class: medicine | consumable | material | instrument"
+    ),
     offset: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ) -> Page[ProductOut]:
@@ -134,6 +137,8 @@ def list_products(
         stmt = stmt.where(or_(Product.name.ilike(like), Product.sku.ilike(like), Product.barcode.ilike(like)))
     if category_id:
         stmt = stmt.where(Product.category_id == category_id)
+    if product_type:
+        stmt = stmt.where(Product.product_type == product_type)
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     rows = db.execute(stmt.order_by(Product.name).offset(offset).limit(limit)).scalars().all()
     return Page(items=[ProductOut.model_validate(p) for p in rows], total=total, offset=offset, limit=limit)

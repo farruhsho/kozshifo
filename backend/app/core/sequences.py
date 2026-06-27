@@ -12,7 +12,6 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.lab import LabOrder
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
@@ -49,16 +48,6 @@ def next_visit_no(db: Session) -> str:
         n += 1
         candidate = f"V-{day}-{n:05d}"
         if db.execute(select(Visit.id).where(Visit.visit_no == candidate)).first() is None:
-            return candidate
-
-
-def next_lab_no(db: Session) -> str:
-    day = _today_str()
-    n = db.execute(select(func.count()).select_from(LabOrder)).scalar_one()
-    while True:
-        n += 1
-        candidate = f"LAB-{day}-{n:05d}"
-        if db.execute(select(LabOrder.id).where(LabOrder.order_no == candidate)).first() is None:
             return candidate
 
 

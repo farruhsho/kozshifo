@@ -388,6 +388,150 @@ Phase 3a/3c/3d query-only, Phase 3b adds `services.is_diagnostic`).
   «Направить на операцию», new `/operations` department screen
   (schedule/start/perform/complete). Migration `a1c4e7f9d2b0`.
 
+- **ERP optimization wave (owner brief 2026-06-20) — Phase 1: ✅ done** (branch
+  `feat/erp-optimization-2026-06-20`). 14-area brief; 8-phase plan (1 inventory-UX+lab-removal,
+  2 op-cost, 3 insights/notifications/dashboard-filters, 4 «талон» facade+role-scoped clinical,
+  5 debt, 6 analytics+reports, 7 super-admin, 8 doc-viewer). **Phase 1 shipped:** (a) **Laboratory
+  module REMOVED entirely** — backend feature/model/schema/`next_lab_no`/`lab.*` perms + Doctor
+  template, frontend `lib/features/lab/` + `/lab` route/nav; migration `32eb64bbf044` drops
+  `lab_orders` (the attachments document-kind `"lab"` is a *separate* file-category feature, kept).
+  (b) **Inventory/operations UX:** reusable `lib/core/widgets/quantity_stepper.dart` ([−] qty [+],
+  unit hidden at qty==1) in write-off + perform dialogs; the **«Выполнить» dialog is now a checkbox
+  mass-write-off** (template still auto-written-off server-side — excluded from the list to avoid
+  double-deduct; instruments hidden); `GET /operation-types/{id}/availability` gained
+  `feasibility_count`/`min_feasibility`/`status`(🟢🟡🔴, thresh 5)/`bottleneck` with a traffic-light
+  panel («Хватит ещё на N операций»); `GET /inventory/products` gained a `product_type` filter.
+  **⚠️ alembic head note:** the finance module + owner-reqs moved the head past `e8c2a4f9b73d`; the
+  real pre-wave head was `3f7348baf0c4`, now `32eb64bbf044`. Gates: pytest 300 · flutter 167 ·
+  analyze clean · `alembic upgrade head` clean.
+
+- **ERP optimization wave — Phase 2 (flexible operation cost): ✅ done.** An operation's cost is
+  **no longer fixed at planning** — editable before/during/after until it is *financially closed*.
+  `operations.financially_closed_at` (+`_by_id`; migration `b6d2f8a1c3e5`, head now `b6d2f8a1c3e5`).
+  New `POST /operations/{id}/set-price` (repoints the billed `VisitItem` with **no "refund first"
+  block**; returns `{operation, visit_balance, refund_due}` — overpayment on a price cut surfaces a
+  refund, collected/returned via the till, never auto-refunded) and `POST /operations/{id}/financial-close`
+  (freeze; after it set-price/reschedule/unschedule/cancel → 409). `close_visit` auto-closes its
+  operations' finances. The old schedule "paid → refund first" re-price lock is **relaxed** to the
+  financial-close gate (unschedule/cancel keep refund-first as they de-bill). Flutter: «Изменить цену» +
+  «Закрыть счёт» actions + «счёт закрыт» badge. Gates: pytest 304 · flutter 167 · analyze clean.
+
+- **ERP optimization wave — Phase 3a/3b: ✅ done** (insights engine). **3a smart notifications:**
+  the insight rules are now a pure, shared `dashboard.compute_insights(db)`; `GET /dashboard/insights`
+  = compute + Telegram-push of criticals; **new `GET /notifications/active`** (notifications.read) returns
+  that LIVE, computed-on-read set — a notification exists only while its problem exists. The stored
+  `GET /notifications` journal is now history/delivery-log only. Flutter «Уведомления» consumes the live
+  endpoint (deep-linking insight cards) and **dropped the fake client-side dismissal**. **3b hanging
+  visits:** `GET /dashboard/hanging-visits` (dashboard.view) returns the actual stuck patients in **5
+  categories** with per-state freshness thresholds (no_doctor>4h critical, in_doctor>3h, diagnostic
+  done w/o result file [no today-window], operation in_progress/performed/scheduled-past, treatment
+  prescribed); `GET /visits` gained a `flow_status` CSV filter; Flutter shows a «Зависшие визиты»
+  dashboard panel (expandable, tap → patient card). Gates: pytest 313 · flutter 168 · analyze clean.
+  **Phase 3c (dashboard period filters Today/…/Custom) is the remaining Phase-3 piece** — it overlaps
+  Phase 6 director-analytics, so the per-entity breakdowns will be built period-aware there.
+
+- **ERP optimization wave — Phase 3c: ✅ done (Phase 3 COMPLETE).** Dashboard period filter:
+  `_resolve_period_dates(period, date_from, date_to)` (presets Today/Yesterday/Week/Month/Quarter/Year
+  «to date» + Custom range, 422-validated) + **`GET /dashboard/period-summary`** (dashboard.view) →
+  revenue/expenses/profit/new_patients/visits/operations/diagnostics/treatments for the window. Flutter:
+  `PeriodSummary` model, `periodSummaryProvider` family keyed by a `PeriodQuery` record, a «Сводка за
+  период» dashboard panel (preset chips + `showDateRangePicker`, 8 metric tiles, auto-recompute on
+  change). Per-entity (doctor/diagnostician/region) period breakdowns are deferred to Phase 6 (built
+  period-aware there). Gates: pytest 318 · flutter 168 · analyze clean. **Branch pushed to origin**
+  (`feat/erp-optimization-2026-06-20`); no PR yet (no gh).
+
+- **ERP optimization wave — Phase 4 («Талон» facade + fix): ✅ done.** Owner chose the **facade
+  path** — the `queue_tickets` table / numbering / TV board stay internal. **The «Нет активного талона»
+  bug is fixed**: new `POST /visits/{id}/finish-appointment` (require_any_permission `exams.write` |
+  `queue.manage`) advances the visit flow (→ follow_up/completed) **off the visit**, closing an active
+  doctor ticket if one exists but never requiring one; the doctor card's «Завершить приём» now calls
+  `doctorRepository.finishAppointment(visitId)` (no more ticket lookup / error). **Terminology «талон»
+  → «номер»/«очередь»** across UI, the receipt PDF (now «НОМЕР В ОЧЕРЕДИ»), the TV voice phrase, and the
+  queue-overload insight — internal identifiers (`QueueTicket`, `ticket_number`, table) untouched.
+  Role-scoped clinical actions (diagnost conclusions via `diagnoses.record` + attachments; doctor
+  referral/treatment) already exist and are now unblocked — no permission change made (a strict
+  "only the diagnostician records diagnoses" would mean dropping `diagnoses.record` from Doctor;
+  left for owner confirmation since the doctor's 025-8 ташхис is a separate `exams.write` path).
+  Gates: pytest 322 · flutter 168 · analyze clean. **Owner decided 2026-06-21: keep `diagnoses.record`
+  for BOTH doctor and diagnost (no change).**
+
+- **ERP optimization wave — Phase 5 (debt management): ✅ done.** «Управление задолженностями» built as a
+  **view over unpaid visit balances + the Payment ledger — no separate `Debt` table** (a stored copy would
+  drift from the live balance), **no migration**. `GET /debts` (debtors, highest first; small `limit` feeds
+  the dashboard TOP-debtors card) and `GET /debts/patient/{id}` (owing visits with amount/date/services/
+  remaining + full payment history date/sum/cashier/comment), gated new `debts.read` (Reception/Cashier;
+  Director auto). **Repayment — incl. partial — reuses `POST /payments`** (`issue_queue_ticket:false`), one
+  payment path. Flutter `lib/features/debt/`: models + repo (`debtors`/`patientDebt`/`repay`) + providers
+  (`debtorsProvider`/`topDebtorsProvider`/`patientDebtProvider`), a «Долги» screen + per-patient detail
+  (repay dialog amount≤remaining/method/comment, history with refunds), routes `/debts` + `/debts/:id`
+  (guard inherits `debts.read`), «Долги» nav, and a «ТОП должников» dashboard card. Gates: pytest 324 ·
+  flutter 168 · analyze clean.
+
+- **ERP optimization wave — Phase 6a (director analytics): ✅ done.** `reports.py` is already period-aware
+  (`date_from`/`date_to`). Enriched: **by-doctor** +distinct_patients / repeat_patients (>1 lifetime visit) /
+  avg_check / avg_consult_minutes (efficiency from queue `called_at→done_at`, computed in Python for cross-DB);
+  **by-diagnostician** +studies (done diagnostic tickets) / avg_minutes; **by-operation/SurgeonRow** +cogs /
+  profit per surgeon (COGS from the stock ledger per-op, same join as the operations day-summary) + clinic-wide
+  cogs/profit; **new `GET /reports/profit-by-region`** (+`.csv`) — revenue + new patients per region. CSVs
+  extended. Gotcha fixed: a count-only aggregate over `Payment` needs `.select_from(Payment)` or the FROM
+  resolves to `Visit` and the join is ambiguous. Gates: pytest 326. **Phase 6b/6c remain:** report constructor
+  (extra filters + PDF via reportlab + Excel via openpyxl) and the Flutter reports UI surfacing the new columns
+  + a profit-by-region tab + export toggle. (Treatment revenue analytics has no clean price source — `Treatment`
+  has no `service_id` — so it's deferred pending owner input.)
+
+- **ERP optimization wave — Phase 6b/6c: ✅ done (Phase 6 COMPLETE).** **6b export:** `+openpyxl`;
+  `core/report_export.py` `build_xlsx` (openpyxl) + `build_pdf` (reportlab, **reuses the bundled DejaVu font
+  via `print_forms._register_fonts()`** so Cyrillic doesn't tofu); `reports.py` got `_xlsx`/`_pdf` helpers, each
+  report's header+rows extracted into a shared `_<name>_table`, and `.xlsx`/`.pdf` endpoints for all 7 reports
+  (inherit `reports.view`). **6c Flutter:** the reports models gained the new columns + a `RegionRevenueRow`;
+  the repo got `ReportFormat{csv,xlsx,pdf}` + `download(slug, range, format)` + `profitByRegion`; the reports
+  screen shows the new doctor/diagnostician/surgeon columns, a new «Прибыль по регионам» tab, and an «Экспорт»
+  menu (CSV/Excel/PDF). Gates: pytest 328 · flutter 168 · analyze clean. Deferred: per-entity report-constructor
+  filters (doctor/service/etc. as query params) — period filter + per-entity breakdowns already cover most needs.
+
+- **ERP optimization wave — Phase 7a/7b (Super Admin pt.1): ✅ done.** **Audit «who/what/when/device»:**
+  `AuditLog` gained `user_agent` (migration `c5f1a2d3b4e6`, head now `c5f1a2d3b4e6`); `record_audit` fills
+  `ip_address`+`user_agent` from a **request-scoped ContextVar** (`core/audit.set_request_context`) set by an
+  audit middleware in `main.py`, so the device is recorded on EVERY mutation (ContextVar copies into the
+  threadpool running sync endpoints). New `GET /admin/audit-logs` (`audit.read`) — filters actor/entity_type/
+  action/date + pagination + joined actor name/email (`features/audit.py`, `schemas/audit.py`). Flutter
+  `lib/features/audit/` (model + repo + «Аудит действий» screen), route `/audit` + nav (gated `audit.read`); the
+  network `Page` import is aliased to dodge Flutter's `Page`. **Custom roles:** 4 editable starter roles
+  (Старший ресепшен / Главный врач / Старшая медсестра / Операционный менеджер) seeded via
+  `STARTER_ROLE_TEMPLATES` + `_seed_starter_roles` as `is_system=False` (created once; owner can edit/delete).
+  Gates: pytest 332 · flutter 168 · analyze clean. Gotcha: a test deleting a seeded role mutated the shared
+  session DB and flaked — removed (the `is_system=False` assert already proves deletability).
+
+- **ERP optimization wave — Phase 7c/7d (Super Admin pt.2): ✅ done (Phase 7 COMPLETE).** **7c monitoring:**
+  `UserSession` (login history; migration `d7a3f1b9c2e4`) created on login; `core/monitoring.py` holds an
+  **in-memory** registry — online last-seen (touched O(1) in `get_current_user`, no DB write on the hot path),
+  ring buffers of slow requests + 5xx errors, and uptime (a `_monitor` middleware times every request). New
+  `GET /admin/monitoring` + `GET /admin/sessions` (gated `audit.read`); Flutter `lib/features/monitoring/`
+  («Мониторинг» screen + nav). In-memory state resets on restart / isn't shared across workers (fine for a
+  single clinic server; Redis for scale). **7d archive:** `archived_at` on visits/operations/notifications
+  (migration `e9b4c2a7f1d8`, head now `e9b4c2a7f1d8`); new `archive.manage` perm; `GET /admin/archive` (summary
+  archived vs archivable) + `POST /admin/archive/run?older_than_days=` (stamps archived_at on old finished
+  visits/operations + old notifications, idempotent — wire to a nightly job if wanted); the stored
+  `GET /notifications` journal now excludes archived. Flutter `lib/features/archive/` («Архив» screen + nav).
+  Gates: pytest 336 · flutter 168 · analyze clean.
+
+- **ERP optimization wave — Phase 8 (document viewer): ✅ done (WAVE COMPLETE — all 8 phases).** In-card
+  document viewing: `showDocumentViewer` / `DocumentViewerDialog` (lib/features/attachments/) — an
+  Информация / Просмотр toggle + toolbar (zoom −/+/reset for images · fullscreen · download · print). Images
+  use `InteractiveViewer` + `Image.memory`; **PDFs render inline on web via a browser `<iframe>` (blob URL)**
+  — `inline_pdf.dart` conditional import (`inline_pdf_web.dart` registers an iframe view factory via
+  `dart:ui_web` + `package:web`; `inline_pdf_io.dart` falls back to "open externally"). **No `pdfx`/native PDF
+  dep** (avoids the §6 build_runner native-hook gotcha); the web iframe reuses the same blob+iframe interop as
+  `printBytes`. `AttachmentsSection` opens the viewer on tap / a «Просмотр» button. Gates: flutter 169 · analyze
+  clean (backend untouched, pytest 336). ⚠️ Run `flutter build web` before deploy to fully validate the web
+  iframe path (analyze covers it; a dart2js build is the final check).
+
+  **WAVE SUMMARY (owner brief 2026-06-20, branch `feat/erp-optimization-2026-06-20`, pushed):** all 8 phases
+  shipped — 1 lab-removal+inventory-UX · 2 flexible op cost · 3 insights/notifications/hanging/dashboard
+  filters · 4 «талон» facade+fix · 5 debt module · 6 director analytics+report export (PDF/Excel) · 7 super
+  admin (audit/roles/monitoring/archive) · 8 document viewer. Migrations: `32eb64bbf044`, `b6d2f8a1c3e5`,
+  `c5f1a2d3b4e6`, `d7a3f1b9c2e4`, `e9b4c2a7f1d8` (head). Final gates: pytest 336 · flutter 169 · analyze clean.
+
 ## 2. Repo map (where things live)
 
 ```

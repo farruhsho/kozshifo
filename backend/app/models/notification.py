@@ -8,11 +8,13 @@ the business request that triggered it (see app.core.notify).
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.types import UTCDateTime
 from app.models.base import TimestampMixin, UUIDPKMixin
 
 
@@ -35,3 +37,6 @@ class Notification(UUIDPKMixin, TimestampMixin, Base):
     branch_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("branches.id", ondelete="SET NULL"), nullable=True
     )
+    # Auto-archive (Super Admin): old delivery-log rows. NULL = live; archived
+    # rows drop out of the stored journal (GET /notifications).
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)

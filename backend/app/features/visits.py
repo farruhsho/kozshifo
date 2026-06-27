@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
-from app.core.deps import CurrentUser, require_permission
+from app.core.deps import CurrentUser, require_any_permission, require_permission
 from app.core.flow import advance_flow
 from app.core.sequences import next_ticket_number, next_visit_no
 from app.models.branch import Branch
@@ -70,6 +70,9 @@ def list_visits(
     patient_id: UUID | None = None,
     branch_id: UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
+    flow_status: str | None = Query(
+        None, description="Filter by flow_status (comma-separated for several, "
+                          "e.g. in_doctor or registered,waiting_doctor)"),
     owing: bool = Query(False, description="Only visits that still owe money (payable > paid)"),
     opened_from: datetime | None = None,
     opened_to: datetime | None = None,
@@ -83,6 +86,11 @@ def list_visits(
         stmt = stmt.where(Visit.branch_id == branch_id)
     if status_filter:
         stmt = stmt.where(Visit.status == status_filter)
+    # flow_status deep-link (hanging-visit drill-down): one value or a CSV list.
+    if flow_status:
+        states = [s.strip() for s in flow_status.split(",") if s.strip()]
+        if states:
+            stmt = stmt.where(Visit.flow_status.in_(states))
     # opened_at date-window (half-open [from, to) of absolute UTC instants — the
     # visit-history screen passes the selected local day bounds as UTC). opened_at
     # is UTCDateTime (aware UTC on both Postgres and SQLite), so the comparison is
@@ -440,9 +448,63 @@ def close_visit(
         raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot close a {visit.status} visit")
     visit.status = "completed"
     visit.closed_at = datetime.now(timezone.utc)
+    # Closing the visit freezes its operations' finances — the price/bill can no
+    # longer be edited (owner brief 2026-06-20: cost editable UNTIL financial
+    # close; visit close IS such a close). Cancelled/already-closed ops are left.
+    closing_ops = db.execute(
+        select(Operation).where(
+            Operation.visit_id == visit.id,
+            Operation.status != "cancelled",
+            Operation.financially_closed_at.is_(None),
+        )
+    ).scalars().all()
+    for op in closing_ops:
+        op.financially_closed_at = visit.closed_at
+        op.financially_closed_by_id = actor.id
     advance_flow(db, visit, "visit_closed")  # workflow engine (same transaction)
     record_audit(db, action="close", entity_type="visit", entity_id=visit.id, actor_id=actor.id,
                  summary=f"Closed visit {visit.visit_no} (balance {visit.balance})")
+    db.commit()
+    db.refresh(visit)
+    return visit
+
+
+@router.post("/{visit_id}/finish-appointment", response_model=VisitOut)
+def finish_appointment(
+    visit_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(
+        require_any_permission("exams.write", "queue.manage"))],
+) -> Visit:
+    """Завершить приём врача — переводит визит в follow_up/completed через flow
+    engine, работая ОТ ВИЗИТА, а не от наличия активного талона очереди (owner
+    brief 2026-06-20: «Нет активного талона» больше не блокирует завершение).
+    Если активный талон врача есть — закрывает его (убирает с табло)."""
+    visit = db.get(Visit, visit_id)
+    if visit is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Cannot finish an appointment on a {visit.status} visit")
+    # Close an active doctor-track ticket if one exists, so it leaves the TV
+    # board — but its absence must NOT block finishing (the whole point of the fix).
+    ticket = db.execute(
+        select(QueueTicket).where(
+            QueueTicket.visit_id == visit.id,
+            QueueTicket.track == "doctor",
+            QueueTicket.status.in_(("waiting", "called", "serving")),
+        ).limit(1)
+    ).scalar_one_or_none()
+    if ticket is not None:
+        ticket.status = "done"
+        ticket.done_at = datetime.now(timezone.utc)
+        record_audit(db, action="update", entity_type="queue_ticket", entity_id=ticket.id,
+                     actor_id=actor.id, branch_id=visit.branch_id,
+                     summary=f"Ticket {ticket.ticket_number} -> done (приём завершён)")
+    advance_flow(db, visit, "appointment_finished")  # follow_up | completed
+    record_audit(db, action="finish_appointment", entity_type="visit", entity_id=visit.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Приём завершён по визиту {visit.visit_no}")
     db.commit()
     db.refresh(visit)
     return visit

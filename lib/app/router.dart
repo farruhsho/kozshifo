@@ -6,6 +6,9 @@ import '../core/widgets/app_shell.dart';
 import '../features/access_control/presentation/access_control_screen.dart';
 import '../features/admin/presentation/admin_screen.dart';
 import '../features/analytics/presentation/analytics_screen.dart';
+import '../features/archive/presentation/archive_screen.dart';
+import '../features/audit/presentation/audit_log_screen.dart';
+import '../features/monitoring/presentation/monitoring_screen.dart';
 import '../features/reports/presentation/reports_screen.dart';
 import '../features/attendance/presentation/attendance_screen.dart';
 import '../features/auth/application/auth_controller.dart';
@@ -14,11 +17,12 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/calls/presentation/call_devices_screen.dart';
 import '../features/calls/presentation/calls_screen.dart';
 import '../features/dashboard/presentation/dashboard_screen.dart';
+import '../features/debt/presentation/debts_screen.dart';
+import '../features/debt/presentation/patient_debt_detail_screen.dart';
 import '../features/devices/presentation/devices_screen.dart';
 import '../features/doctor/presentation/patient_card_screen.dart';
 import '../features/finance/presentation/finance_screen.dart';
 import '../features/inventory/presentation/inventory_screen.dart';
-import '../features/lab/presentation/lab_screen.dart';
 import '../features/notifications/presentation/notifications_screen.dart';
 import '../features/operations/presentation/operations_screen.dart';
 import '../features/patients/presentation/patient_history_screen.dart';
@@ -75,7 +79,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => const AnalyticsScreen(),
           ),
           GoRoute(path: '/reports', builder: (_, _) => const ReportsScreen()),
-          GoRoute(path: '/lab', builder: (_, _) => const LabScreen()),
           GoRoute(
             path: '/notifications',
             builder: (_, _) => const NotificationsScreen(),
@@ -102,6 +105,14 @@ final routerProvider = Provider<GoRouter>((ref) {
                 PatientHistoryScreen(patientId: state.pathParameters['id']!),
           ),
           GoRoute(path: '/finance', builder: (_, _) => const FinanceScreen()),
+          GoRoute(path: '/debts', builder: (_, _) => const DebtsScreen()),
+          // Detail under the /debts prefix → inherits the Долги destination's
+          // debts.read redirect guard (same pattern as /patients/:id/*).
+          GoRoute(
+            path: '/debts/:id',
+            builder: (_, state) =>
+                PatientDebtDetailScreen(patientId: state.pathParameters['id']!),
+          ),
           GoRoute(
             path: '/attendance',
             builder: (_, _) => const AttendanceScreen(),
@@ -121,6 +132,9 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(path: '/services', builder: (_, _) => const ServicesScreen()),
           GoRoute(path: '/admin', builder: (_, _) => const AdminScreen()),
+          GoRoute(path: '/audit', builder: (_, _) => const AuditLogScreen()),
+          GoRoute(path: '/monitoring', builder: (_, _) => const MonitoringScreen()),
+          GoRoute(path: '/archive', builder: (_, _) => const ArchiveScreen()),
         ],
       ),
     ],

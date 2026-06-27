@@ -287,7 +287,7 @@ def build_receipt_pdf(
     rule()
 
     if queue_ticket_number:
-        line("ТАЛОН В ОЧЕРЕДЬ", size=7.5, center=True)
+        line("НОМЕР В ОЧЕРЕДИ", size=7.5, center=True)
         y -= 1 * mm
         boxed_center(queue_ticket_number, size=22, gap=4 * mm)
         rule()

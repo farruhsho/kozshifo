@@ -166,7 +166,60 @@ def test_availability_empty_template_is_trivially_ok(client, auth):
     assert created.status_code == 201, created.text
 
     body = _availability(client, auth, created.json()["id"], branch_id).json()
-    assert body == {"ok": True, "items": []}
+    # No consumables required → nothing can constrain the operation.
+    assert body == {
+        "ok": True,
+        "items": [],
+        "min_feasibility": 0,
+        "status": "green",
+        "bottleneck": None,
+    }
+
+
+def test_availability_feasibility_traffic_light(client, auth):
+    """Feasibility = how many whole operations current stock supports, per line
+    (feasibility_count) and overall (min_feasibility), with a 🟢/🟡/🔴 status and
+    the limiting product surfaced as the bottleneck. Mirrors the FEFO guarantee
+    that perform enforces — this is the advisory pre-check the planner sees."""
+    branch_id = _branch_id(client, auth)
+    _drain_to_zero(client, auth, branch_id, "Тест: обнуление перед проверкой запаса операций")
+    phaco = _operation_type(client, auth, "PHACO")
+
+    # Not-enough: stock everything generously EXCEPT the knife (0 in stock).
+    _receipt(client, auth, branch_id, [
+        ("IOL-001", "10"), ("VISC-001", "10"), ("SYR-1", "100"), ("GLOVES-ST", "100"),
+    ])
+    short = _availability(client, auth, phaco["id"], branch_id).json()
+    by_name = {i["product_name"]: i for i in short["items"]}
+    assert by_name["Нож офтальмологический 2.75 мм"]["feasibility_count"] == 0
+    assert by_name["Шприц 1 мл"]["feasibility_count"] == 50  # 100 // 2
+    assert short["min_feasibility"] == 0
+    assert short["status"] == "red"
+    assert short["bottleneck"] == "Нож офтальмологический 2.75 мм"
+    assert short["ok"] is False
+
+    # Low: exactly 3 knives → floor(3/1)=3 ops, still the limiting line.
+    _receipt(client, auth, branch_id, [("KNIFE-275", "3")])
+    low = _availability(client, auth, phaco["id"], branch_id).json()
+    knife = next(i for i in low["items"]
+                 if i["product_name"] == "Нож офтальмологический 2.75 мм")
+    assert knife["feasibility_count"] == 3
+    assert low["min_feasibility"] == 3  # < LOW_FEASIBILITY_THRESHOLD (5)
+    assert low["status"] == "yellow"
+    assert low["bottleneck"] == "Нож офтальмологический 2.75 мм"
+    assert low["ok"] is True
+
+    # Plenty: top knives up so the limiting line supports >= threshold ops.
+    _receipt(client, auth, branch_id, [("KNIFE-275", "20")])  # 23 total
+    plenty = _availability(client, auth, phaco["id"], branch_id).json()
+    assert plenty["min_feasibility"] >= 5
+    assert plenty["status"] == "green"
+    assert plenty["bottleneck"] is None
+    assert plenty["ok"] is True
+
+    # Cleanup discipline: drain back to zero so later files keep KNIFE-275 == 0.
+    _drain_to_zero(client, auth, branch_id, "Тест: возврат остатков к нулю после проверки запаса")
+    assert _on_hand(client, auth, branch_id, "KNIFE-275") == Decimal("0")
 
 
 def test_prescribe_priority_urgent_and_default_normal(client, auth):

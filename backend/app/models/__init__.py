@@ -13,7 +13,6 @@ from app.models.exam import EyeExam
 from app.models.exam_template import ExamTemplate
 from app.models.face_terminal import FaceTerminal
 from app.models.inventory import InventoryCategory, Product, StockBatch, StockMovement, Supplier
-from app.models.lab import LabOrder
 from app.models.notification import Notification
 from app.models.operation import Operation, OperationType, OperationTypeConsumable, Treatment
 from app.models.patient import Patient
@@ -21,6 +20,7 @@ from app.models.payment import Payment
 from app.models.queue import QueueTicket
 from app.models.rbac import Permission, Role, role_permissions, user_permissions, user_roles
 from app.models.user import User
+from app.models.user_session import UserSession
 from app.models.visit import Visit, VisitItem
 
 __all__ = [
@@ -40,7 +40,6 @@ __all__ = [
     "EyeExam",
     "FaceTerminal",
     "InventoryCategory",
-    "LabOrder",
     "Notification",
     "Operation",
     "OperationType",
@@ -59,6 +58,7 @@ __all__ = [
     "Supplier",
     "Treatment",
     "User",
+    "UserSession",
     "Visit",
     "VisitDiagnosis",
     "VisitItem",

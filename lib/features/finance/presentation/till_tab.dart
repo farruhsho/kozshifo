@@ -54,7 +54,7 @@ class _TillTabState extends ConsumerState<TillTab> {
         context,
         ticket == null
             ? 'Оплачено полностью. Чек ${result.payment.receiptNo}.'
-            : 'Оплачено полностью. Талон диагностики: $ticket',
+            : 'Оплачено полностью. Номер очереди: $ticket',
       );
     }
   }

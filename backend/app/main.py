@@ -11,8 +11,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import IntegrityError
 
+import time
+
 from app import __version__
 from app.api import api_router
+from app.core import monitoring
+from app.core.audit import set_request_context
 from app.core.config import settings
 from app.core.database import create_all
 from app.seed import run_seed
@@ -68,6 +72,31 @@ def create_app() -> FastAPI:
     # Starlette spools multipart parts to disk before handlers run. The upload
     # endpoint additionally enforces its own per-file cap with a chunked read.
     max_body = 25 * 1024 * 1024
+
+    # Capture the client IP + User-Agent into the request-scoped audit context so
+    # every mutation's audit row records «с какого устройства» (read by
+    # core.audit.record_audit). Set before the handler runs; the value is copied
+    # into the threadpool that executes sync endpoints.
+    @app.middleware("http")
+    async def _audit_context(request: Request, call_next):
+        client_ip = request.client.host if request.client else None
+        set_request_context(ip=client_ip, user_agent=request.headers.get("user-agent"))
+        return await call_next(request)
+
+    # System monitoring: time every request; record slow ones + server errors
+    # into the in-memory ring buffers (Super Admin → системный мониторинг).
+    @app.middleware("http")
+    async def _monitor(request: Request, call_next):
+        start = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            monitoring.record_request(request.method, request.url.path, 500,
+                                      (time.perf_counter() - start) * 1000)
+            raise
+        monitoring.record_request(request.method, request.url.path, response.status_code,
+                                  (time.perf_counter() - start) * 1000)
+        return response
 
     @app.middleware("http")
     async def _limit_request_body(request: Request, call_next):

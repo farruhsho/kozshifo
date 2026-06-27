@@ -202,6 +202,32 @@ def test_expired_batches_never_consumed_without_explicit_disposal(client, auth):
     assert {b["batch_no"]: b["quantity"] for b in row2["batches"]} == {"FRESH": "3.000"}
 
 
+def test_products_filtered_by_product_type(client, auth):
+    """?product_type=… returns only that class; omitting it returns all."""
+    med = client.post(f"{API}/inventory/products", headers=auth, json={
+        "sku": "PT-MED-1", "name": "Тест-лекарство", "unit": "шт",
+        "min_stock": "1", "product_type": "medicine"})
+    assert med.status_code == 201, med.text
+    inst = client.post(f"{API}/inventory/products", headers=auth, json={
+        "sku": "PT-INST-1", "name": "Тест-инструмент", "unit": "шт",
+        "min_stock": "1", "product_type": "instrument"})
+    assert inst.status_code == 201, inst.text
+
+    filtered = client.get(f"{API}/inventory/products", headers=auth,
+                          params={"product_type": "medicine", "limit": 500}).json()["items"]
+    types = {p["product_type"] for p in filtered}
+    assert types == {"medicine"}
+    filtered_skus = {p["sku"] for p in filtered}
+    assert "PT-MED-1" in filtered_skus
+    assert "PT-INST-1" not in filtered_skus
+
+    # Omitting the param returns the full catalog (both new ones present).
+    all_skus = {p["sku"] for p in
+                client.get(f"{API}/inventory/products", headers=auth,
+                           params={"limit": 500}).json()["items"]}
+    assert {"PT-MED-1", "PT-INST-1"} <= all_skus
+
+
 def test_inactive_product_stock_stays_visible_and_unreceivable(client, auth):
     branch_id = _branch_id(client, auth)
     product = _create_product(client, auth, "INACT-1", "Тест-деактивация")

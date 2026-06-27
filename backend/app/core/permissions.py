@@ -51,6 +51,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("payments.read", "finance", "View payments"),
     ("payments.create", "finance", "Take payments"),
     ("payments.refund", "finance", "Refund payments"),
+    ("debts.read", "finance", "View patient debts / top debtors"),
     # Queue
     ("queue.read", "queue", "View queue & TV board"),
     ("queue.manage", "queue", "Call / serve / skip tickets"),
@@ -93,13 +94,11 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     # Access control / Face ID terminals
     ("access_control.read", "access_control", "View face terminals, enrollment & events"),
     ("access_control.manage", "access_control", "Connect terminals, enroll staff faces"),
-    # Lab / diagnostics referrals
-    ("lab.read", "lab", "View lab referrals & results"),
-    ("lab.manage", "lab", "Create referrals / enter results"),
     # Director
     ("dashboard.view", "dashboard", "View director dashboard / KPIs"),
     ("reports.view", "reports", "View director reports (financial / clinical / CRM) + CSV export"),
     ("audit.read", "audit", "View audit log"),
+    ("archive.manage", "audit", "View archive & auto-archive old records"),
 ]
 
 ALL_CODES: list[str] = [code for code, _, _ in PERMISSIONS]
@@ -146,8 +145,8 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # scanned analyses (УЗИ-заключения, анализ на ВИЧ перед операцией и т.п.)
         "attachments.read", "attachments.write",
         "visits.read", "visits.create", "visits.update",
-        # FULL till incl. refunds (касса)
-        "payments.read", "payments.create", "payments.refund",
+        # FULL till incl. refunds (касса) + patient debts / top debtors (Долги)
+        "payments.read", "payments.create", "payments.refund", "debts.read",
         # owns the general two-track queue board
         "queue.read", "queue.manage", "queue.admin",
         # warehouse + purchasing + stocktake (склад)
@@ -179,9 +178,6 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",
         "treatments.read", "treatments.prescribe", "treatments.perform",
-        # lab: a doctor refers tests and reads results (prototype: doctor nav
-        # includes Лаборатория)
-        "lab.read", "lab.manage",
     ],
     # Diagnostics workspace: serves the D-track, records device measurements,
     # sees patients/visits. No clinical authoring (exams.write) or money.
@@ -205,5 +201,28 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "queue.read", "queue.manage", "cabinets.read",
         "treatments.read", "treatments.perform",
         "diagnoses.read",
+    ],
+}
+
+# Example CUSTOM roles seeded ONCE as editable starters (is_system=False), per the
+# owner's Super-Admin brief («создание собственных ролей» — Старший ресепшен /
+# Главный врач / Старшая медсестра / Операционный менеджер). Unlike ROLE_TEMPLATES
+# (system roles re-synced every seed), these are created only if absent and never
+# overwritten, so the owner can rename / retune / delete them.
+STARTER_ROLE_TEMPLATES: dict[str, list[str]] = {
+    "Старший ресепшен": ROLE_TEMPLATES["Administrator"] + [
+        "reports.view", "dashboard.view",
+    ],
+    "Главный врач": ROLE_TEMPLATES["Doctor"] + [
+        "reports.view", "dashboard.view", "operations.schedule",
+    ],
+    "Старшая медсестра": ROLE_TEMPLATES["TreatmentRoom"] + [
+        "inventory.read", "devices.read", "attendance.read",
+    ],
+    "Операционный менеджер": [
+        "patients.read", "visits.read", "queue.read",
+        "operations.read", "operations.schedule", "operations.manage",
+        "inventory.read", "treatments.read", "expenses.read",
+        "reports.view", "dashboard.view", "cabinets.read", "services.read",
     ],
 }

@@ -55,6 +55,9 @@ class AvailabilityItem(BaseModel):
     required: Decimal
     available: Decimal
     ok: bool
+    # How many whole operations THIS line's stock supports = floor(available /
+    # required). Lines that require nothing (<=0) don't constrain the operation.
+    feasibility_count: int
 
 
 class AvailabilityOut(BaseModel):
@@ -62,6 +65,13 @@ class AvailabilityOut(BaseModel):
 
     ok: bool
     items: list[AvailabilityItem]
+    # Whole operations the current stock supports = min feasibility_count across
+    # the template (0 if any constraining line can't cover even one operation).
+    min_feasibility: int
+    # Traffic-light verdict: red (0), yellow (low, <threshold), green (enough).
+    status: Literal["red", "yellow", "green"]
+    # Product name of the limiting line — null when green or template is empty.
+    bottleneck: str | None = None
 
 
 # ── Operations (instances on a visit) ─────────────────────────────────────────
@@ -129,9 +139,29 @@ class OperationOut(BaseModel):
     scheduled_at: datetime | None
     performed_at: datetime | None
     completed_at: datetime | None
+    # Financial freeze: when set, the price/bill is locked (editable until then).
+    financially_closed_at: datetime | None
     notes: str | None
     result: str | None
     created_at: datetime
+
+
+class OperationPriceUpdate(BaseModel):
+    """Change an operation's cost any time before it is financially closed
+    (owner brief 2026-06-20: cost is NOT fixed at planning)."""
+
+    price: Decimal = Field(ge=0)
+    reason: str | None = None
+
+
+class OperationPriceResult(BaseModel):
+    """Result of a price change — carries the recomputed visit balance so
+    reception sees what to collect, plus any refund owed if the new price is
+    below what the patient already paid (overpayment)."""
+
+    operation: OperationOut
+    visit_balance: Decimal   # payable − paid (negative = overpaid)
+    refund_due: Decimal      # max(0, paid − payable): money to return on a cut
 
 
 class SurgeonOut(BaseModel):

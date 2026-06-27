@@ -23,7 +23,7 @@ from typing import Annotated, Literal, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -583,14 +583,15 @@ def _notify_critical_insights(db: Session, criticals: list[InsightOut]) -> None:
             pass
 
 
-@router.get("/insights", response_model=list[InsightOut],
-            dependencies=[Depends(require_permission("dashboard.view"))])
-def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
-    """Morning attention list: every rule that fired, ordered critical → info.
+def compute_insights(db: Session) -> list[InsightOut]:
+    """The live "what needs attention now" set — every rule that fired, ordered
+    critical → info.
 
-    An EMPTY list is the good-morning state — nothing needs attention. All
-    rules are set-based queries over live data (same UTC day/month conventions
-    as /summary, same business date as the FEFO engine for stock rules).
+    PURE and self-resolving: each rule is a set-based query over CURRENT data, so
+    an insight exists ONLY while its problem exists (an empty list is the good
+    state). Same UTC day/month conventions as /summary, same business date as the
+    FEFO engine for stock rules. Single source of truth shared by
+    GET /dashboard/insights and the self-clearing GET /notifications/active.
     """
     now = datetime.now(timezone.utc)
     day = _day_start()
@@ -655,7 +656,7 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
             found.append(InsightOut(
                 code="queue_overload", severity="warning",
                 title="Очередь перегружена",
-                detail=f"{label} ({track}): {count} ожидающих талонов "
+                detail=f"{label} ({track}): {count} ожидающих в очереди "
                        f"(порог {_QUEUE_OVERLOAD_WAITING}) — добавить приёмные мощности",
                 value=str(count),
             ))
@@ -862,8 +863,299 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
 
     # Critical first, info last; stable sort keeps the rule order within a tier.
     found.sort(key=lambda i: _SEVERITY_RANK[i.severity])
+    return found
+
+
+@router.get("/insights", response_model=list[InsightOut],
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
+    """Director's morning attention list. Computes the live insight set and, as a
+    side effect, pushes any CRITICAL ones through the notification seam (log +
+    Telegram, 24h-debounced). The pure set lives in compute_insights()."""
+    found = compute_insights(db)
     _notify_critical_insights(db, [i for i in found if i.severity == "critical"])
     return found
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Hanging visits — «застрявшие» случаи, сгруппированные по 5 категориям
+# (owner brief 2026-06-20). В отличие от инсайтов-счётчиков, отдаёт КОНКРЕТНЫХ
+# пациентов, чтобы директор видел и мог открыть каждый зависший визит.
+# ════════════════════════════════════════════════════════════════════════════
+
+# Стадия считается «зависшей» после этого времени (свежая работа — это норма).
+_HANGING_NO_DOCTOR_AGE = timedelta(hours=4)   # зарегистрирован, к врачу не попал
+_HANGING_IN_DOCTOR_AGE = timedelta(hours=3)   # на приёме, не завершён
+_HANGING_ROW_CAP = 50                         # максимум строк-пациентов на категорию
+
+# flow_status пациента, который ещё НЕ дошёл до врача (до in_doctor).
+_PRE_DOCTOR_FLOW = (
+    "registered", "awaiting_assignment", "waiting_diagnostic",
+    "in_diagnostic", "waiting_doctor",
+)
+
+
+class HangingVisitRow(BaseModel):
+    visit_id: uuid.UUID
+    visit_no: str
+    patient_id: uuid.UUID
+    patient_name: str
+    flow_status: str
+    opened_at: datetime
+    detail: str
+
+
+class HangingCategory(BaseModel):
+    category: str  # no_doctor | in_doctor | diag_no_result | op_not_closed | treatment_unfinished
+    label: str
+    severity: Literal["warning", "critical"]
+    count: int  # total matched (visits list may be capped at _HANGING_ROW_CAP)
+    route: str | None = None
+    visits: list[HangingVisitRow]
+
+
+def _hanging_row(visit: Visit, detail: str) -> HangingVisitRow:
+    return HangingVisitRow(
+        visit_id=visit.id, visit_no=visit.visit_no,
+        patient_id=visit.patient_id, patient_name=visit.patient.full_name,
+        flow_status=visit.flow_status, opened_at=visit.opened_at, detail=detail,
+    )
+
+
+def _category(category: str, label: str, severity: str, route: str | None,
+              rows: list[HangingVisitRow]) -> HangingCategory | None:
+    """Build a category, capping the visit rows; None when nothing is stuck."""
+    if not rows:
+        return None
+    return HangingCategory(category=category, label=label, severity=severity,
+                           route=route, count=len(rows), visits=rows[:_HANGING_ROW_CAP])
+
+
+@router.get("/hanging-visits", response_model=list[HangingCategory],
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCategory]:
+    """Зависшие визиты в пяти категориях, с конкретными пациентами:
+    (1) зарегистрирован, но не дошёл до врача; (2) был у врача, приём не завершён;
+    (3) назначена диагностика, но нет результата; (4) операция не закрыта;
+    (5) лечение не завершено. Самоочищается — визит исчезает, как только проблема
+    решена (вычисляется на чтение по текущему состоянию)."""
+    now = datetime.now(timezone.utc)
+    out: list[HangingCategory] = []
+
+    def _hours(opened: datetime) -> int:
+        delta = now - (opened if opened.tzinfo else opened.replace(tzinfo=timezone.utc))
+        return max(0, int(delta.total_seconds() // 3600))
+
+    # ── (1) Зарегистрирован, но не дошёл до врача (до in_doctor, открыт >4ч).
+    cat1 = db.execute(
+        select(Visit).where(
+            Visit.status == "open",
+            Visit.flow_status.in_(_PRE_DOCTOR_FLOW),
+            Visit.opened_at < now - _HANGING_NO_DOCTOR_AGE,
+        ).order_by(Visit.opened_at)
+    ).scalars().all()
+    out.append(_category(
+        "no_doctor", "Зарегистрирован, не дошёл до врача", "critical", "/patients",
+        [_hanging_row(v, f"В системе уже {_hours(v.opened_at)} ч, к врачу не попал")
+         for v in cat1]))
+
+    # ── (2) Был у врача, но приём не завершён (in_doctor дольше порога).
+    cat2 = db.execute(
+        select(Visit).where(
+            Visit.status == "open",
+            Visit.flow_status == "in_doctor",
+            Visit.opened_at < now - _HANGING_IN_DOCTOR_AGE,
+        ).order_by(Visit.opened_at)
+    ).scalars().all()
+    out.append(_category(
+        "in_doctor", "На приёме, не завершён", "warning", "/patients",
+        [_hanging_row(v, f"На приёме, приём не закрыт ({_hours(v.opened_at)} ч)")
+         for v in cat2]))
+
+    # ── (3) Назначена диагностика, но НЕТ результата: диагностический талон
+    #    выполнен (done), но к визиту не прикреплён ни один файл-результат.
+    #    Окно «только сегодня» снято — ловим и вчерашние зависшие случаи.
+    done_diag = (
+        select(QueueTicket.visit_id)
+        .where(QueueTicket.track == "diagnostic", QueueTicket.status == "done",
+               QueueTicket.visit_id.is_not(None))
+        .distinct().subquery()
+    )
+    no_result_ids = db.execute(
+        select(done_diag.c.visit_id)
+        .outerjoin(Attachment, Attachment.visit_id == done_diag.c.visit_id)
+        .where(Attachment.id.is_(None))
+    ).scalars().all()
+    cat3 = db.execute(
+        select(Visit).where(Visit.id.in_(no_result_ids), Visit.status == "open")
+        .order_by(Visit.opened_at)
+    ).scalars().all() if no_result_ids else []
+    out.append(_category(
+        "diag_no_result", "Диагностика без результата", "warning", "/patients",
+        [_hanging_row(v, "Диагностика выполнена, результат не прикреплён")
+         for v in cat3]))
+
+    # ── (4) Операция не закрыта: выполняется/выполнена, но не завершена, ИЛИ
+    #    запланирована на прошедшую дату (не состоялась/забыта).
+    ops = db.execute(
+        select(Operation).where(
+            or_(
+                Operation.status.in_(("in_progress", "performed")),
+                and_(Operation.status == "scheduled",
+                     Operation.scheduled_at.is_not(None),
+                     Operation.scheduled_at < now),
+            )
+        ).order_by(Operation.scheduled_at)
+    ).scalars().all()
+    op_by_visit: dict[uuid.UUID, Operation] = {}
+    for op in ops:
+        op_by_visit.setdefault(op.visit_id, op)
+    visits4 = {
+        v.id: v for v in db.execute(
+            select(Visit).where(Visit.id.in_(op_by_visit.keys()))
+        ).scalars().all()
+    } if op_by_visit else {}
+    _OP_STATUS_RU = {"scheduled": "запланирована", "in_progress": "идёт",
+                     "performed": "выполнена"}
+    rows4: list[HangingVisitRow] = []
+    for visit_id, op in op_by_visit.items():
+        visit = visits4.get(visit_id)
+        if visit is None:
+            continue
+        detail = f"Операция «{op.type_name}» — {_OP_STATUS_RU.get(op.status, op.status)}, не закрыта"
+        if op.status == "scheduled":
+            detail = f"Операция «{op.type_name}» запланирована, дата прошла — не состоялась/не закрыта"
+        rows4.append(_hanging_row(visit, detail))
+    out.append(_category(
+        "op_not_closed", "Операция не закрыта", "warning", "/operations", rows4))
+
+    # ── (5) Лечение назначено, но не завершено (status prescribed).
+    treatments = db.execute(
+        select(Treatment).where(Treatment.status == "prescribed")
+        .order_by(Treatment.created_at)
+    ).scalars().all()
+    tr_by_visit: dict[uuid.UUID, Treatment] = {}
+    for tr in treatments:
+        tr_by_visit.setdefault(tr.visit_id, tr)
+    visits5 = {
+        v.id: v for v in db.execute(
+            select(Visit).where(Visit.id.in_(tr_by_visit.keys()))
+        ).scalars().all()
+    } if tr_by_visit else {}
+    rows5 = [
+        _hanging_row(v, f"Лечение «{tr_by_visit[vid].name}» назначено, не выполнено")
+        for vid, v in visits5.items()
+    ]
+    out.append(_category(
+        "treatment_unfinished", "Лечение не завершено", "warning", "/patients", rows5))
+
+    # Только непустые категории; критичные — первыми.
+    result = [c for c in out if c is not None]
+    result.sort(key=lambda c: 0 if c.severity == "critical" else 1)
+    return result
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Period summary — заголовочные метрики за выбранный период (owner brief
+# 2026-06-20): Сегодня / Вчера / Неделя / Месяц / Квартал / Год / Произвольный.
+# Все диаграммы дашборда могут пересчитываться за период через эту ручку.
+# ════════════════════════════════════════════════════════════════════════════
+
+_PERIOD_PRESETS = ("today", "yesterday", "week", "month", "quarter", "year", "custom")
+
+
+def _resolve_period_dates(
+    period: str, date_from: date | None, date_to: date | None,
+) -> tuple[datetime, datetime, date, date]:
+    """Map a period preset (+ optional custom dates) to a half-open UTC instant
+    window [start, end) AND the inclusive local DATE range [from, to] (the latter
+    for plain DATE columns like Expense.expense_date). Presets are «to date»
+    (through the end of the local today)."""
+    today = business_today()
+    if period == "custom":
+        if date_from is None or date_to is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "custom period requires date_from and date_to")
+        if date_to < date_from:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "date_to must be on or after date_from")
+        df, dt = date_from, date_to
+    elif period == "today":
+        df = dt = today
+    elif period == "yesterday":
+        df = dt = today - timedelta(days=1)
+    elif period == "week":
+        df, dt = today - timedelta(days=6), today  # rolling 7 days incl. today
+    elif period == "month":
+        df, dt = today.replace(day=1), today
+    elif period == "quarter":
+        q_first = 3 * ((today.month - 1) // 3) + 1
+        df, dt = today.replace(month=q_first, day=1), today
+    elif period == "year":
+        df, dt = today.replace(month=1, day=1), today
+    else:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"unknown period {period!r} (allowed: {', '.join(_PERIOD_PRESETS)})")
+    start = local_day_bounds_utc(df)[0]
+    end = local_day_bounds_utc(dt)[1]
+    return start, end, df, dt
+
+
+class PeriodSummary(BaseModel):
+    period: str
+    date_from: date
+    date_to: date
+    revenue: Decimal     # Σ completed payments in window
+    expenses: Decimal    # Σ expenses (by expense_date) in window
+    profit: Decimal      # revenue − expenses
+    new_patients: int    # patients registered in window
+    visits: int          # visits opened in window
+    operations: int      # operations performed in window
+    diagnostics: int     # diagnostic tickets completed in window
+    treatments: int      # treatments performed in window
+
+
+@router.get("/period-summary", response_model=PeriodSummary,
+            dependencies=[Depends(require_permission("dashboard.view"))])
+def period_summary(
+    db: Annotated[Session, Depends(get_db)],
+    period: str = Query("month", description="today|yesterday|week|month|quarter|year|custom"),
+    date_from: date | None = Query(None, description="custom period start (local date)"),
+    date_to: date | None = Query(None, description="custom period end (local date, inclusive)"),
+) -> PeriodSummary:
+    """Headline metrics recomputed for ANY period — powers the dashboard's period
+    filter. Каждая метрика считается за выбранное окно (auto-recalc на клиенте при
+    смене периода)."""
+    start, end, df, dt = _resolve_period_dates(period, date_from, date_to)
+
+    def _count(model, ts_col, *extra) -> int:
+        return int(db.execute(
+            select(func.count()).select_from(model)
+            .where(ts_col >= start, ts_col < end, *extra)
+        ).scalar_one())
+
+    revenue = Decimal(db.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0))
+        .where(Payment.status == "completed",
+               Payment.created_at >= start, Payment.created_at < end)
+    ).scalar_one())
+    expenses = Decimal(db.execute(
+        select(func.coalesce(func.sum(Expense.amount), 0))
+        .where(Expense.expense_date >= df, Expense.expense_date <= dt)
+    ).scalar_one())
+
+    return PeriodSummary(
+        period=period, date_from=df, date_to=dt,
+        revenue=revenue, expenses=expenses, profit=revenue - expenses,
+        new_patients=_count(Patient, Patient.created_at),
+        visits=_count(Visit, Visit.opened_at),
+        operations=_count(Operation, Operation.performed_at,
+                          Operation.status.in_(Operation.DONE_STATUSES)),
+        diagnostics=_count(QueueTicket, QueueTicket.created_at,
+                           QueueTicket.track == "diagnostic", QueueTicket.status == "done"),
+        treatments=_count(Treatment, Treatment.performed_at, Treatment.status == "done"),
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════

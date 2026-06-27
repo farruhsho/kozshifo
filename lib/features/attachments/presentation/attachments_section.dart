@@ -7,6 +7,7 @@ import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
 import '../data/attachments_repository.dart';
 import '../domain/attachment.dart';
+import 'document_viewer_dialog.dart';
 
 /// Extensions the backend accepts for attachments (УЗИ, анализы — PDF/сканы).
 const _attachmentExtensions = <String>[
@@ -278,7 +279,14 @@ class _AttachmentsSectionState extends ConsumerState<AttachmentsSection> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   IconButton(
-                                    tooltip: 'Открыть / скачать',
+                                    tooltip: 'Просмотр',
+                                    visualDensity: VisualDensity.compact,
+                                    icon: const Icon(
+                                        Icons.visibility_outlined, size: 20),
+                                    onPressed: () => showDocumentViewer(context, a),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Скачать',
                                     visualDensity: VisualDensity.compact,
                                     icon: const Icon(
                                         Icons.download_outlined, size: 20),
@@ -294,7 +302,7 @@ class _AttachmentsSectionState extends ConsumerState<AttachmentsSection> {
                                     ),
                                 ],
                               ),
-                        onTap: () => _open(a),
+                        onTap: () => showDocumentViewer(context, a),
                       ),
                   ],
                 );

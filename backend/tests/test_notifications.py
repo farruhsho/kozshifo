@@ -101,6 +101,37 @@ def test_notifications_rbac(client, auth):
     assert isinstance(allowed.json(), list)
 
 
+def test_active_notifications_is_live_and_matches_insights(client, auth):
+    """GET /notifications/active is the LIVE, self-resolving problem set — the
+    same compute_insights source of truth as the dashboard attention panel, so a
+    notification exists only while its problem exists (computed on read)."""
+    active = client.get(f"{API}/notifications/active", headers=auth)
+    assert active.status_code == 200, active.text
+    insights = client.get(f"{API}/dashboard/insights", headers=auth)
+    assert insights.status_code == 200, insights.text
+    # Both surfaces report the SAME set of live problem codes.
+    assert {n["code"] for n in active.json()} == {i["code"] for i in insights.json()}
+    for n in active.json():
+        assert {"code", "severity", "title", "detail"} <= set(n)
+
+
+def test_active_notifications_rbac(client, auth):
+    created = client.post(
+        f"{API}/users", headers=auth,
+        json={"email": "active.doctor@kozshifo.uz", "full_name": "Врач Актив",
+              "password": "Doc!2026actv", "role_names": ["Doctor"]},
+    )
+    assert created.status_code == 201, created.text
+    token = client.post(
+        f"{API}/auth/login",
+        data={"username": "active.doctor@kozshifo.uz", "password": "Doc!2026actv"},
+    ).json()["access_token"]
+    doctor = {"Authorization": f"Bearer {token}"}
+    denied = client.get(f"{API}/notifications/active", headers=doctor)
+    assert denied.status_code == 403
+    assert "notifications.read" in denied.json()["detail"]
+
+
 def test_notification_title_truncated_to_column_size(client, auth):
     """255-char product names must degrade to a truncated title, not a lost row."""
     branch_id = client.get(f"{API}/branches", headers=auth).json()[0]["id"]

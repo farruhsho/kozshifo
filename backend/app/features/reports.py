@@ -31,11 +31,14 @@ from sqlalchemy.orm import Session
 from app.core.dates import business_today, local_day_bounds_utc
 from app.core.database import get_db
 from app.core.deps import require_permission
+from app.core.report_export import build_pdf, build_xlsx
 from app.models.diagnosis import VisitDiagnosis
 from app.models.finance import Expense
+from app.models.inventory import StockBatch, StockMovement
 from app.models.operation import Operation
 from app.models.patient import Patient
 from app.models.payment import Payment
+from app.models.queue import QueueTicket
 from app.models.user import User
 from app.models.visit import Visit
 
@@ -79,8 +82,63 @@ def _csv(filename: str, header: Sequence[str], rows: Iterable[Sequence]) -> Resp
     )
 
 
+def _xlsx(filename: str, title: str, header: Sequence[str], rows: Iterable[Sequence]) -> Response:
+    """XLSX (.xlsx) download — same columns as the CSV, but native Excel numbers
+    + a bold header (mirrors _csv)."""
+    return Response(
+        content=build_xlsx(title, list(header), [list(r) for r in rows]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _pdf(filename: str, title: str, header: Sequence[str], rows: Iterable[Sequence]) -> Response:
+    """PDF download — a printable A4-landscape table of the same columns (mirrors
+    _csv); Cyrillic renders via the bundled DejaVu font."""
+    return Response(
+        content=build_pdf(title, list(header), [list(r) for r in rows]),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 _DateFrom = Annotated[date | None, Query(description="Local start date (inclusive)")]
 _DateTo = Annotated[date | None, Query(description="Local end date (inclusive)")]
+
+
+def _done_tickets_by_caller(db: Session, track: str, start: datetime, end: datetime) -> dict:
+    """{caller_user_id: count} of DONE tickets of a track in the window — the
+    «studies handled» / throughput count, attributed to who served them."""
+    rows = db.execute(
+        select(QueueTicket.called_by_id, func.count())
+        .where(QueueTicket.track == track, QueueTicket.status == "done",
+               QueueTicket.called_by_id.is_not(None),
+               QueueTicket.done_at >= start, QueueTicket.done_at < end)
+        .group_by(QueueTicket.called_by_id)
+    ).all()
+    return {uid: int(n) for uid, n in rows}
+
+
+def _avg_service_minutes_by_caller(db: Session, track: str, start: datetime, end: datetime) -> dict:
+    """{caller_user_id: avg minutes} of called_at→done_at over DONE tickets of a
+    track in the window. Computed in Python so the datetime diff is portable
+    across SQLite (dev) and Postgres (prod)."""
+    rows = db.execute(
+        select(QueueTicket.called_by_id, QueueTicket.called_at, QueueTicket.done_at)
+        .where(QueueTicket.track == track, QueueTicket.status == "done",
+               QueueTicket.called_by_id.is_not(None),
+               QueueTicket.called_at.is_not(None), QueueTicket.done_at.is_not(None),
+               QueueTicket.done_at >= start, QueueTicket.done_at < end)
+    ).all()
+    acc: dict = {}
+    for uid, called, done in rows:
+        minutes = (done - called).total_seconds() / 60.0
+        if minutes < 0:
+            continue  # clock skew / bad data — ignore rather than skew the average
+        a = acc.setdefault(uid, [0.0, 0])
+        a[0] += minutes
+        a[1] += 1
+    return {uid: round(total / n, 1) for uid, (total, n) in acc.items() if n}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -139,17 +197,39 @@ def financial_report(db: Annotated[Session, Depends(get_db)],
     return _financial(db, df, dt, start, end)
 
 
-@router.get("/financial.csv")
-def financial_report_csv(db: Annotated[Session, Depends(get_db)],
-                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
-    df, dt, start, end = _resolve_range(date_from, date_to)
+def _financial_table(db: Session, df: date, dt: date, start: datetime,
+                     end: datetime) -> tuple[str, list[str], list[list]]:
     r = _financial(db, df, dt, start, end)
-    rows = [["Доход", "", r.income]]
+    rows: list[list] = [["Доход", "", r.income]]
     rows += [["  Доход — метод", m.label, m.amount] for m in r.by_method]
     rows += [["Расход", "", r.expenses]]
     rows += [["  Расход — категория", c.label, c.amount] for c in r.by_category]
     rows += [["Прибыль", "", r.profit]]
-    return _csv(f"financial_{df}_{dt}.csv", ["Раздел", "Статья", "Сумма"], rows)
+    return f"Финансовый отчёт ({df} — {dt})", ["Раздел", "Статья", "Сумма"], rows
+
+
+@router.get("/financial.csv")
+def financial_report_csv(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    _, header, rows = _financial_table(db, df, dt, start, end)
+    return _csv(f"financial_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/financial.xlsx")
+def financial_report_xlsx(db: Annotated[Session, Depends(get_db)],
+                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _financial_table(db, df, dt, start, end)
+    return _xlsx(f"financial_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/financial.pdf")
+def financial_report_pdf(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _financial_table(db, df, dt, start, end)
+    return _pdf(f"financial_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -162,14 +242,29 @@ class DoctorRow(BaseModel):
     doctor_name: str
     revenue: Decimal
     visits: int
-    payroll_expense: Decimal  # salary paid out to this doctor in the window
-    net_profit: Decimal  # revenue − payroll_expense (the clinic's cut)
+    distinct_patients: int          # уникальных пациентов принял за период
+    repeat_patients: int            # из них повторных (>1 визита за всё время)
+    avg_check: Decimal              # средний чек = выручка / число оплат
+    payroll_expense: Decimal        # salary paid out to this doctor in the window
+    net_profit: Decimal             # revenue − payroll_expense (the clinic's cut)
+    avg_consult_minutes: float | None = None  # эффективность: ср. время приёма
 
 
 def _by_doctor(db: Session, df: date, dt: date, start: datetime, end: datetime) -> list[DoctorRow]:
     revenue = {
         did: Decimal(total) for did, total in db.execute(
             select(Visit.doctor_id, func.coalesce(func.sum(Payment.amount), 0))
+            .join(Visit, Visit.id == Payment.visit_id)
+            .where(Payment.status == "completed", Payment.created_at >= start,
+                   Payment.created_at < end, Visit.doctor_id.is_not(None))
+            .group_by(Visit.doctor_id)
+        ).all()
+    }
+    # Number of completed payments per doctor (for the average check).
+    pay_count = {
+        did: int(n) for did, n in db.execute(
+            select(Visit.doctor_id, func.count())
+            .select_from(Payment)
             .join(Visit, Visit.id == Payment.visit_id)
             .where(Payment.status == "completed", Payment.created_at >= start,
                    Payment.created_at < end, Visit.doctor_id.is_not(None))
@@ -183,6 +278,27 @@ def _by_doctor(db: Session, df: date, dt: date, start: datetime, end: datetime) 
             .group_by(Visit.doctor_id)
         ).all()
     }
+    # Distinct patients per doctor in the window + how many are returning (have
+    # more than one lifetime visit). One pass over the window's (doctor, patient)
+    # pairs + a lifetime visit-count lookup for that patient set.
+    pairs = db.execute(
+        select(Visit.doctor_id, Visit.patient_id).distinct()
+        .where(Visit.doctor_id.is_not(None), Visit.opened_at >= start, Visit.opened_at < end)
+    ).all()
+    patient_ids = {pid for _, pid in pairs}
+    lifetime = {
+        pid: int(n) for pid, n in db.execute(
+            select(Visit.patient_id, func.count())
+            .where(Visit.patient_id.in_(patient_ids))
+            .group_by(Visit.patient_id)
+        ).all()
+    } if patient_ids else {}
+    distinct_pat: dict = {}
+    repeat_pat: dict = {}
+    for did, pid in pairs:
+        distinct_pat[did] = distinct_pat.get(did, 0) + 1
+        if lifetime.get(pid, 0) > 1:
+            repeat_pat[did] = repeat_pat.get(did, 0) + 1
     # Salary actually paid to each doctor in the window (kind="payroll" expenses).
     payroll = {
         uid: Decimal(total) for uid, total in db.execute(
@@ -192,16 +308,25 @@ def _by_doctor(db: Session, df: date, dt: date, start: datetime, end: datetime) 
             .group_by(Expense.payroll_user_id)
         ).all()
     }
-    ids = set(revenue) | set(visits) | set(payroll)
+    # Efficiency: average consultation duration (called→done on the doctor track).
+    avg_consult = _avg_service_minutes_by_caller(db, "doctor", start, end)
+
+    ids = set(revenue) | set(visits) | set(payroll) | set(distinct_pat)
     names = {u.id: u.full_name for u in db.execute(select(User).where(User.id.in_(ids))).scalars().all()} if ids else {}
     rows = []
     for did in ids:
         rev = revenue.get(did, Decimal("0"))
         exp = payroll.get(did, Decimal("0"))
+        n_pay = pay_count.get(did, 0)
+        avg_check = (rev / n_pay).quantize(Decimal("0.01")) if n_pay else Decimal("0.00")
         rows.append(DoctorRow(
             doctor_id=did, doctor_name=names.get(did, "—"),
             revenue=rev, visits=visits.get(did, 0),
+            distinct_patients=distinct_pat.get(did, 0),
+            repeat_patients=repeat_pat.get(did, 0),
+            avg_check=avg_check,
             payroll_expense=exp, net_profit=rev - exp,
+            avg_consult_minutes=avg_consult.get(did),
         ))
     rows.sort(key=lambda r: (r.revenue, r.visits), reverse=True)
     return rows
@@ -214,14 +339,39 @@ def by_doctor(db: Annotated[Session, Depends(get_db)],
     return _by_doctor(db, df, dt, start, end)
 
 
+def _by_doctor_table(db: Session, df: date, dt: date, start: datetime,
+                     end: datetime) -> tuple[str, list[str], list[list]]:
+    rows = [[r.doctor_name, r.revenue, r.visits, r.distinct_patients, r.repeat_patients,
+             r.avg_check, r.payroll_expense, r.net_profit,
+             "" if r.avg_consult_minutes is None else r.avg_consult_minutes]
+            for r in _by_doctor(db, df, dt, start, end)]
+    header = ["Врач", "Выручка", "Визитов", "Пациентов", "Повторных",
+              "Средний чек", "Зарплата", "Чистая прибыль", "Ср. время приёма (мин)"]
+    return f"По врачам ({df} — {dt})", header, rows
+
+
 @router.get("/by-doctor.csv")
 def by_doctor_csv(db: Annotated[Session, Depends(get_db)],
                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.doctor_name, r.revenue, r.visits, r.payroll_expense, r.net_profit]
-            for r in _by_doctor(db, df, dt, start, end)]
-    return _csv(f"by_doctor_{df}_{dt}.csv",
-                ["Врач", "Выручка", "Визитов", "Зарплата", "Чистая прибыль"], rows)
+    _, header, rows = _by_doctor_table(db, df, dt, start, end)
+    return _csv(f"by_doctor_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-doctor.xlsx")
+def by_doctor_xlsx(db: Annotated[Session, Depends(get_db)],
+                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_doctor_table(db, df, dt, start, end)
+    return _xlsx(f"by_doctor_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-doctor.pdf")
+def by_doctor_pdf(db: Annotated[Session, Depends(get_db)],
+                  date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_doctor_table(db, df, dt, start, end)
+    return _pdf(f"by_doctor_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -232,22 +382,37 @@ def by_doctor_csv(db: Annotated[Session, Depends(get_db)],
 class DiagnosticianRow(BaseModel):
     user_id: uuid.UUID | None
     name: str
-    conclusions: int
+    conclusions: int                       # заключений записано
+    studies: int = 0                       # выполнено диагностических талонов
+    avg_minutes: float | None = None       # среднее время выполнения (вызов→готово)
 
 
 def _by_diagnostician(db: Session, start: datetime, end: datetime) -> list[DiagnosticianRow]:
-    rows = db.execute(
-        select(VisitDiagnosis.doctor_id, func.count())
-        .where(VisitDiagnosis.created_at >= start, VisitDiagnosis.created_at < end)
-        .group_by(VisitDiagnosis.doctor_id)
-    ).all()
-    ids = {did for did, _ in rows if did is not None}
+    conclusions = {
+        did: int(n) for did, n in db.execute(
+            select(VisitDiagnosis.doctor_id, func.count())
+            .where(VisitDiagnosis.created_at >= start, VisitDiagnosis.created_at < end)
+            .group_by(VisitDiagnosis.doctor_id)
+        ).all()
+    }
+    # Studies handled + average study time on the diagnostic queue track.
+    studies = _done_tickets_by_caller(db, "diagnostic", start, end)
+    avg_minutes = _avg_service_minutes_by_caller(db, "diagnostic", start, end)
+
+    ids = {did for did in (set(conclusions) | set(studies)) if did is not None}
     names = {u.id: u.full_name for u in db.execute(select(User).where(User.id.in_(ids))).scalars().all()} if ids else {}
-    out = [
-        DiagnosticianRow(user_id=did, name=names.get(did, "—") if did else "Без автора", conclusions=int(n))
-        for did, n in rows
-    ]
-    out.sort(key=lambda r: r.conclusions, reverse=True)
+    out: list[DiagnosticianRow] = []
+    # Keep the "Без автора" bucket for conclusions recorded with no author.
+    keys: set = set(conclusions) | set(studies)
+    for did in keys:
+        out.append(DiagnosticianRow(
+            user_id=did,
+            name=(names.get(did, "—") if did else "Без автора"),
+            conclusions=conclusions.get(did, 0),
+            studies=studies.get(did, 0) if did is not None else 0,
+            avg_minutes=avg_minutes.get(did) if did is not None else None,
+        ))
+    out.sort(key=lambda r: (r.studies, r.conclusions), reverse=True)
     return out
 
 
@@ -258,12 +423,37 @@ def by_diagnostician(db: Annotated[Session, Depends(get_db)],
     return _by_diagnostician(db, start, end)
 
 
+def _by_diagnostician_table(db: Session, df: date, dt: date, start: datetime,
+                            end: datetime) -> tuple[str, list[str], list[list]]:
+    rows = [[r.name, r.conclusions, r.studies,
+             "" if r.avg_minutes is None else r.avg_minutes]
+            for r in _by_diagnostician(db, start, end)]
+    header = ["Диагност", "Заключений", "Исследований", "Ср. время (мин)"]
+    return f"По диагностам ({df} — {dt})", header, rows
+
+
 @router.get("/by-diagnostician.csv")
 def by_diagnostician_csv(db: Annotated[Session, Depends(get_db)],
                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.name, r.conclusions] for r in _by_diagnostician(db, start, end)]
-    return _csv(f"by_diagnostician_{df}_{dt}.csv", ["Диагност", "Заключений"], rows)
+    _, header, rows = _by_diagnostician_table(db, df, dt, start, end)
+    return _csv(f"by_diagnostician_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-diagnostician.xlsx")
+def by_diagnostician_xlsx(db: Annotated[Session, Depends(get_db)],
+                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_diagnostician_table(db, df, dt, start, end)
+    return _xlsx(f"by_diagnostician_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-diagnostician.pdf")
+def by_diagnostician_pdf(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_diagnostician_table(db, df, dt, start, end)
+    return _pdf(f"by_diagnostician_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -314,13 +504,37 @@ def by_patient(db: Annotated[Session, Depends(get_db)],
     return _by_patient(db, start, end, limit)
 
 
+def _by_patient_table(db: Session, df: date, dt: date, start: datetime, end: datetime,
+                      limit: int) -> tuple[str, list[str], list[list]]:
+    rows = [[r.mrn or "", r.full_name, r.total_paid, r.visits] for r in _by_patient(db, start, end, limit)]
+    return f"Топ пациентов ({df} — {dt})", ["MRN", "Пациент", "Оплачено", "Визитов"], rows
+
+
 @router.get("/by-patient.csv")
 def by_patient_csv(db: Annotated[Session, Depends(get_db)],
                    date_from: _DateFrom = None, date_to: _DateTo = None,
                    limit: int = Query(500, ge=1, le=2000)) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.mrn or "", r.full_name, r.total_paid, r.visits] for r in _by_patient(db, start, end, limit)]
-    return _csv(f"by_patient_{df}_{dt}.csv", ["MRN", "Пациент", "Оплачено", "Визитов"], rows)
+    _, header, rows = _by_patient_table(db, df, dt, start, end, limit)
+    return _csv(f"by_patient_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-patient.xlsx")
+def by_patient_xlsx(db: Annotated[Session, Depends(get_db)],
+                    date_from: _DateFrom = None, date_to: _DateTo = None,
+                    limit: int = Query(500, ge=1, le=2000)) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_patient_table(db, df, dt, start, end, limit)
+    return _xlsx(f"by_patient_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-patient.pdf")
+def by_patient_pdf(db: Annotated[Session, Depends(get_db)],
+                   date_from: _DateFrom = None, date_to: _DateTo = None,
+                   limit: int = Query(500, ge=1, le=2000)) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_patient_table(db, df, dt, start, end, limit)
+    return _pdf(f"by_patient_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -354,12 +568,34 @@ def by_region(db: Annotated[Session, Depends(get_db)],
     return _by_region(db, start, end)
 
 
+def _by_region_table(db: Session, df: date, dt: date, start: datetime,
+                     end: datetime) -> tuple[str, list[str], list[list]]:
+    rows = [[r.region, r.new_patients] for r in _by_region(db, start, end)]
+    return f"По регионам ({df} — {dt})", ["Регион", "Новых пациентов"], rows
+
+
 @router.get("/by-region.csv")
 def by_region_csv(db: Annotated[Session, Depends(get_db)],
                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    rows = [[r.region, r.new_patients] for r in _by_region(db, start, end)]
-    return _csv(f"by_region_{df}_{dt}.csv", ["Регион", "Новых пациентов"], rows)
+    _, header, rows = _by_region_table(db, df, dt, start, end)
+    return _csv(f"by_region_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-region.xlsx")
+def by_region_xlsx(db: Annotated[Session, Depends(get_db)],
+                   date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_region_table(db, df, dt, start, end)
+    return _xlsx(f"by_region_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-region.pdf")
+def by_region_pdf(db: Annotated[Session, Depends(get_db)],
+                  date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_region_table(db, df, dt, start, end)
+    return _pdf(f"by_region_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -372,6 +608,8 @@ class SurgeonRow(BaseModel):
     surgeon_name: str
     count: int
     revenue: Decimal
+    cogs: Decimal       # расход: себестоимость списанных расходников
+    profit: Decimal     # прибыль = выручка − себестоимость
 
 
 class OperationsReport(BaseModel):
@@ -379,6 +617,8 @@ class OperationsReport(BaseModel):
     date_to: date
     count: int
     revenue: Decimal
+    cogs: Decimal       # клиника: суммарная себестоимость расходников операций
+    profit: Decimal     # revenue − cogs
     by_surgeon: list[SurgeonRow]
 
 
@@ -388,23 +628,52 @@ def _by_operation(db: Session, df: date, dt: date, start: datetime, end: datetim
         Operation.performed_at >= start,
         Operation.performed_at < end,
     )
-    count, revenue = db.execute(
-        select(func.count(), func.coalesce(func.sum(Operation.price), 0)).where(*base)
-    ).one()
-    rows = db.execute(
-        select(Operation.surgeon_id, func.count(), func.coalesce(func.sum(Operation.price), 0))
-        .where(*base).group_by(Operation.surgeon_id)
+    op_rows = db.execute(
+        select(Operation.id, Operation.surgeon_id, Operation.price).where(*base)
     ).all()
-    ids = {sid for sid, _, _ in rows if sid is not None}
+    op_ids = [oid for oid, _, _ in op_rows]
+    # COGS per operation from the stock ledger (write-offs × batch unit cost) —
+    # the same join the operations day-summary uses, here keyed per operation so
+    # it can be attributed to each surgeon.
+    cogs_by_op = {
+        oid: Decimal(cost) for oid, cost in db.execute(
+            select(StockMovement.ref_id,
+                   func.coalesce(func.sum(func.abs(StockMovement.quantity) * StockBatch.unit_cost), 0))
+            .join(StockBatch, StockBatch.id == StockMovement.batch_id)
+            .where(StockMovement.ref_type == "operation",
+                   StockMovement.movement_type == "write_off",
+                   StockMovement.ref_id.in_(op_ids))
+            .group_by(StockMovement.ref_id)
+        ).all()
+    } if op_ids else {}
+
+    agg: dict = {}
+    for oid, sid, price in op_rows:
+        a = agg.setdefault(sid, {"count": 0, "revenue": Decimal("0"), "cogs": Decimal("0")})
+        a["count"] += 1
+        a["revenue"] += Decimal(price) if price is not None else Decimal("0")
+        a["cogs"] += cogs_by_op.get(oid, Decimal("0"))
+
+    ids = {sid for sid in agg if sid is not None}
     names = {u.id: u.full_name for u in db.execute(select(User).where(User.id.in_(ids))).scalars().all()} if ids else {}
     by_surgeon = [
-        SurgeonRow(surgeon_id=sid, surgeon_name=names.get(sid, "—") if sid else "Без хирурга",
-                   count=int(c), revenue=Decimal(rev))
-        for sid, c, rev in rows
+        SurgeonRow(
+            surgeon_id=sid, surgeon_name=names.get(sid, "—") if sid else "Без хирурга",
+            count=a["count"], revenue=a["revenue"], cogs=a["cogs"],
+            profit=a["revenue"] - a["cogs"],
+        )
+        for sid, a in agg.items()
     ]
-    by_surgeon.sort(key=lambda s: s.revenue, reverse=True)
-    return OperationsReport(date_from=df, date_to=dt, count=int(count),
-                            revenue=Decimal(revenue), by_surgeon=by_surgeon)
+    by_surgeon.sort(key=lambda s: s.profit, reverse=True)
+
+    total_count = sum(a["count"] for a in agg.values())
+    total_revenue = sum((a["revenue"] for a in agg.values()), Decimal("0"))
+    total_cogs = sum((a["cogs"] for a in agg.values()), Decimal("0"))
+    return OperationsReport(
+        date_from=df, date_to=dt, count=total_count,
+        revenue=total_revenue, cogs=total_cogs, profit=total_revenue - total_cogs,
+        by_surgeon=by_surgeon,
+    )
 
 
 @router.get("/by-operation", response_model=OperationsReport)
@@ -414,11 +683,111 @@ def by_operation(db: Annotated[Session, Depends(get_db)],
     return _by_operation(db, df, dt, start, end)
 
 
+def _by_operation_table(db: Session, df: date, dt: date, start: datetime,
+                        end: datetime) -> tuple[str, list[str], list[list]]:
+    r = _by_operation(db, df, dt, start, end)
+    rows = [[s.surgeon_name, s.count, s.revenue, s.cogs, s.profit] for s in r.by_surgeon]
+    rows.append(["ИТОГО", r.count, r.revenue, r.cogs, r.profit])
+    header = ["Хирург", "Операций", "Выручка", "Расход", "Прибыль"]
+    return f"Операции по хирургам ({df} — {dt})", header, rows
+
+
 @router.get("/by-operation.csv")
 def by_operation_csv(db: Annotated[Session, Depends(get_db)],
                      date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
     df, dt, start, end = _resolve_range(date_from, date_to)
-    r = _by_operation(db, df, dt, start, end)
-    rows = [[s.surgeon_name, s.count, s.revenue] for s in r.by_surgeon]
-    rows.append(["ИТОГО", r.count, r.revenue])
-    return _csv(f"by_operation_{df}_{dt}.csv", ["Хирург", "Операций", "Выручка"], rows)
+    _, header, rows = _by_operation_table(db, df, dt, start, end)
+    return _csv(f"by_operation_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-operation.xlsx")
+def by_operation_xlsx(db: Annotated[Session, Depends(get_db)],
+                      date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_operation_table(db, df, dt, start, end)
+    return _xlsx(f"by_operation_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-operation.pdf")
+def by_operation_pdf(db: Annotated[Session, Depends(get_db)],
+                     date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_operation_table(db, df, dt, start, end)
+    return _pdf(f"by_operation_{df}_{dt}.pdf", title, header, rows)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Profit-by-region — revenue (collected payments) attributed to a patient's
+# region + new patients registered there in the window (CRM profitability).
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class RegionRevenueRow(BaseModel):
+    region: str
+    revenue: Decimal
+    new_patients: int
+
+
+def _profit_by_region(db: Session, start: datetime, end: datetime) -> list[RegionRevenueRow]:
+    revenue = {
+        (r or _UNKNOWN_REGION): Decimal(a) for r, a in db.execute(
+            select(Patient.region, func.coalesce(func.sum(Payment.amount), 0))
+            .select_from(Payment)
+            .join(Visit, Visit.id == Payment.visit_id)
+            .join(Patient, Patient.id == Visit.patient_id)
+            .where(Payment.status == "completed", Payment.created_at >= start, Payment.created_at < end)
+            .group_by(Patient.region)
+        ).all()
+    }
+    new = {
+        (r or _UNKNOWN_REGION): int(n) for r, n in db.execute(
+            select(Patient.region, func.count())
+            .where(Patient.created_at >= start, Patient.created_at < end)
+            .group_by(Patient.region)
+        ).all()
+    }
+    out = [
+        RegionRevenueRow(region=reg, revenue=revenue.get(reg, Decimal("0")),
+                         new_patients=new.get(reg, 0))
+        for reg in (set(revenue) | set(new))
+    ]
+    out.sort(key=lambda r: r.revenue, reverse=True)
+    return out
+
+
+@router.get("/profit-by-region", response_model=list[RegionRevenueRow])
+def profit_by_region(db: Annotated[Session, Depends(get_db)],
+                     date_from: _DateFrom = None, date_to: _DateTo = None) -> list[RegionRevenueRow]:
+    _, _, start, end = _resolve_range(date_from, date_to)
+    return _profit_by_region(db, start, end)
+
+
+def _profit_by_region_table(db: Session, df: date, dt: date, start: datetime,
+                            end: datetime) -> tuple[str, list[str], list[list]]:
+    rows = [[r.region, r.revenue, r.new_patients] for r in _profit_by_region(db, start, end)]
+    header = ["Регион", "Выручка", "Новых пациентов"]
+    return f"Прибыль по регионам ({df} — {dt})", header, rows
+
+
+@router.get("/profit-by-region.csv")
+def profit_by_region_csv(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    _, header, rows = _profit_by_region_table(db, df, dt, start, end)
+    return _csv(f"profit_by_region_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/profit-by-region.xlsx")
+def profit_by_region_xlsx(db: Annotated[Session, Depends(get_db)],
+                          date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _profit_by_region_table(db, df, dt, start, end)
+    return _xlsx(f"profit_by_region_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/profit-by-region.pdf")
+def profit_by_region_pdf(db: Annotated[Session, Depends(get_db)],
+                         date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _profit_by_region_table(db, df, dt, start, end)
+    return _pdf(f"profit_by_region_{df}_{dt}.pdf", title, header, rows)

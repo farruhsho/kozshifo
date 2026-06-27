@@ -388,7 +388,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             patientId: patient.id,
             branchId: branchId,
           );
-      if (mounted) _snack('Талон на лечение: $number');
+      if (mounted) _snack('Номер очереди (лечение): $number');
     } catch (e) {
       if (mounted) _snack('$e', error: true);
     } finally {
@@ -664,7 +664,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             child: OutlinedButton.icon(
               onPressed: _busy ? null : _issueTreatmentTicket,
               icon: const Icon(Icons.healing_outlined),
-              label: const Text('Талон на лечение'),
+              label: const Text('В очередь на лечение'),
             ),
           ),
         ],
@@ -1185,9 +1185,9 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                   const Icon(Icons.confirmation_number_outlined),
                   const SizedBox(width: 8),
                   Text(
-                    // Талон может быть диагностики (D-) или врача (С-/V-) —
+                    // Номер может быть диагностики (D-) или врача (С-/V-) —
                     // зависит от выбранного направления.
-                    'Талон очереди: ${r.queueTicketNumber}',
+                    'Номер очереди: ${r.queueTicketNumber}',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),

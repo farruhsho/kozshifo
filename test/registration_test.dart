@@ -11,6 +11,8 @@ import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
 import 'package:kozshifo/features/patients/data/patients_repository.dart';
 import 'package:kozshifo/features/patients/presentation/patients_screen.dart';
+import 'package:kozshifo/features/reception/data/reception_repository.dart';
+import 'package:kozshifo/features/reception/domain/patient_summary.dart';
 
 void main() {
   group('PatientsRepository.create', () {
@@ -97,7 +99,76 @@ void main() {
       expect(find.text('ПИНФЛ'), findsOneWidget);
       expect(find.text('Паспорт'), findsOneWidget);
     });
+
+    testWidgets('warns about likely duplicates before creating a new patient',
+        (tester) async {
+      tester.view.physicalSize = const Size(900, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authControllerProvider.overrideWith(_FakeAuthController.new),
+            receptionRepositoryProvider.overrideWithValue(_FakeReception()),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: Center(child: RegisterPatientDialog())),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.widgetWithText(TextFormField, 'Фамилия'), 'Алиев');
+      await tester.enterText(find.widgetWithText(TextFormField, 'Имя'), 'Бек');
+
+      // Регион обязателен; выбор Ферганской открывает обязательный «Район».
+      await tester.ensureVisible(find.text('— выберите регион —'));
+      await tester.tap(find.text('— выберите регион —'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ферганская').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('— выберите район / город —'));
+      await tester.tap(find.text('— выберите район / город —'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('г. Фергана').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Сохранить'));
+      // Not pumpAndSettle: the save button shows a spinner (infinite animation)
+      // while the confirm dialog is open, so settle would time out — pump frames.
+      await tester.pump(); // _save runs the (mocked) duplicate check
+      await tester.pump(const Duration(milliseconds: 400)); // dialog animates in
+
+      // The anti-duplicate confirmation surfaces BEFORE any patient is created.
+      expect(find.text('Возможные дубликаты'), findsOneWidget);
+      expect(find.text('Всё равно создать'), findsOneWidget);
+      expect(find.text('Алиев Бек'), findsOneWidget);
+    });
   });
+}
+
+class _FakeReception extends ReceptionRepository {
+  _FakeReception() : super(Dio());
+
+  @override
+  Future<List<DuplicateCandidate>> findDuplicates({
+    String? lastName,
+    String? firstName,
+    String? phone,
+    String? birthDate,
+  }) async =>
+      const [
+        DuplicateCandidate(
+          id: 'p-9',
+          patientNo: '00000009',
+          fullName: 'Алиев Бек',
+          birthDate: '1990-05-17',
+          phone: '+998 90 111 22 33',
+          reason: 'телефон',
+        ),
+      ];
 }
 
 class _CapturingAdapter implements HttpClientAdapter {

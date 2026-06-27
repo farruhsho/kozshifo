@@ -8,6 +8,8 @@ import '../../../core/network/page.dart';
 import '../../../core/utils/input_formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../reception/data/reception_repository.dart';
+import '../../reception/domain/patient_summary.dart';
 import '../../reception/domain/regions.dart';
 import '../data/patients_repository.dart';
 import '../domain/patient.dart';
@@ -316,6 +318,26 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
       _error = null;
     });
     try {
+      // Anti-duplicate: warn about likely existing patients BEFORE creating a new
+      // record (phone strongest → ФИО+ДР → ФИО). Best-effort — a failed check must
+      // never block a legitimate registration.
+      try {
+        final dupes = await ref.read(receptionRepositoryProvider).findDuplicates(
+              lastName: _lastName.text.trim(),
+              firstName: _firstName.text.trim(),
+              phone: assembleUzPhone(_phone.text),
+              birthDate: _ymd(),
+            );
+        if (dupes.isNotEmpty && mounted) {
+          final proceed = await _confirmDespiteDuplicates(dupes);
+          if (!proceed) {
+            if (mounted) setState(() => _saving = false);
+            return;
+          }
+        }
+      } catch (_) {
+        // duplicate check is advisory — never block registration on its failure
+      }
       final branchId = ref.read(authControllerProvider).user?.branchId;
       final patient = await ref
           .read(patientsRepositoryProvider)
@@ -345,6 +367,60 @@ class _RegisterPatientDialogState extends ConsumerState<RegisterPatientDialog> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// Show likely existing patients before a NEW record is created. Returns true
+  /// if the operator chose «Всё равно создать», false to go back to the form.
+  Future<bool> _confirmDespiteDuplicates(List<DuplicateCandidate> dupes) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Возможные дубликаты'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Похоже, такой пациент уже зарегистрирован. '
+                  'Проверьте перед созданием нового:'),
+              const SizedBox(height: 12),
+              ...dupes.take(5).map(
+                    (d) => Card(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      child: ListTile(
+                        dense: true,
+                        title: Text(d.fullName),
+                        subtitle: Text(
+                          [
+                            if (d.patientNo != null) '№ ${d.patientNo}',
+                            if (d.birthDate != null) d.birthDate!,
+                            if (d.phone != null) d.phone!,
+                          ].join(' · '),
+                        ),
+                        trailing: Text(
+                          d.reason,
+                          style: Theme.of(ctx).textTheme.labelSmall,
+                        ),
+                      ),
+                    ),
+                  ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Всё равно создать'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   @override

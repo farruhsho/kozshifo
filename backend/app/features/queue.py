@@ -671,6 +671,12 @@ def issue_treatment_ticket(
         if visit is None or visit.patient_id != patient.id:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "visit_id does not belong to this patient")
+        # A closed/cancelled visit's lifecycle is over — don't queue new treatment
+        # work onto it (mirrors prescribe_treatment's guard; also keeps the new
+        # treatment-completion advance from re-touching a dead visit).
+        if visit.status in ("completed", "cancelled"):
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                f"Cannot issue a treatment ticket on a {visit.status} visit")
     assigned: User | None = None
     if payload.assigned_user_id is not None:
         assigned = db.get(User, payload.assigned_user_id)

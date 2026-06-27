@@ -111,3 +111,20 @@ def test_treatment_only_visit_auto_completes_when_last_ticket_done(client, auth)
     # Last treatment ticket done + nothing else pending → lifecycle completes.
     after = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
     assert after["flow_status"] == "completed", after
+
+
+def test_treatment_ticket_rejected_on_cancelled_visit(client, auth):
+    """A closed/cancelled visit's lifecycle is over — issuing a treatment ticket
+    onto it must be rejected (mirrors prescribe_treatment's guard)."""
+    branch = _branch(client, auth)
+    patient = _patient(client, auth, "Мёртвый")
+    visit = client.post(f"{API}/visits", headers=auth,
+                        json={"patient_id": patient["id"], "branch_id": branch}).json()
+    assert client.post(f"{API}/visits/{visit['id']}/cancel",
+                       headers=auth).status_code == 200
+
+    r = client.post(f"{API}/queue/treatment-ticket", headers=auth,
+                    json={"patient_id": patient["id"], "branch_id": branch,
+                          "visit_id": visit["id"]})
+    assert r.status_code == 409, r.text
+    assert "cancelled" in r.json()["detail"].lower()

@@ -10,6 +10,7 @@ import '../../../core/widgets/koz_widgets.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../debt/data/debt_repository.dart';
 import '../../debt/domain/debtor_row.dart';
+import '../../reception/data/reception_repository.dart';
 import '../data/dashboard_repository.dart';
 import '../domain/dashboard_summary.dart';
 import '../domain/director_analytics.dart';
@@ -212,16 +213,58 @@ class _HangingVisitsPanel extends ConsumerWidget {
   }
 }
 
-class _HangingCategoryCard extends StatelessWidget {
+class _HangingCategoryCard extends ConsumerWidget {
   const _HangingCategoryCard({required this.category});
 
   final HangingCategory category;
 
+  /// C6 — settle a stale, never-progressed visit (patient registered but left,
+  /// no doctor) right from the panel, instead of opening the card. cancel_visit
+  /// only allows UNPAID open visits, so a paid one surfaces its 409.
+  Future<void> _cancel(
+      BuildContext context, WidgetRef ref, HangingVisitRow v) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Отменить визит?'),
+        content: Text('Визит ${v.visitNo} · ${v.patientName} будет отменён. '
+            'Это допустимо только для неоплаченного визита.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Нет')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Отменить визит')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(receptionRepositoryProvider).cancelVisit(v.visitId);
+      ref.invalidate(hangingVisitsProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Визит ${v.visitNo} отменён')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: Theme.of(context).colorScheme.error));
+      }
+    }
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final color =
         category.isCritical ? Theme.of(context).colorScheme.error : AppColors.amber;
     final extra = category.count - category.visits.length;
+    // Only the «никто не ведёт» (registered/awaiting/diagnostic) cases are safe to
+    // abort inline; other categories need real follow-up, not cancellation.
+    final canCancel = category.category == 'no_doctor' &&
+        (ref.watch(authControllerProvider).user?.can('visits.update') ?? false);
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
@@ -243,7 +286,19 @@ class _HangingCategoryCard extends StatelessWidget {
               dense: true,
               title: Text(v.patientName),
               subtitle: Text(v.detail),
-              trailing: const Icon(Icons.chevron_right, size: 20),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (canCancel)
+                    IconButton(
+                      icon: const Icon(Icons.cancel_outlined, size: 20),
+                      tooltip: 'Отменить визит',
+                      color: Theme.of(context).colorScheme.error,
+                      onPressed: () => _cancel(context, ref, v),
+                    ),
+                  const Icon(Icons.chevron_right, size: 20),
+                ],
+              ),
               // Тап ведёт прямо в медкарту пациента, чтобы закрыть проблему.
               onTap: () => context.go('/patients/${v.patientId}/card'),
             ),

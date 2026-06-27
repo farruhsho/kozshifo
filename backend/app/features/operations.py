@@ -382,8 +382,9 @@ def operation_day_summary(
         None if actor.is_superuser else actor.branch_id)
 
     op_stmt = (
-        select(Operation.id, Operation.price)
+        select(Operation.id, Operation.price, VisitItem.status)
         .join(Visit, Operation.visit_id == Visit.id)
+        .outerjoin(VisitItem, Operation.visit_item_id == VisitItem.id)
         .where(
             Operation.status.in_(Operation.DONE_STATUSES),
             Operation.performed_at >= start,
@@ -393,8 +394,16 @@ def operation_day_summary(
     if branch is not None:
         op_stmt = op_stmt.where(Visit.branch_id == branch)
     op_rows = db.execute(op_stmt).all()
-    op_ids = [r[0] for r in op_rows]
-    revenue = sum((r[1] if r[1] is not None else Decimal("0") for r in op_rows), Decimal("0"))
+    op_ids = [r[0] for r in op_rows]  # all performed → COGS + count
+    # Revenue counts only operations whose billed line is still SETTLED (paid). A
+    # refund reverts the VisitItem to 'ordered' (see refund_payment), so a refunded
+    # operation drops out of revenue while its COGS — the materials were already
+    # consumed — stays, and the day's P&L shows the real loss instead of an inflated
+    # profit. (Cash clinic: unpaid-but-performed is likewise not yet realized cash.)
+    revenue = sum(
+        (r[1] for r in op_rows if r[2] == "paid" and r[1] is not None),
+        Decimal("0"),
+    )
 
     cogs = Decimal("0")
     if op_ids:

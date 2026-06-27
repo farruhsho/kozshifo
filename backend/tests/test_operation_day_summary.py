@@ -44,6 +44,11 @@ def test_operation_day_summary_pnl(client, auth):
     assert client.post(f"{API}/operations/{op['id']}/schedule", headers=auth,
                        json={"scheduled_at": "2026-07-01T09:00:00+00:00",
                              "price": "900000"}).status_code == 200
+    # Cash-clinic flow: the operation is paid before it is performed, so it counts
+    # as SETTLED revenue in the day's P&L.
+    assert client.post(f"{API}/payments", headers=auth, json={
+        "visit_id": visit["id"], "amount": "900000",
+        "issue_queue_ticket": False}).status_code in (200, 201)
     # Perform now → performed_at lands in today's window.
     assert client.post(f"{API}/operations/{op['id']}/perform", headers=auth).status_code == 200
 
@@ -62,6 +67,45 @@ def test_operation_day_summary_pnl(client, auth):
     assert Decimal(s["cogs"]) == Decimal("5000")
     assert Decimal(s["expenses"]) == Decimal("50000")
     assert Decimal(s["profit"]) == Decimal("845000")  # 900000 − 5000 − 50000
+
+
+def test_day_summary_refunded_operation_drops_revenue_keeps_cogs(client, auth):
+    """A refunded performed operation drops out of revenue while its COGS stays
+    (materials were consumed) — the P&L shows the real loss, not inflated profit."""
+    branch = client.post(f"{API}/branches", headers=auth,
+                         json={"name": "P&L Возврат", "code": "PNL-REF"}).json()["id"]
+    _receipt(client, auth, branch, [("SYR-1", "10", "1000"), ("GLOVES-ST", "10", "2000")])
+    ivi = next(t for t in client.get(f"{API}/operation-types", headers=auth).json()
+               if t["code"] == "IVI")
+    patient = client.post(f"{API}/patients", headers=auth,
+                          json={"first_name": "ПЛ", "last_name": "Возврат", "branch_id": branch}).json()
+    visit = client.post(f"{API}/visits", headers=auth,
+                        json={"patient_id": patient["id"], "branch_id": branch}).json()
+    op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
+                     json={"operation_type_id": ivi["id"]}).json()
+    assert client.post(f"{API}/operations/{op['id']}/schedule", headers=auth,
+                       json={"scheduled_at": "2026-07-01T09:00:00+00:00",
+                             "price": "900000"}).status_code == 200
+    pay = client.post(f"{API}/payments", headers=auth, json={
+        "visit_id": visit["id"], "amount": "900000", "issue_queue_ticket": False})
+    assert pay.status_code in (200, 201), pay.text
+    payment_id = pay.json()["payment"]["id"]
+    assert client.post(f"{API}/operations/{op['id']}/perform", headers=auth).status_code == 200
+
+    before = client.get(f"{API}/operations/day-summary", headers=auth,
+                        params={"date": _today(), "branch_id": branch}).json()
+    assert Decimal(before["revenue"]) == Decimal("900000")
+    assert Decimal(before["cogs"]) == Decimal("5000")
+    assert Decimal(before["profit"]) == Decimal("895000")  # 900000 − 5000
+
+    # Refund → revenue drops, COGS (consumed materials) stays → the day shows a loss.
+    assert client.post(f"{API}/payments/{payment_id}/refund", headers=auth).status_code == 200
+    after = client.get(f"{API}/operations/day-summary", headers=auth,
+                       params={"date": _today(), "branch_id": branch}).json()
+    assert Decimal(after["revenue"]) == Decimal("0")
+    assert Decimal(after["cogs"]) == Decimal("5000")     # materials still consumed
+    assert after["operations_count"] == 1                # still counted as performed
+    assert Decimal(after["profit"]) == Decimal("-5000")  # the real loss
 
 
 def test_day_summary_excludes_non_operation_expenses(client, auth):

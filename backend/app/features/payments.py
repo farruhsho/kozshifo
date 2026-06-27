@@ -133,14 +133,19 @@ def take_payment(
         elif visit.flow_status == "waiting_diagnostic":
             # Tag the ticket with the visit's diagnostic service (УЗИ, биометрия…)
             # so call-next routes it to the matching diagnostician. NULL when the
-            # visit has no diagnostic service → open to any diagnostician.
+            # visit has no diagnostic service → open to any diagnostician. When the
+            # visit carries ≥2 diagnostic services (e.g. УЗИ + биометрия) we ALSO
+            # leave it NULL (open pool): tagging only the first would hide the ticket
+            # from the second specialist's service-filtered call-next and hang the
+            # visit. A single diagnostic service still routes precisely.
             billed_service_ids = [it.service_id for it in visit.items if it.service_id is not None]
-            diag_service_id = db.execute(
+            diag_service_ids = db.execute(
                 select(Service.id).where(
                     Service.id.in_(billed_service_ids),
                     Service.is_diagnostic.is_(True),
-                ).limit(1)
-            ).scalar_one_or_none() if billed_service_ids else None
+                )
+            ).scalars().all() if billed_service_ids else []
+            diag_service_id = diag_service_ids[0] if len(diag_service_ids) == 1 else None
             ticket = QueueTicket(
                 ticket_number=next_ticket_number(db, visit.branch_id, "D"),
                 track="diagnostic",
@@ -216,6 +221,15 @@ def refund_payment(
     visit = db.get(Visit, payment.visit_id)
     if visit is not None:
         visit.paid_amount = Decimal(visit.paid_amount) - Decimal(payment.amount)
+        # Mirror the settlement flag: VisitItems are marked "paid" only while the
+        # visit is fully settled (see take_payment). A refund that re-opens a
+        # balance must revert them to "ordered" — otherwise operations
+        # detach/cancel keep seeing a "paid" line and demand "refund first" even
+        # though the refund already happened (a dead-end right after a refund).
+        if Decimal(visit.balance) > Decimal("0.00"):
+            for item in visit.items:
+                if item.status == "paid":
+                    item.status = "ordered"
         if Decimal(visit.paid_amount) <= Decimal("0.00"):
             # Fully refunded — the patient leaves the flow: active queue
             # tickets must not stay on the TV board or auto-advance later.

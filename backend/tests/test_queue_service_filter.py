@@ -82,3 +82,42 @@ def test_diagnostic_ticket_tagged_and_filtered_by_service(client, auth):
     assert got.json()["id"] == d["id"]
 
     client.post(f"{API}/queue/{d['id']}/skip", headers=auth)  # cleanup
+
+
+def test_two_diagnostic_services_open_pool(client, auth):
+    """A visit billed for TWO diagnostic services tags the ticket NULL (open pool)
+    so EITHER specialist can claim it. Tagging only the first (the old .limit(1)
+    behaviour) hid the ticket from the second specialist and hung the visit."""
+    branch = _branch(client, auth)
+    uzi = _diag_service(client, auth, "F3B-UZI")
+    bio = _diag_service(client, auth, "F3B-BIO")
+    _diagnost(client, auth, branch, "muzi", [uzi["id"]])
+    _diagnost(client, auth, branch, "mbio", [bio["id"]])
+
+    patient = client.post(f"{API}/patients", headers=auth,
+                          json={"first_name": "Мульти", "last_name": "Диаг", "branch_id": branch}).json()
+    visit = client.post(f"{API}/visits", headers=auth,
+                        json={"patient_id": patient["id"], "branch_id": branch,
+                              "items": [{"service_id": uzi["id"], "quantity": 1},
+                                        {"service_id": bio["id"], "quantity": 1}]}).json()
+    paid = client.post(f"{API}/payments", headers=auth,
+                       json={"visit_id": visit["id"], "amount": visit["balance"]})
+    assert paid.status_code == 201, paid.text
+
+    drows = client.get(f"{API}/queue", headers=auth,
+                       params={"branch_id": branch, "track": "diagnostic"}).json()
+    [d] = [t for t in drows if t["visit_id"] == visit["id"]]
+    assert d["service_id"] is None  # open pool — NOT tagged with the first service only
+
+    # Isolate our ticket so call-next is deterministic in the shared session DB.
+    _park_waiting_diagnostic(client, auth, branch, keep_id=d["id"])
+
+    # The BIO diagnostician must be able to claim the (untagged) ticket — under the
+    # old behaviour it was tagged УЗИ and BIO's service-filtered call-next 404'd.
+    bio_auth = _login(client, "filt.mbio@kozshifo.uz")
+    got = client.post(f"{API}/queue/call-next", headers=bio_auth,
+                      json={"branch_id": branch, "track": "diagnostic"})
+    assert got.status_code == 200, got.text
+    assert got.json()["id"] == d["id"]
+
+    client.post(f"{API}/queue/{d['id']}/skip", headers=auth)  # cleanup

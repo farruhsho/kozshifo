@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
-from app.core.flow import advance_flow
+from app.core.flow import advance_flow, complete_if_treatment_done
 from app.core.sequences import next_ticket_number
 from app.core.visibility import owner_user_ids
 from app.models.branch import Branch
@@ -421,6 +421,13 @@ def _transition(db: Session, ticket_id: UUID, actor: CurrentUser, new_status: st
                 advance_flow(db, visit,
                              "diagnostic_skipped" if ticket.track == "diagnostic"
                              else "doctor_skipped")
+    # Treatment (Л-) tickets sit outside the diagnostic->doctor flow, so finishing
+    # one drives nothing on its own. When the last treatment ticket is done and
+    # nothing else is pending, close the visit's lifecycle (else it lingers open).
+    if new_status == "done" and ticket.track == "treatment" and ticket.visit_id is not None:
+        visit = db.get(Visit, ticket.visit_id)
+        if visit is not None:
+            complete_if_treatment_done(db, visit)
     db.commit()
     db.refresh(ticket)
     return ticket

@@ -85,3 +85,29 @@ def test_treatment_ticket_rejects_foreign_visit(client, auth):
                              "visit_id": visit_b["id"]})
     assert resp.status_code == 422
     assert "does not belong" in resp.json()["detail"]
+
+
+def test_treatment_only_visit_auto_completes_when_last_ticket_done(client, auth):
+    """A treatment-only visit (Л-ticket, no doctor/diagnostic) must reach
+    flow_status='completed' once its last treatment ticket is done — otherwise it
+    lingers in its pre-treatment flow_status forever (the orphaned-open-record bug)."""
+    branch = _branch(client, auth)
+    patient = _patient(client, auth, "Авто")
+    visit = client.post(f"{API}/visits", headers=auth,
+                        json={"patient_id": patient["id"], "branch_id": branch}).json()
+    assert visit["flow_status"] != "completed"
+
+    t = client.post(f"{API}/queue/treatment-ticket", headers=auth,
+                    json={"patient_id": patient["id"], "branch_id": branch,
+                          "visit_id": visit["id"], "room": "Процедурная"}).json()
+    # While the treatment ticket is still active the visit must NOT be completed.
+    mid = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
+    assert mid["flow_status"] != "completed"
+
+    client.post(f"{API}/queue/{t['id']}/call", headers=auth, json={"room": "Процедурная"})
+    client.post(f"{API}/queue/{t['id']}/serve", headers=auth)
+    assert client.post(f"{API}/queue/{t['id']}/done", headers=auth).status_code == 200
+
+    # Last treatment ticket done + nothing else pending → lifecycle completes.
+    after = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
+    assert after["flow_status"] == "completed", after

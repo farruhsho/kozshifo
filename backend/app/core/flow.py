@@ -171,3 +171,51 @@ def recompute_plan(db: Session, visit: Visit) -> None:
         visit.flow_status = "waiting_doctor"
     else:
         visit.flow_status = "completed"
+
+
+def complete_if_treatment_done(db: Session, visit: Visit) -> None:
+    """Close out a visit whose remaining work was a treatment course, once its
+    last treatment ticket is marked done.
+
+    Treatment (Л-) tickets are deliberately OUTSIDE the diagnostic->doctor flow,
+    so nothing else advances a treatment-only visit to "completed" — without this
+    it lingers in its pre-treatment flow_status (registered / waiting_diagnostic /
+    follow_up) forever. Called from the queue when a treatment ticket finishes.
+
+    Completes ONLY when nothing is still pending: no active queue ticket on ANY
+    track, no open operation, no un-performed treatment. Never overrides a locked
+    (closed/cancelled) visit, and never forces the visit's BILLING status — a
+    deferred treatment course may still owe a balance, which stays the cashier /
+    debts concern.
+    """
+    if _is_locked(visit) or visit.flow_status == "cancelled":
+        return
+    # Local imports: operations/queue import flow (avoid module cycles).
+    from app.models.operation import Operation, Treatment
+    from app.models.queue import QueueTicket
+
+    still_active = db.execute(
+        select(QueueTicket.id).where(
+            QueueTicket.visit_id == visit.id,
+            QueueTicket.status.in_(("waiting", "called", "serving")),
+        ).limit(1)
+    ).first()
+    if still_active is not None:
+        return
+    open_op = db.execute(
+        select(Operation.id).where(
+            Operation.visit_id == visit.id,
+            Operation.status.in_(Operation.OPEN_STATUSES),
+        ).limit(1)
+    ).first()
+    if open_op is not None:
+        return
+    pending_tx = db.execute(
+        select(Treatment.id).where(
+            Treatment.visit_id == visit.id,
+            Treatment.status == "prescribed",
+        ).limit(1)
+    ).first()
+    if pending_tx is not None:
+        return
+    visit.flow_status = "completed"

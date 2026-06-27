@@ -137,3 +137,33 @@ def test_set_price_on_referred_op_is_applied_at_schedule(client, auth):
     sched = _schedule(client, auth, op["id"])
     assert sched.status_code == 200, sched.text
     assert Decimal(sched.json()["price"]) == Decimal("1234000")
+
+
+def test_refund_reverts_visit_item_so_operation_can_detach(client, auth):
+    """A full refund must revert the visit's items 'paid'->'ordered'. Otherwise the
+    operation stays un-detachable: detach 409s «refund first» even though the
+    refund already happened — a dead-end right after a refund."""
+    branch_id = _branch_id(client, auth)
+    visit = _new_visit(client, auth, branch_id, "refund-detach")
+    ivi = _ivi(client, auth)
+    op = _refer(client, auth, visit["id"], ivi["id"])
+    assert _schedule(client, auth, op["id"], price="1000000").status_code == 200
+
+    pay = client.post(f"{API}/payments", headers=auth,
+                      json={"visit_id": visit["id"], "amount": "1000000",
+                            "issue_queue_ticket": False})
+    assert pay.status_code in (200, 201), pay.text
+    payment_id = pay.json()["payment"]["id"]
+
+    # While the line is paid, detaching is correctly blocked (refund first).
+    blocked = client.post(f"{API}/operations/{op['id']}/unschedule", headers=auth)
+    assert blocked.status_code == 409, blocked.text
+
+    # Refund re-opens the balance → the item must revert to 'ordered'.
+    refunded = client.post(f"{API}/payments/{payment_id}/refund", headers=auth)
+    assert refunded.status_code == 200, refunded.text
+
+    # Now detaching succeeds — no phantom «refund first» after the refund.
+    detached = client.post(f"{API}/operations/{op['id']}/unschedule", headers=auth)
+    assert detached.status_code == 200, detached.text
+    assert detached.json()["status"] == "referred"

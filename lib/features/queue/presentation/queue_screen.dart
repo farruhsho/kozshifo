@@ -10,6 +10,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/url_opener.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../attachments/presentation/attachments_section.dart';
+import '../../clinical/presentation/treatments_section.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../cabinets/data/cabinet_repository.dart';
 import '../../diagnoses/presentation/diagnostic_conclusion_card.dart';
@@ -572,6 +573,14 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                     false) &&
                 visitId != null)
               DiagnosticConclusionCard(patientId: patientId, visitId: visitId),
+            // C8 — treatment-room nurse manages the visit's procedures right from
+            // the Л-queue (выдать/завершить/отменить) without opening the full
+            // card. The section is itself permission-aware (no «add» without
+            // treatments.prescribe), so it stays read-only for non-prescribers.
+            if ((ref.watch(authControllerProvider).user?.can('treatments.perform') ??
+                    false) &&
+                visitId != null)
+              TreatmentsSection(visitId: visitId, patientId: patientId),
           ],
         ),
       ),

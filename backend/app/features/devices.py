@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -35,6 +35,7 @@ from app.schemas.device import (
     DeviceCreate,
     DeviceOut,
     DeviceResultCreate,
+    DeviceResultLink,
     DeviceResultOut,
     DeviceUpdate,
 )
@@ -286,6 +287,58 @@ def visit_device_results(visit_id: UUID, db: Annotated[Session, Depends(get_db)]
         .order_by(DeviceResult.measured_at.desc())
     ).scalars().all()
     return list(rows)
+
+
+@router.get("/device-results/unlinked", response_model=list[DeviceResultOut],
+            dependencies=[Depends(require_permission("device_results.read"))])
+def unlinked_device_results(
+    db: Annotated[Session, Depends(get_db)],
+    actor: CurrentUser,
+    limit: int = Query(50, ge=1, le=200),
+) -> list[DeviceResult]:
+    """Device results that arrived WITHOUT a visit (orphans) — e.g. a прибор sent a
+    measurement before the patient was matched, or a result was posted with no
+    patient. Staff attach them to the right visit via POST /device-results/{id}/link.
+    Branch-scoped by the device for non-owners (unassigned devices are visible)."""
+    stmt = (
+        select(DeviceResult)
+        .join(Device, DeviceResult.device_id == Device.id)
+        .where(DeviceResult.visit_id.is_(None))
+        .order_by(DeviceResult.measured_at.desc())
+        .limit(limit)
+    )
+    if not actor.is_superuser and actor.branch_id is not None:
+        stmt = stmt.where(
+            or_(Device.branch_id == actor.branch_id, Device.branch_id.is_(None)))
+    return list(db.execute(stmt).scalars().all())
+
+
+@router.post("/device-results/{result_id}/link", response_model=DeviceResultOut,
+             dependencies=[Depends(require_permission("device_results.create"))])
+def link_device_result(
+    result_id: UUID,
+    payload: DeviceResultLink,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("device_results.create"))],
+) -> DeviceResult:
+    """Attach an orphan device result to a visit (and its patient). Only an UNLINKED
+    result can be linked — re-pointing one already on a visit must detach first, so a
+    result is never silently moved off another patient's record."""
+    result = db.get(DeviceResult, result_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device result not found")
+    if result.visit_id is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Result is already linked to a visit")
+    visit = get_or_404_visit(db, payload.visit_id)
+    result.visit_id = visit.id
+    result.patient_id = visit.patient_id
+    record_audit(db, action="update", entity_type="device_result", entity_id=result.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Linked device result ({result.result_type}) to visit {visit.visit_no}")
+    db.commit()
+    db.refresh(result)
+    return result
 
 
 @router.post("/visits/{visit_id}/exam/apply-refraction", response_model=EyeExamOut)

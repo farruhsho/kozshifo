@@ -80,6 +80,11 @@ class DeviceResultCreate(BaseModel):
     source: ResultSource = "manual"
 
 
+class DeviceResultLink(BaseModel):
+    """Attach an orphan (visit-less) device result to a visit."""
+    visit_id: UUID
+
+
 class DeviceResultOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

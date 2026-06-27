@@ -11,6 +11,7 @@ import '../../../core/utils/url_opener.dart';
 import '../../../core/widgets/async_value_widget.dart';
 import '../../attachments/presentation/attachments_section.dart';
 import '../../clinical/presentation/treatments_section.dart';
+import '../../devices/presentation/unlinked_results_card.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../cabinets/data/cabinet_repository.dart';
 import '../../diagnoses/presentation/diagnostic_conclusion_card.dart';
@@ -573,6 +574,12 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                     false) &&
                 visitId != null)
               DiagnosticConclusionCard(patientId: patientId, visitId: visitId),
+            // Orphan device results (прибор sent a measurement with no visit) — the
+            // diagnost attaches one to the patient they just called.
+            if ((ref.watch(authControllerProvider).user?.can('device_results.create') ??
+                    false) &&
+                visitId != null)
+              UnlinkedResultsCard(visitId: visitId),
             // C8 — treatment-room nurse manages the visit's procedures right from
             // the Л-queue (выдать/завершить/отменить) without opening the full
             // card. The section is itself permission-aware (no «add» without

@@ -71,6 +71,31 @@ class DevicesRepository {
     }
   }
 
+  /// Device results that arrived without a visit (orphans) — staff link them
+  /// to the right visit afterwards.
+  Future<List<DeviceResult>> unlinkedResults({int limit = 50}) async {
+    try {
+      final resp = await _dio.get('/device-results/unlinked',
+          queryParameters: {'limit': limit});
+      return (resp.data as List<dynamic>)
+          .map((e) => DeviceResult.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Attach an orphan result to a visit (and its patient).
+  Future<DeviceResult> linkResult(String resultId, String visitId) async {
+    try {
+      final resp = await _dio.post('/device-results/$resultId/link',
+          data: {'visit_id': visitId});
+      return DeviceResult.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Raw bytes of a previously uploaded result file (for preview/download).
   Future<Uint8List> resultFileBytes(String resultId) async {
     try {
@@ -95,3 +120,7 @@ final deviceRecentResultsProvider = FutureProvider.autoDispose
 final visitDeviceResultsProvider = FutureProvider.autoDispose
     .family<List<DeviceResult>, String>((ref, visitId) =>
         ref.watch(devicesRepositoryProvider).resultsForVisit(visitId));
+
+final unlinkedDeviceResultsProvider =
+    FutureProvider.autoDispose<List<DeviceResult>>(
+        (ref) => ref.watch(devicesRepositoryProvider).unlinkedResults());

@@ -191,6 +191,53 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
 
   bool get _isMedication => _kind == 'medication';
 
+  /// C7 — soft stock advisory at prescribe time: warn (never block) when the
+  /// requested medication quantity exceeds usable on-hand stock. The hard guard
+  /// stays at dispense (409); this just gives the doctor early feedback.
+  Widget _stockAdvisory() {
+    if (_productId == null) return const SizedBox.shrink();
+    final branchId = ref.watch(authControllerProvider).user?.branchId;
+    if (branchId == null) return const SizedBox.shrink();
+    return ref.watch(stockProvider(branchId)).maybeWhen(
+          data: (rows) {
+            final matches = rows.where((r) => r.product.id == _productId);
+            if (matches.isEmpty) return const SizedBox.shrink();
+            final row = matches.first;
+            final onHand = double.tryParse(row.onHand) ?? 0;
+            final want =
+                double.tryParse(_quantity.text.trim().replaceAll(',', '.')) ?? 0;
+            final short = want > onHand;
+            final color = short ? Colors.orange.shade800 : null;
+            return Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    short
+                        ? Icons.warning_amber_rounded
+                        : Icons.inventory_2_outlined,
+                    size: 16,
+                    color: color,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      short
+                          ? 'Остаток ${row.onHand} — меньше требуемого, но списать можно'
+                          : 'Остаток: ${row.onHand}',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: color ?? Theme.of(context).hintColor),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+          orElse: () => const SizedBox.shrink(),
+        );
+  }
+
   bool get _canSave =>
       !_saving &&
       _name.text.trim().isNotEmpty &&
@@ -303,6 +350,7 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
                 decoration: const InputDecoration(labelText: 'Количество'),
                 onChanged: (_) => setState(() {}),
               ),
+              _stockAdvisory(),
             ],
             const SizedBox(height: 12),
             // Опциональная привязка к платной услуге → биллит визиту (доход

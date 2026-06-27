@@ -208,6 +208,18 @@ def _seed_cabinets(db: Session, branch: Branch) -> None:
     db.flush()
 
 
+# Starter «Лечение» services — paid procedures the doctor links when prescribing a
+# treatment (C5). Categorised «Лечение» so their revenue buckets into the director's
+# «Лечение» finance direction out of the box. (code, name, price)
+_TREATMENT_SERVICES: list[tuple[str, str, str]] = [
+    ("TX-IVDRIP", "Внутривенное капельное вливание", "120000"),
+    ("TX-PARABULB", "Парабульбарная инъекция", "60000"),
+    ("TX-INJECT", "Инъекция (в/м · в/в · субконъюнктивальная)", "50000"),
+    ("TX-DRESS", "Перевязка / обработка глаза", "40000"),
+    ("TX-PHYSIO", "Физиотерапевтическая процедура", "70000"),
+]
+
+
 def _seed_services(db: Session) -> None:
     category = db.execute(
         select(ServiceCategory).where(ServiceCategory.name == "Диагностика")
@@ -220,6 +232,19 @@ def _seed_services(db: Session) -> None:
         if db.execute(select(Service).where(Service.code == code)).scalar_one_or_none() is None:
             db.add(Service(code=code, name=name, price=Decimal(price),
                            category_id=category.id, is_diagnostic=is_diagnostic))
+    # «Лечение» category + starter procedures so C5's «Платная услуга» picker has
+    # treatment options and their revenue lands in the «Лечение» direction.
+    treatment_cat = db.execute(
+        select(ServiceCategory).where(ServiceCategory.name == "Лечение")
+    ).scalar_one_or_none()
+    if treatment_cat is None:
+        treatment_cat = ServiceCategory(name="Лечение", description="Лечебные процедуры")
+        db.add(treatment_cat)
+        db.flush()
+    for code, name, price in _TREATMENT_SERVICES:
+        if db.execute(select(Service).where(Service.code == code)).scalar_one_or_none() is None:
+            db.add(Service(code=code, name=name, price=Decimal(price),
+                           category_id=treatment_cat.id))
     db.flush()
 
 

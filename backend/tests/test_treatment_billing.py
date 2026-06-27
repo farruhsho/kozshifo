@@ -94,3 +94,23 @@ def test_cancel_paid_treatment_requires_refund_first(client, auth):
     c = client.post(f"{API}/treatments/{tx['id']}/cancel", headers=auth)
     assert c.status_code == 409, c.text
     assert "refund" in c.json()["detail"].lower()
+
+
+def test_treatment_revenue_buckets_into_lechenie(client, auth):
+    """End-to-end (C5 + seed): a treatment billed with a seeded «Лечение» service
+    surfaces in the director's «Лечение» finance direction."""
+    branch = _branch(client, auth)
+    services = client.get(f"{API}/services", headers=auth).json()["items"]
+    seeded = next(s for s in services if s["code"] == "TX-IVDRIP")  # «Лечение» seed
+    visit = _visit(client, auth, branch, "Направл")
+    r = _prescribe(client, auth, visit["id"], service_id=seeded["id"])
+    assert r.status_code == 201, r.text
+    price = Decimal(seeded["price"])
+    pay = client.post(f"{API}/payments", headers=auth, json={
+        "visit_id": visit["id"], "amount": str(price), "issue_queue_ticket": False})
+    assert pay.status_code in (200, 201), pay.text
+
+    rep = client.get(f"{API}/dashboard/finance-by-direction", headers=auth,
+                     params={"period": "month"}).json()
+    rows = {row["direction"]: row for row in rep["rows"]}
+    assert Decimal(rows["lechenie"]["revenue"]) >= price

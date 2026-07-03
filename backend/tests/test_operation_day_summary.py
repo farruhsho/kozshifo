@@ -2,14 +2,22 @@
 dedicated branch so the day's totals aren't polluted by other tests' operations."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from tests.conftest import API
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    # day-summary windows operations by the LOCAL calendar day (local_day_bounds_utc)
+    # and perform stamps performed_at = utcnow, so "today" must be the LOCAL date —
+    # the UTC date lags behind between local midnight and UTC midnight.
+    return datetime.now().date().isoformat()
+
+
+def _future() -> str:
+    """A scheduled_at that stays in the future (a fixed date would rot into the past)."""
+    return (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
 
 
 def _product_id(client, auth, sku: str) -> str:
@@ -42,7 +50,7 @@ def test_operation_day_summary_pnl(client, auth):
     op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
                      json={"operation_type_id": ivi["id"]}).json()
     assert client.post(f"{API}/operations/{op['id']}/schedule", headers=auth,
-                       json={"scheduled_at": "2026-07-01T09:00:00+00:00",
+                       json={"scheduled_at": _future(),
                              "price": "900000"}).status_code == 200
     # Cash-clinic flow: the operation is paid before it is performed, so it counts
     # as SETTLED revenue in the day's P&L.
@@ -84,7 +92,7 @@ def test_day_summary_refunded_operation_drops_revenue_keeps_cogs(client, auth):
     op = client.post(f"{API}/visits/{visit['id']}/operations", headers=auth,
                      json={"operation_type_id": ivi["id"]}).json()
     assert client.post(f"{API}/operations/{op['id']}/schedule", headers=auth,
-                       json={"scheduled_at": "2026-07-01T09:00:00+00:00",
+                       json={"scheduled_at": _future(),
                              "price": "900000"}).status_code == 200
     pay = client.post(f"{API}/payments", headers=auth, json={
         "visit_id": visit["id"], "amount": "900000", "issue_queue_ticket": False})

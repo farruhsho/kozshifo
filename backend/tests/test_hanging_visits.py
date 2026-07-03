@@ -115,9 +115,11 @@ def test_cat4_operation_not_closed(client, auth):
                if t["code"] == "IVI")
     op = client.post(f"{API}/visits/{v}/operations", headers=auth,
                      json={"operation_type_id": ivi["id"], "eye": "od"}).json()
-    # Schedule for a FUTURE date → not hanging.
+    # Schedule for a FUTURE date → not hanging. (Dynamic — a fixed date would
+    # rot into the past and turn this into a hanging op.)
+    future = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
     assert client.post(f"{API}/operations/{op['id']}/schedule", headers=auth,
-                       json={"scheduled_at": "2026-07-01T09:00:00+00:00"}).status_code == 200
+                       json={"scheduled_at": future}).status_code == 200
     assert v not in _visit_ids(_cat(_hanging(client, auth), "op_not_closed"))
 
     # Backdate the scheduled date to the past → a no-show/forgotten surgery.

@@ -222,6 +222,8 @@ class TreatmentCreate(BaseModel):
     # unit_price overrides the catalog price; omit both → unbilled (clinical-only).
     service_id: UUID | None = None
     unit_price: Decimal | None = Field(default=None, ge=0)
+    # Многодневный курс: число сеансов (1..365). 1 = одноразовое назначение.
+    sessions_total: int = Field(default=1, ge=1, le=365)
 
 
 class TreatmentOut(BaseModel):
@@ -242,3 +244,5 @@ class TreatmentOut(BaseModel):
     service_id: UUID | None = None
     unit_price: Decimal | None = None
     visit_item_id: UUID | None = None
+    sessions_total: int = 1
+    sessions_done: int = 0

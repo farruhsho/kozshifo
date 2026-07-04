@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -54,6 +54,11 @@ def prescribe_treatment(
         if payload.product_id is None or payload.quantity is None:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "A medication prescription requires product_id and quantity")
+        # Медикамент выдаётся один раз через /dispense (FEFO-списание), сеансов у
+        # него нет — многосеансный курс возможен только для процедуры.
+        if payload.sessions_total > 1:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "A medication cannot have a multi-session course")
     if payload.product_id is not None and db.get(Product, payload.product_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Product not found")
 
@@ -68,6 +73,7 @@ def prescribe_treatment(
         instructions=payload.instructions,
         service_id=payload.service_id,
         unit_price=payload.unit_price,
+        sessions_total=payload.sessions_total,
     )
     db.add(treatment)
     db.flush()
@@ -155,6 +161,7 @@ def dispense_treatment(
         ) from None
 
     treatment.status = "done"
+    treatment.sessions_done = treatment.sessions_total
     treatment.performed_at = datetime.now(timezone.utc)
     record_audit(db, action="dispense", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
@@ -186,6 +193,9 @@ def complete_treatment(
     if visit.status == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, "Cannot complete on a cancelled visit")
     treatment.status = "done"
+    # Завершение процедуры целиком закрывает курс (все сеансы), чтобы прогресс
+    # оставался согласованным даже при закрытии через /complete, а не /mark-session.
+    treatment.sessions_done = treatment.sessions_total
     treatment.performed_at = datetime.now(timezone.utc)
     record_audit(db, action="complete", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id,
@@ -194,6 +204,68 @@ def complete_treatment(
     # completes a treatment-only visit even without a queue ticket.
     db.flush()
     complete_if_treatment_done(db, visit)
+    db.commit()
+    db.refresh(treatment)
+    return treatment
+
+
+@router.post("/treatments/{treatment_id}/mark-session", response_model=TreatmentOut)
+def mark_treatment_session(
+    treatment_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("treatments.perform"))],
+) -> Treatment:
+    """Отметить один выполненный сеанс многодневного курса.
+
+    +1 к sessions_done; курс остаётся «prescribed» (визит-лечение не закрывается),
+    пока не выполнены все сеансы. Когда sessions_done достигает sessions_total —
+    статус done (как /complete), и flow может закрыть визит-лечение.
+    """
+    treatment = _get_or_404(db, treatment_id)
+    # Сеансы — только для процедур (зеркало гарда /complete). Медикамент доводится
+    # до done через /dispense (с FEFO-списанием), иначе склад/COGS дрейфует.
+    if treatment.kind != "procedure":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Only a procedure has sessions (medication is dispensed, not marked)")
+    if treatment.status != "prescribed":
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Only a prescribed treatment has sessions (status: {treatment.status})")
+    visit = db.get(Visit, treatment.visit_id)
+    # Real work must never be marked against a dead/closed visit (mirrors prescribe).
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Cannot mark a session on a {visit.status} visit")
+    # Атомарный условный инкремент: на Postgres READ COMMITTED два параллельных
+    # клика не теряют инкремент и не превышают total. 0 строк → уже done/перебор.
+    updated = db.execute(
+        update(Treatment)
+        .where(
+            Treatment.id == treatment.id,
+            Treatment.status == "prescribed",
+            Treatment.sessions_done < Treatment.sessions_total,
+        )
+        .values(sessions_done=Treatment.sessions_done + 1)
+        .returning(Treatment.sessions_done)
+    ).scalar_one_or_none()
+    if updated is None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"All {treatment.sessions_total} sessions are already done")
+    # Синхронизируем ORM-объект с БД (условный UPDATE шёл в обход сессии).
+    db.expire(treatment)
+    completed = treatment.sessions_done >= treatment.sessions_total
+    if completed:
+        treatment.status = "done"
+        treatment.performed_at = datetime.now(timezone.utc)
+    record_audit(db, action="mark_session", entity_type="treatment", entity_id=treatment.id,
+                 actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=f"Сеанс {treatment.sessions_done}/{treatment.sessions_total} «{treatment.name}»")
+    # Workflow engine (same transaction): only the LAST session closes out a
+    # treatment-only visit; a course with sessions left stays "prescribed", so
+    # complete_if_treatment_done keeps the visit open. The flush makes the done
+    # status visible to its pending-work queries (autoflush=False).
+    db.flush()
+    if completed:
+        complete_if_treatment_done(db, visit)
     db.commit()
     db.refresh(treatment)
     return treatment

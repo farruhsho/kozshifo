@@ -397,6 +397,7 @@ class ClinicalRepository {
     String? instructions,
     String? serviceId,
     String? unitPrice,
+    int sessionsTotal = 1,
   }) async {
     try {
       final resp = await _dio.post(
@@ -409,6 +410,7 @@ class ClinicalRepository {
           'instructions': ?instructions,
           'service_id': ?serviceId,
           'unit_price': ?unitPrice,
+          'sessions_total': sessionsTotal,
         },
       );
       return Treatment.fromJson(resp.data as Map<String, dynamic>);
@@ -431,6 +433,16 @@ class ClinicalRepository {
   Future<Treatment> completeTreatment(String id) async {
     try {
       final resp = await _dio.post('/treatments/$id/complete');
+      return Treatment.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Отметить один выполненный сеанс курса (409 при превышении).
+  Future<Treatment> markTreatmentSession(String id) async {
+    try {
+      final resp = await _dio.post('/treatments/$id/mark-session');
       return Treatment.fromJson(resp.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException.from(e);

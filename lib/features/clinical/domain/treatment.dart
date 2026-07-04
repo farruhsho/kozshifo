@@ -22,6 +22,8 @@ abstract class Treatment with _$Treatment {
     required String status,
     String? performedAt,
     required String createdAt,
+    @Default(1) int sessionsTotal,
+    @Default(0) int sessionsDone,
   }) = _Treatment;
 
   factory Treatment.fromJson(Map<String, dynamic> json) =>
@@ -29,6 +31,12 @@ abstract class Treatment with _$Treatment {
 
   bool get isPrescribed => status == 'prescribed';
   bool get isMedication => kind == 'medication';
+
+  /// Многодневный курс (более одного сеанса).
+  bool get isCourse => sessionsTotal > 1;
+
+  /// Прогресс курса «X/N».
+  String get sessionProgress => '$sessionsDone/$sessionsTotal';
 
   String get kindLabel => switch (kind) {
         'procedure' => 'Процедура',

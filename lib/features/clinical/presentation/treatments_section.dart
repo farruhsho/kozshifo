@@ -79,6 +79,7 @@ class TreatmentsSection extends ConsumerWidget {
     };
     final details = [
       if (t.quantity != null) 'кол-во: ${t.quantity}',
+      if (t.isCourse) 'сеанс ${t.sessionProgress}',
       if (t.instructions != null) t.instructions!,
     ].join(' · ');
     return ListTile(
@@ -107,7 +108,16 @@ class TreatmentsSection extends ConsumerWidget {
                   'Медикамент выдан, остаток списан'),
               child: const Text('Выдать'),
             ),
-          if (canPerform && t.isPrescribed && !t.isMedication)
+          // Многодневный курс: отмечаем сеансы по одному; на последнем сеансе
+          // бэкенд сам переводит назначение в «выполнено».
+          if (canPerform && t.isPrescribed && !t.isMedication && t.isCourse)
+            TextButton(
+              onPressed: () => _act(context, ref,
+                  () => ref.read(clinicalRepositoryProvider).markTreatmentSession(t.id),
+                  'Сеанс отмечен'),
+              child: const Text('Отметить сеанс'),
+            ),
+          if (canPerform && t.isPrescribed && !t.isMedication && !t.isCourse)
             TextButton(
               onPressed: () => _act(context, ref,
                   () => ref.read(clinicalRepositoryProvider).completeTreatment(t.id),
@@ -175,6 +185,7 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
   final _quantity = TextEditingController();
   final _instructions = TextEditingController();
   final _price = TextEditingController();
+  final _sessions = TextEditingController(text: '1');
   String _kind = 'procedure';
   String? _productId;
   String? _serviceId; // optional paid service → bills the visit
@@ -186,10 +197,17 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
     _quantity.dispose();
     _instructions.dispose();
     _price.dispose();
+    _sessions.dispose();
     super.dispose();
   }
 
   bool get _isMedication => _kind == 'medication';
+
+  /// Число сеансов курса (>=1); пустое/битое поле → 1.
+  int get _sessionsTotal {
+    final n = int.tryParse(_sessions.text.trim()) ?? 1;
+    return n < 1 ? 1 : n;
+  }
 
   /// C7 — soft stock advisory at prescribe time: warn (never block) when the
   /// requested medication quantity exceeds usable on-hand stock. The hard guard
@@ -263,6 +281,8 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
             unitPrice: _serviceId != null && _price.text.trim().isNotEmpty
                 ? _price.text.trim().replaceAll(',', '.')
                 : null,
+            // Медикамент выдаётся один раз — сеансов у него нет.
+            sessionsTotal: _isMedication ? 1 : _sessionsTotal,
           );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -341,6 +361,17 @@ class _AddTreatmentDialogState extends ConsumerState<_AddTreatmentDialog> {
               decoration: const InputDecoration(labelText: 'Название'),
               onChanged: (_) => setState(() {}),
             ),
+            // Сеансы — только для процедур; медикамент выдаётся один раз.
+            if (!_isMedication) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _sessions,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                    labelText: 'Сеансов',
+                    helperText: 'Многодневный курс; 1 = одноразово'),
+              ),
+            ],
             if (_isMedication) ...[
               const SizedBox(height: 12),
               TextField(

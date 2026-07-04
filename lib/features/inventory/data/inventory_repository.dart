@@ -7,6 +7,7 @@ import '../../../core/network/page.dart';
 import '../domain/movement.dart';
 import '../domain/product.dart';
 import '../domain/stock.dart';
+import '../domain/stock_count.dart';
 
 /// A reorder suggestion row (mirrors backend `ReorderSuggestionOut`): an active
 /// product at/below min_stock plus a suggested restock quantity. Decimal fields
@@ -155,6 +156,118 @@ class InventoryRepository {
       throw ApiException.from(e);
     }
   }
+
+  // ── Инвентаризация (stock-counts) ──────────────────────────────────────────
+
+  /// Recent stock-counts of a branch (headers with totals, newest first).
+  Future<List<StockCount>> stockCounts(String branchId) async {
+    try {
+      final resp = await _dio.get('/inventory/stock-counts',
+          queryParameters: {'branch_id': branchId});
+      return (resp.data as List<dynamic>)
+          .map((e) => StockCount.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Open a draft count for a branch: the server snapshots current on-hand per
+  /// batch into lines (counted initialized to expected). Returns the detail.
+  Future<StockCount> createStockCount(String branchId, {String? note}) async {
+    try {
+      final resp = await _dio.post('/inventory/stock-counts', data: {
+        'branch_id': branchId,
+        'note': ?note,
+      });
+      return StockCount.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// One count with its lines and totals.
+  Future<StockCount> stockCount(String countId) async {
+    try {
+      final resp = await _dio.get('/inventory/stock-counts/$countId');
+      return StockCount.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Enter the physically counted quantity on a line (variance recomputed
+  /// server-side). Quantity passes as a '.'-normalized string.
+  Future<StockCountLine> updateCountLine({
+    required String countId,
+    required String lineId,
+    required String countedQty,
+  }) async {
+    try {
+      final resp = await _dio.patch(
+        '/inventory/stock-counts/$countId/lines/$lineId',
+        data: {'counted_qty': countedQty},
+      );
+      return StockCountLine.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Commit the count: every non-zero variance becomes an adjustment movement.
+  /// Re-committing an already-committed count throws [ApiException] (409).
+  Future<StockCount> commitStockCount(String countId) async {
+    try {
+      final resp = await _dio.post('/inventory/stock-counts/$countId/commit');
+      return StockCount.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  // ── Transfer & supplier return ─────────────────────────────────────────────
+
+  /// Move stock FEFO between branches, preserving each source lot's expiry.
+  /// Throws [ApiException] (409) when the source branch is short.
+  Future<void> transfer({
+    required String productId,
+    required String fromBranchId,
+    required String toBranchId,
+    required String quantity,
+  }) async {
+    try {
+      await _dio.post('/inventory/transfers', data: {
+        'product_id': productId,
+        'from_branch_id': fromBranchId,
+        'to_branch_id': toBranchId,
+        'quantity': quantity,
+      });
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Return a specific batch to a supplier (dedicated supplier_return movement).
+  /// Throws [ApiException] (409) when the batch holds less than requested.
+  Future<void> supplierReturn({
+    required String productId,
+    required String batchId,
+    required String quantity,
+    required String reason,
+    String? supplierId,
+  }) async {
+    try {
+      await _dio.post('/inventory/supplier-returns', data: {
+        'product_id': productId,
+        'batch_id': batchId,
+        'quantity': quantity,
+        'reason': reason,
+        'supplier_id': ?supplierId,
+      });
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
 }
 
 final stockProvider = FutureProvider.autoDispose.family<List<StockRow>, String>(
@@ -181,3 +294,10 @@ final productSearchProvider =
       .watch(inventoryRepositoryProvider)
       .products(q: q.isEmpty ? null : q);
 });
+
+/// Recent stock-counts of a branch (headers with totals). Invalidate after
+/// opening or committing a count.
+final stockCountsProvider =
+    FutureProvider.autoDispose.family<List<StockCount>, String>(
+        (ref, branchId) =>
+            ref.watch(inventoryRepositoryProvider).stockCounts(branchId));

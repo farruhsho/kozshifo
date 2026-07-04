@@ -157,3 +157,64 @@ class MovementOut(BaseModel):
     ref_type: str | None
     ref_id: UUID | None
     created_at: datetime
+
+
+# ── Stock-count / инвентаризация ──────────────────────────────────────────────
+class StockCountCreate(BaseModel):
+    branch_id: UUID
+    note: str | None = None
+
+
+class StockCountLineUpdate(BaseModel):
+    counted_qty: Decimal = Field(ge=0)
+
+
+class StockCountLineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    product_id: UUID
+    batch_id: UUID | None
+    product_name: str
+    product_sku: str
+    unit: str
+    batch_no: str | None
+    expiry_date: date | None
+    expected_qty: Decimal
+    counted_qty: Decimal
+    variance: Decimal
+
+
+class StockCountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    branch_id: UUID
+    status: str
+    note: str | None
+    created_at: datetime
+    # totals across lines — surplus (variance > 0) and shortage (variance < 0)
+    surplus_total: Decimal
+    shortage_total: Decimal
+    lines_count: int
+
+
+class StockCountDetailOut(StockCountOut):
+    lines: list[StockCountLineOut]
+
+
+# ── Inter-branch transfer ─────────────────────────────────────────────────────
+class TransferIn(BaseModel):
+    product_id: UUID
+    from_branch_id: UUID
+    to_branch_id: UUID
+    quantity: Decimal = Field(gt=0)
+
+
+# ── Supplier return ───────────────────────────────────────────────────────────
+class SupplierReturnIn(BaseModel):
+    product_id: UUID
+    batch_id: UUID
+    quantity: Decimal = Field(gt=0)
+    supplier_id: UUID | None = None
+    reason: str

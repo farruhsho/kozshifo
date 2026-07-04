@@ -208,3 +208,8 @@ class Treatment(UUIDPKMixin, TimestampMixin, Base):
     # prescribed -> done | cancelled
     status: Mapped[str] = mapped_column(String(16), default="prescribed", index=True, nullable=False)
     performed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Многодневный курс: сколько сеансов назначено и сколько уже выполнено. Курс
+    # «активен» (визит-лечение не закрывается), пока sessions_done < sessions_total;
+    # при равенстве status -> done. Одноразовое/старое назначение = total 1.
+    sessions_total: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    sessions_done: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

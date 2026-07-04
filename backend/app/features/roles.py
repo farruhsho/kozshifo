@@ -5,13 +5,13 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
-from app.models.rbac import Permission, Role
+from app.models.rbac import Permission, Role, user_roles
 from app.schemas.rbac import RoleCreate, RoleOut, RoleUpdate
 
 router = APIRouter(prefix="/roles", tags=["Identity & Access"])
@@ -69,6 +69,8 @@ def update_role(
     role = db.get(Role, role_id)
     if role is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Role not found")
+    if role.is_system:
+        raise HTTPException(status.HTTP_409_CONFLICT, "System roles cannot be edited")
     if payload.description is not None:
         role.description = payload.description
     if payload.permission_codes is not None:
@@ -91,6 +93,14 @@ def delete_role(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Role not found")
     if role.is_system:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "System roles cannot be deleted")
+    assigned = db.execute(
+        select(func.count()).select_from(user_roles).where(user_roles.c.role_id == role_id)
+    ).scalar_one()
+    if assigned:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Роль назначена {assigned} пользователям — снимите назначение перед удалением",
+        )
     record_audit(db, action="delete", entity_type="role", entity_id=role.id, actor_id=actor.id,
                  summary=f"Deleted role {role.name}")
     db.delete(role)

@@ -100,7 +100,7 @@ class StockMovement(UUIDPKMixin, TimestampMixin, Base):
     branch_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("branches.id", ondelete="RESTRICT"), index=True, nullable=False
     )
-    # receipt | write_off | adjustment
+    # receipt | write_off | adjustment | transfer_out | transfer_in | supplier_return
     movement_type: Mapped[str] = mapped_column(String(16), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -111,3 +111,49 @@ class StockMovement(UUIDPKMixin, TimestampMixin, Base):
     actor_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+
+
+class StockCount(UUIDPKMixin, TimestampMixin, Base):
+    """Инвентаризация (пересчёт факта): a physical stock-count session for one
+    branch. Opened as a `draft` snapshot of current on-hand per batch; committing
+    it turns every non-zero variance into an `adjustment` movement."""
+
+    __tablename__ = "stock_counts"
+
+    branch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("branches.id", ondelete="RESTRICT"), index=True, nullable=False
+    )
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # draft | committed
+    status: Mapped[str] = mapped_column(String(16), default="draft", nullable=False)
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    lines: Mapped[list["StockCountLine"]] = relationship(
+        back_populates="stock_count", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class StockCountLine(UUIDPKMixin, TimestampMixin, Base):
+    """One counted line of a stock-count: a (product, batch) snapshot with the
+    expected qty frozen at open time, the counted qty entered by staff, and the
+    resulting variance (counted − expected)."""
+
+    __tablename__ = "stock_count_lines"
+
+    stock_count_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("stock_counts.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("stock_batches.id", ondelete="SET NULL"), nullable=True
+    )
+    expected_qty: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    counted_qty: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    variance: Mapped[Decimal] = mapped_column(Numeric(12, 3), default=Decimal("0"), nullable=False)
+
+    stock_count: Mapped[StockCount] = relationship(back_populates="lines")
+    product: Mapped[Product] = relationship(lazy="joined")

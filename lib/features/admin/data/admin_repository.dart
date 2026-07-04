@@ -15,6 +15,10 @@ typedef CategoryRef = ({String id, String name});
 /// Diagnosis/conclusion reference for the staff diagnoses picker and catalog.
 typedef DiagnosisRef = ({String id, String code, String name, String? category});
 
+/// One permission from the catalog (mirrors backend `PermissionOut`). Used by
+/// the roles editor to offer a grouped, tickable list of grantable permissions.
+typedef PermissionRef = ({String code, String module, String? description});
+
 /// Staff member selectable as a service's eligible doctor (mirrors backend
 /// `AssignableDoctorOut`). Listed under services.read, so reception can fill the
 /// service form's doctor picker without identity-module (users.read) access.
@@ -403,7 +407,7 @@ class AdminRepository {
     }
   }
 
-  // ── Roles (display + assignment only) ─────────────────────────────────────
+  // ── Roles & permissions (RBAC editor) ─────────────────────────────────────
 
   Future<List<AdminRole>> roles() async {
     try {
@@ -411,6 +415,71 @@ class AdminRepository {
       return (resp.data as List<dynamic>)
           .map((e) => AdminRole.fromJson(e as Map<String, dynamic>))
           .toList();
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Full permission catalog (plain list, gated `permissions.read`). Feeds the
+  /// grouped picker in the create/edit-role dialog.
+  Future<List<PermissionRef>> permissionsCatalog() async {
+    try {
+      final resp = await _dio.get('/permissions');
+      return [
+        for (final e in resp.data as List<dynamic>)
+          (
+            code: (e as Map<String, dynamic>)['code'] as String,
+            module: e['module'] as String,
+            description: e['description'] as String?,
+          ),
+      ];
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  Future<AdminRole> createRole({
+    required String name,
+    required List<String> permissionCodes,
+    String? description,
+  }) async {
+    try {
+      final resp = await _dio.post(
+        '/roles',
+        data: {
+          'name': name,
+          'permission_codes': permissionCodes,
+          'description': ?description,
+        },
+      );
+      return AdminRole.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// PATCH /roles/{id} — [permissionCodes] (when non-null) replaces the role's
+  /// permission set wholesale; omitted keys stay unchanged (backend exclude-unset).
+  Future<AdminRole> updateRole(
+    String id, {
+    List<String>? permissionCodes,
+    String? description,
+  }) async {
+    try {
+      final body = <String, dynamic>{'description': ?description};
+      if (permissionCodes != null) {
+        body['permission_codes'] = permissionCodes;
+      }
+      final resp = await _dio.patch('/roles/$id', data: body);
+      return AdminRole.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  Future<void> deleteRole(String id) async {
+    try {
+      await _dio.delete('/roles/$id');
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -445,3 +514,8 @@ final adminUsersProvider = FutureProvider.autoDispose<List<StaffUser>>(
 final adminRolesProvider = FutureProvider.autoDispose<List<AdminRole>>(
   (ref) => ref.watch(adminRepositoryProvider).roles(),
 );
+
+final adminPermissionsProvider =
+    FutureProvider.autoDispose<List<PermissionRef>>(
+      (ref) => ref.watch(adminRepositoryProvider).permissionsCatalog(),
+    );

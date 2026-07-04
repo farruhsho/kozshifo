@@ -114,6 +114,220 @@ def receive_stock(
     return batch
 
 
+def set_batch_absolute(
+    db: Session,
+    *,
+    batch: StockBatch,
+    counted: Decimal,
+    reason: str,
+    ref_type: str | None = None,
+    ref_id: uuid.UUID | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> StockMovement:
+    """Force a batch to an ABSOLUTE physical count (инвентаризация result).
+
+    A stock-count must bring the system to the *physical* reality on the shelf,
+    so the batch is set to `counted` outright — NOT nudged by a frozen
+    counted−expected delta. Doing it relative would double-count any movement
+    that happened between opening and committing the count (e.g. a write-off of
+    3 units drops 10→7, and applying a +2 variance would land on 9 instead of
+    the counted 12).
+
+    IMPORTANT: stock must NOT move while a count is being reconciled — this
+    performs an absolute set. The audit `adjustment` movement records the
+    *actually applied* change: quantity = counted − current_live_quantity. The
+    per-line "variance vs expected-at-open" is preserved separately on the count
+    line/report for auditing. Written with a guarded absolute UPDATE
+    (`SET quantity = :counted WHERE id = :id`) so it obeys stock.py's mutation
+    contract; `synchronize_session=False` + `db.expire(batch)` re-reads the row.
+    After this returns, `batch.quantity == counted`. Caller commits.
+    """
+    counted = Decimal(counted)
+    live = Decimal(batch.quantity)  # what the ledger actually held pre-set
+    applied = counted - live
+    db.execute(
+        sa_update(StockBatch)
+        .where(StockBatch.id == batch.id)
+        .values(quantity=counted)
+        .execution_options(synchronize_session=False)
+    )
+    db.expire(batch)
+    movement = StockMovement(
+        product_id=batch.product_id,
+        batch_id=batch.id,
+        branch_id=batch.branch_id,
+        movement_type="adjustment",
+        quantity=applied,
+        reason=reason,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        actor_id=actor_id,
+    )
+    db.add(movement)
+    db.flush()
+    return movement
+
+
+def draw_down_batch(
+    db: Session,
+    *,
+    batch: StockBatch,
+    quantity: Decimal,
+    movement_type: str,
+    reason: str,
+    ref_type: str | None = None,
+    ref_id: uuid.UUID | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> StockMovement:
+    """Subtract `quantity` from ONE specific batch, atomically (supplier return).
+
+    Unlike FEFO write-off this targets a caller-chosen batch (a return goes back
+    to the supplier the lot came from). Uses a guarded relative UPDATE
+    (`SET quantity = quantity - :qty WHERE id = :id AND quantity >= :qty`) so it
+    can never drive the batch negative or clobber a concurrent movement — a
+    TOCTOU-free replacement for check-then-act. Raises InsufficientStockError
+    (→ 409) when the batch no longer holds `quantity`. One negative movement of
+    `movement_type` is written. Caller commits.
+    """
+    quantity = Decimal(quantity)
+    claimed = db.execute(
+        sa_update(StockBatch)
+        .where(StockBatch.id == batch.id, StockBatch.quantity >= quantity)
+        .values(quantity=StockBatch.quantity - quantity)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise InsufficientStockError(batch.product_id, quantity, Decimal(batch.quantity))
+    db.expire(batch)
+    movement = StockMovement(
+        product_id=batch.product_id,
+        batch_id=batch.id,
+        branch_id=batch.branch_id,
+        movement_type=movement_type,
+        quantity=-quantity,
+        reason=reason,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        actor_id=actor_id,
+    )
+    db.add(movement)
+    db.flush()
+    return movement
+
+
+def transfer_fefo(
+    db: Session,
+    *,
+    product_id: uuid.UUID,
+    from_branch_id: uuid.UUID,
+    to_branch_id: uuid.UUID,
+    quantity: Decimal,
+    reason: str,
+    actor_id: uuid.UUID | None = None,
+    ref_id: uuid.UUID | None = None,
+) -> tuple[list[StockMovement], list[StockBatch]]:
+    """Move `quantity` FEFO from one branch to another, batch-for-batch.
+
+    Consumes usable (non-expired) batches in the source branch first-expired-first
+    and, for each consumed slice, creates a matching batch in the destination
+    branch that preserves the source lot's expiry_date / batch_no / unit_cost /
+    supplier. Ledger: one negative 'transfer_out' per source slice and one
+    positive 'transfer_in' per destination batch. Raises InsufficientStockError
+    on shortage (source untouched by the caller's rollback). Caller commits.
+    """
+    quantity = Decimal(quantity)
+    available = on_hand(db, product_id, from_branch_id)
+    if available < quantity:
+        raise InsufficientStockError(product_id, quantity, available)
+
+    out_movements: list[StockMovement] = []
+    in_batches: list[StockBatch] = []
+    remaining = quantity
+    for _ in range(5):
+        if remaining <= 0:
+            break
+        batches = (
+            db.execute(
+                select(StockBatch)
+                .where(
+                    StockBatch.product_id == product_id,
+                    StockBatch.branch_id == from_branch_id,
+                    *_usable_filter(False),
+                )
+                .order_by(StockBatch.expiry_date.asc().nulls_last(), StockBatch.received_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+        if not batches:
+            break
+        guard_missed = False
+        for src in batches:
+            if remaining <= 0:
+                break
+            take = min(Decimal(src.quantity), remaining)
+            claimed = db.execute(
+                sa_update(StockBatch)
+                .where(StockBatch.id == src.id, StockBatch.quantity >= take)
+                .values(quantity=StockBatch.quantity - take)
+                .execution_options(synchronize_session=False)
+            )
+            if claimed.rowcount != 1:
+                guard_missed = True
+                continue
+            db.expire(src)
+            out_movements.append(
+                StockMovement(
+                    product_id=product_id,
+                    batch_id=src.id,
+                    branch_id=from_branch_id,
+                    movement_type="transfer_out",
+                    quantity=-take,
+                    reason=reason,
+                    ref_type="transfer",
+                    ref_id=ref_id,
+                    actor_id=actor_id,
+                )
+            )
+            dst = StockBatch(
+                product_id=product_id,
+                branch_id=to_branch_id,
+                batch_no=src.batch_no,
+                expiry_date=src.expiry_date,
+                quantity=take,
+                unit_cost=src.unit_cost,
+                supplier_id=src.supplier_id,
+            )
+            db.add(dst)
+            db.flush()
+            db.add(
+                StockMovement(
+                    product_id=product_id,
+                    batch_id=dst.id,
+                    branch_id=to_branch_id,
+                    movement_type="transfer_in",
+                    quantity=take,
+                    reason=reason,
+                    ref_type="transfer",
+                    ref_id=ref_id,
+                    actor_id=actor_id,
+                )
+            )
+            in_batches.append(dst)
+            remaining -= take
+        if remaining > 0 and not guard_missed:
+            break
+
+    if remaining > 0:
+        raise InsufficientStockError(
+            product_id, quantity, quantity - remaining + on_hand(db, product_id, from_branch_id)
+        )
+    for m in out_movements:
+        db.add(m)
+    db.flush()
+    return out_movements, in_batches
+
+
 def write_off_fefo(
     db: Session,
     *,

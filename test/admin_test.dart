@@ -120,6 +120,17 @@ void main() {
     expect(r.name, 'doctor');
     expect(r.permissionCount, 2);
     expect(r.description, 'Врач-офтальмолог');
+    expect(r.id, 'r-1');
+    expect(r.isSystem, isTrue);
+    expect(r.permissionCodes, ['patients.read', 'exams.update']);
+  });
+
+  test('AdminRole: id null, is_system false, no permissions → empty codes', () {
+    final r = AdminRole.fromJson(const {'name': 'custom'});
+    expect(r.id, isNull);
+    expect(r.isSystem, isFalse);
+    expect(r.permissionCodes, isEmpty);
+    expect(r.permissionCount, 0);
   });
 
   // ─── AdminRepository.updateUser: salary_percent set / clear ─────────────────
@@ -396,6 +407,118 @@ void main() {
         expect(body['name'], 'Новое имя');
       },
     );
+  });
+
+  // ─── Roles & permissions (RBAC editor) ──────────────────────────────────────
+  group('AdminRepository roles & permissions', () {
+    (AdminRepository, RequestOptions Function()) makeRoleRepo() {
+      RequestOptions? captured;
+      final dio = Dio(BaseOptions(baseUrl: 'http://test.local/api/v1'))
+        ..httpClientAdapter = _CapturingAdapter((options) {
+          captured = options;
+          // Echo a minimal RoleOut so AdminRole.fromJson succeeds.
+          return ResponseBody.fromString(
+            jsonEncode(const {
+              'id': 'r-1',
+              'name': 'reception',
+              'is_system': false,
+              'permissions': [],
+            }),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+      return (AdminRepository(dio), () => captured!);
+    }
+
+    test('permissionsCatalog parses code/module/description', () async {
+      final dio = Dio(BaseOptions(baseUrl: 'http://test.local/api/v1'))
+        ..httpClientAdapter = _CapturingAdapter((_) {
+          return ResponseBody.fromString(
+            jsonEncode(const [
+              {
+                'id': 'p-1',
+                'code': 'patients.read',
+                'module': 'patients',
+                'description': 'Просмотр пациентов',
+              },
+              {
+                'id': 'p-2',
+                'code': 'visits.create',
+                'module': 'visits',
+                'description': null,
+              },
+            ]),
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        });
+      final perms = await AdminRepository(dio).permissionsCatalog();
+      expect(perms.length, 2);
+      expect(perms.first.code, 'patients.read');
+      expect(perms.first.module, 'patients');
+      expect(perms.first.description, 'Просмотр пациентов');
+      expect(perms[1].description, isNull);
+    });
+
+    test('createRole sends name + permission_codes', () async {
+      final (repo, last) = makeRoleRepo();
+      await repo.createRole(
+        name: 'reception',
+        permissionCodes: const ['patients.read', 'visits.create'],
+        description: 'Регистратура',
+      );
+      final opts = last();
+      expect(opts.method, 'POST');
+      expect(opts.path, '/roles');
+      final body = opts.data as Map<String, dynamic>;
+      expect(body['name'], 'reception');
+      expect(body['permission_codes'], ['patients.read', 'visits.create']);
+      expect(body['description'], 'Регистратура');
+    });
+
+    test('createRole omits description when null', () async {
+      final (repo, last) = makeRoleRepo();
+      await repo.createRole(name: 'reception', permissionCodes: const []);
+      final body = last().data as Map<String, dynamic>;
+      expect(body.containsKey('description'), isFalse);
+      expect(body['permission_codes'], isEmpty);
+    });
+
+    test('updateRole sends permission_codes ([] clears)', () async {
+      final (repo, last) = makeRoleRepo();
+      await repo.updateRole('r-1', permissionCodes: const ['patients.read']);
+      var opts = last();
+      expect(opts.method, 'PATCH');
+      expect(opts.path, '/roles/r-1');
+      expect((opts.data as Map<String, dynamic>)['permission_codes'],
+          ['patients.read']);
+
+      await repo.updateRole('r-1', permissionCodes: const []);
+      final body = last().data as Map<String, dynamic>;
+      expect(body.containsKey('permission_codes'), isTrue);
+      expect(body['permission_codes'], isEmpty);
+    });
+
+    test('updateRole omits permission_codes when untouched', () async {
+      final (repo, last) = makeRoleRepo();
+      await repo.updateRole('r-1', description: 'Новое описание');
+      final body = last().data as Map<String, dynamic>;
+      expect(body.containsKey('permission_codes'), isFalse);
+      expect(body['description'], 'Новое описание');
+    });
+
+    test('deleteRole issues DELETE /roles/{id}', () async {
+      final (repo, last) = makeRoleRepo();
+      await repo.deleteRole('r-1');
+      final opts = last();
+      expect(opts.method, 'DELETE');
+      expect(opts.path, '/roles/r-1');
+    });
   });
 }
 

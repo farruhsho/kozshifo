@@ -9,6 +9,9 @@ import '../../auth/application/auth_controller.dart';
 import '../data/inventory_repository.dart';
 import '../domain/product.dart';
 import '../domain/stock.dart';
+import 'stocktake_tab.dart';
+import 'supplier_return_dialog.dart';
+import 'transfer_dialog.dart';
 import 'write_off_dialog.dart';
 
 /// Склад филиала: остатки по товарам с партиями (срок годности, цена),
@@ -27,6 +30,7 @@ class InventoryScreen extends ConsumerWidget {
     final branchId = user?.branchId;
     final canManage = user?.can('inventory.manage') ?? false;
     final canWriteOff = user?.can('inventory.write_off') ?? false;
+    final canStocktake = user?.can('inventory.stocktake') ?? false;
 
     if (branchId == null) {
       return Scaffold(
@@ -36,8 +40,27 @@ class InventoryScreen extends ConsumerWidget {
       );
     }
 
+    // «Инвентаризация» видна только при праве inventory.stocktake — держим
+    // список вкладок и вьюшек согласованным по длине.
+    final tabs = <Tab>[
+      const Tab(text: 'Остатки'),
+      const Tab(text: 'Дефицит'),
+      const Tab(text: 'Истекает'),
+      const Tab(text: 'К заказу'),
+      if (canStocktake) const Tab(text: 'Инвентаризация'),
+    ];
+    final views = <Widget>[
+      _StockListTab(
+          branchId: branchId, canWriteOff: canWriteOff, canManage: canManage),
+      _LowStockTab(
+          branchId: branchId, canWriteOff: canWriteOff, canManage: canManage),
+      _ExpiringTab(branchId: branchId, canWriteOff: canWriteOff),
+      _ReorderTab(branchId: branchId, canManage: canManage),
+      if (canStocktake) StocktakeTab(branchId: branchId),
+    ];
+
     return DefaultTabController(
-      length: 4,
+      length: tabs.length,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Склад'),
@@ -47,30 +70,21 @@ class InventoryScreen extends ConsumerWidget {
               onPressed: () {
                 ref.invalidate(stockProvider(branchId));
                 ref.invalidate(reorderSuggestionsProvider(branchId));
+                if (canStocktake) {
+                  ref.invalidate(stockCountsProvider(branchId));
+                }
               },
               icon: const Icon(Icons.refresh),
             ),
           ],
-          bottom: const TabBar(isScrollable: true, tabs: [
-            Tab(text: 'Остатки'),
-            Tab(text: 'Дефицит'),
-            Tab(text: 'Истекает'),
-            Tab(text: 'К заказу'),
-          ]),
+          bottom: TabBar(isScrollable: true, tabs: tabs),
         ),
         floatingActionButton: _Fab(
           branchId: branchId,
           canManage: canManage,
           canWriteOff: canWriteOff,
         ),
-        body: TabBarView(
-          children: [
-            _StockListTab(branchId: branchId, canWriteOff: canWriteOff),
-            _LowStockTab(branchId: branchId, canWriteOff: canWriteOff),
-            _ExpiringTab(branchId: branchId, canWriteOff: canWriteOff),
-            _ReorderTab(branchId: branchId, canManage: canManage),
-          ],
-        ),
+        body: TabBarView(children: views),
       ),
     );
   }
@@ -168,10 +182,14 @@ class _Fab extends ConsumerWidget {
 // ═══ Вкладка 1: Остатки (поиск + ленивый список) ═════════════════════════════
 
 class _StockListTab extends ConsumerStatefulWidget {
-  const _StockListTab({required this.branchId, required this.canWriteOff});
+  const _StockListTab(
+      {required this.branchId,
+      required this.canWriteOff,
+      required this.canManage});
 
   final String branchId;
   final bool canWriteOff;
+  final bool canManage;
 
   @override
   ConsumerState<_StockListTab> createState() => _StockListTabState();
@@ -248,6 +266,7 @@ class _StockListTabState extends ConsumerState<_StockListTab> {
                   row: visible[i],
                   branchId: widget.branchId,
                   canWriteOff: widget.canWriteOff,
+                  canManage: widget.canManage,
                 ),
               );
             },
@@ -268,10 +287,14 @@ class _StockListTabState extends ConsumerState<_StockListTab> {
 // ═══ Вкладка 2: Дефицит ══════════════════════════════════════════════════════
 
 class _LowStockTab extends ConsumerWidget {
-  const _LowStockTab({required this.branchId, required this.canWriteOff});
+  const _LowStockTab(
+      {required this.branchId,
+      required this.canWriteOff,
+      required this.canManage});
 
   final String branchId;
   final bool canWriteOff;
+  final bool canManage;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -293,6 +316,7 @@ class _LowStockTab extends ConsumerWidget {
             row: low[i],
             branchId: branchId,
             canWriteOff: canWriteOff,
+            canManage: canManage,
             showDeficit: true,
           ),
         );
@@ -382,12 +406,14 @@ class _StockTile extends ConsumerWidget {
     required this.row,
     required this.branchId,
     required this.canWriteOff,
+    this.canManage = false,
     this.showDeficit = false,
   });
 
   final StockRow row;
   final String branchId;
   final bool canWriteOff;
+  final bool canManage;
   final bool showDeficit;
 
   @override
@@ -444,24 +470,60 @@ class _StockTile extends ConsumerWidget {
                         style: TextStyle(color: scheme.error, fontSize: 12))
                     : null,
               ),
-          if (canWriteOff) ...[
+          if (canWriteOff || canManage) ...[
             const SizedBox(height: 4),
             Align(
               alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                icon: const Icon(Icons.remove_circle_outline),
-                label: const Text('Списать'),
-                onPressed: () async {
-                  final movements = await showWriteOffDialog(context,
-                      branchId: branchId, product: p);
-                  if (movements != null && context.mounted) {
-                    ref.invalidate(stockProvider(branchId));
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(
-                          'Списание выполнено: партий затронуто ${movements.length}'),
-                    ));
-                  }
-                },
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  if (canManage)
+                    TextButton.icon(
+                      icon: const Icon(Icons.swap_horiz),
+                      label: const Text('Переместить'),
+                      onPressed: () async {
+                        final ok = await showTransferDialog(context,
+                            fromBranchId: branchId, product: p);
+                        if (ok == true && context.mounted) {
+                          ref.invalidate(stockProvider(branchId));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Перемещение выполнено')),
+                          );
+                        }
+                      },
+                    ),
+                  if (canManage)
+                    TextButton.icon(
+                      icon: const Icon(Icons.assignment_return_outlined),
+                      label: const Text('Возврат поставщику'),
+                      onPressed: () async {
+                        final ok = await showSupplierReturnDialog(context,
+                            product: p, batches: row.batches);
+                        if (ok == true && context.mounted) {
+                          ref.invalidate(stockProvider(branchId));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Возврат оформлен')),
+                          );
+                        }
+                      },
+                    ),
+                  if (canWriteOff)
+                    TextButton.icon(
+                      icon: const Icon(Icons.remove_circle_outline),
+                      label: const Text('Списать'),
+                      onPressed: () async {
+                        final movements = await showWriteOffDialog(context,
+                            branchId: branchId, product: p);
+                        if (movements != null && context.mounted) {
+                          ref.invalidate(stockProvider(branchId));
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text(
+                                'Списание выполнено: партий затронуто ${movements.length}'),
+                          ));
+                        }
+                      },
+                    ),
+                ],
               ),
             ),
           ],

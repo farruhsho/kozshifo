@@ -68,6 +68,7 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("inventory.read", "inventory", "View warehouse stock & catalog"),
     ("inventory.manage", "inventory", "Manage products / suppliers / receipts"),
     ("inventory.write_off", "inventory", "Write off stock"),
+    ("inventory.stocktake", "inventory", "Run stock counts (инвентаризация) & commit variances"),
     # Operations (surgery)
     ("operations.read", "operations", "View operations & types"),
     ("operations.manage", "operations", "Manage operation types"),
@@ -150,7 +151,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # owns the general two-track queue board
         "queue.read", "queue.manage", "queue.admin",
         # warehouse + purchasing + stocktake (склад)
-        "inventory.read", "inventory.manage", "inventory.write_off",
+        "inventory.read", "inventory.manage", "inventory.write_off", "inventory.stocktake",
         # expenses + payroll visibility (runs клиника finances)
         "expenses.read", "expenses.manage", "payroll.read",
         # price list — add / edit (Услуги)

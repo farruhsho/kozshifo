@@ -18,9 +18,23 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.notify import check_low_stock
-from app.core.stock import InsufficientStockError, receive_stock, write_off_fefo
+from app.core.stock import (
+    InsufficientStockError,
+    draw_down_batch,
+    receive_stock,
+    set_batch_absolute,
+    transfer_fefo,
+    write_off_fefo,
+)
 from app.models.branch import Branch
-from app.models.inventory import InventoryCategory, Product, StockBatch, Supplier
+from app.models.inventory import (
+    InventoryCategory,
+    Product,
+    StockBatch,
+    StockCount,
+    StockCountLine,
+    Supplier,
+)
 from app.schemas.common import Page
 from app.schemas.inventory import (
     BatchOut,
@@ -32,10 +46,17 @@ from app.schemas.inventory import (
     ProductUpdate,
     ReceiptIn,
     ReorderSuggestionOut,
+    StockCountCreate,
+    StockCountDetailOut,
+    StockCountLineOut,
+    StockCountLineUpdate,
+    StockCountOut,
     StockRowOut,
     SupplierCreate,
     SupplierOut,
+    SupplierReturnIn,
     SupplierUpdate,
+    TransferIn,
     WriteOffIn,
 )
 
@@ -340,3 +361,288 @@ def write_off(
     db.commit()
     check_low_stock(db, [payload.product_id], payload.branch_id)  # post-commit, never raises
     return [MovementOut.model_validate(m) for m in movements]
+
+
+# ── Stock-count / инвентаризация ──────────────────────────────────────────────
+def _count_totals(lines: list[StockCountLine]) -> tuple[Decimal, Decimal]:
+    """(surplus_total, shortage_total) — sum of positive and (abs) negative variances."""
+    surplus = sum((Decimal(l.variance) for l in lines if Decimal(l.variance) > 0), Decimal("0"))
+    shortage = sum((-Decimal(l.variance) for l in lines if Decimal(l.variance) < 0), Decimal("0"))
+    return surplus, shortage
+
+
+def _serialize_line(line: StockCountLine, batch: StockBatch | None) -> StockCountLineOut:
+    product = line.product
+    return StockCountLineOut(
+        id=line.id,
+        product_id=line.product_id,
+        batch_id=line.batch_id,
+        product_name=product.name,
+        product_sku=product.sku,
+        unit=product.unit,
+        batch_no=batch.batch_no if batch else None,
+        expiry_date=batch.expiry_date if batch else None,
+        expected_qty=Decimal(line.expected_qty),
+        counted_qty=Decimal(line.counted_qty),
+        variance=Decimal(line.variance),
+    )
+
+
+def _serialize_count(db: Session, count: StockCount, *, detail: bool) -> StockCountOut:
+    lines = list(count.lines)
+    surplus, shortage = _count_totals(lines)
+    base = dict(
+        id=count.id,
+        branch_id=count.branch_id,
+        status=count.status,
+        note=count.note,
+        created_at=count.created_at,
+        surplus_total=surplus,
+        shortage_total=shortage,
+        lines_count=len(lines),
+    )
+    if not detail:
+        return StockCountOut(**base)
+    batch_ids = {l.batch_id for l in lines if l.batch_id is not None}
+    batches = {}
+    if batch_ids:
+        batches = {
+            b.id: b
+            for b in db.execute(select(StockBatch).where(StockBatch.id.in_(batch_ids))).scalars().all()
+        }
+    return StockCountDetailOut(
+        **base,
+        lines=[_serialize_line(l, batches.get(l.batch_id)) for l in lines],
+    )
+
+
+@router.get("/stock-counts", response_model=list[StockCountOut],
+            dependencies=[Depends(require_permission("inventory.stocktake"))])
+def list_stock_counts(
+    db: Annotated[Session, Depends(get_db)],
+    branch_id: UUID | None = None,
+) -> list[StockCountOut]:
+    stmt = select(StockCount).order_by(StockCount.created_at.desc())
+    if branch_id:
+        stmt = stmt.where(StockCount.branch_id == branch_id)
+    counts = db.execute(stmt).scalars().all()
+    return [_serialize_count(db, c, detail=False) for c in counts]
+
+
+@router.post("/stock-counts", response_model=StockCountDetailOut, status_code=status.HTTP_201_CREATED)
+def create_stock_count(
+    payload: StockCountCreate,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("inventory.stocktake"))],
+) -> StockCountDetailOut:
+    """Open a draft stock-count: snapshot every (product, batch) of the branch
+    into a line with expected = on-hand and counted initialized to expected
+    (so untouched lines commit to a zero variance).
+
+    Zero-quantity batches of *active* products are included too: a batch that is
+    empty at open but physically found on the shelf must have somewhere to record
+    the surplus (committing counted>0 then creates a corrective movement). Batches
+    with stock are always snapshotted regardless of product state."""
+    if db.get(Branch, payload.branch_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Branch not found")
+    count = StockCount(branch_id=payload.branch_id, created_by_id=actor.id,
+                       status="draft", note=payload.note)
+    db.add(count)
+    db.flush()
+
+    active_ids = {
+        pid for (pid,) in db.execute(
+            select(Product.id).where(Product.is_active.is_(True))
+        ).all()
+    }
+    batches = db.execute(
+        select(StockBatch)
+        .where(
+            StockBatch.branch_id == payload.branch_id,
+            or_(StockBatch.quantity > 0, StockBatch.product_id.in_(active_ids)),
+        )
+        .order_by(StockBatch.expiry_date.asc().nulls_last(), StockBatch.received_at.asc())
+    ).scalars().all()
+    for batch in batches:
+        expected = Decimal(batch.quantity)
+        db.add(StockCountLine(
+            stock_count_id=count.id,
+            product_id=batch.product_id,
+            batch_id=batch.id,
+            expected_qty=expected,
+            counted_qty=expected,
+            variance=Decimal("0"),
+        ))
+    db.flush()
+    record_audit(db, action="create", entity_type="stock_count", entity_id=count.id, actor_id=actor.id,
+                 branch_id=payload.branch_id, summary=f"Открыта инвентаризация: {len(batches)} позиций")
+    db.commit()
+    db.refresh(count)
+    return _serialize_count(db, count, detail=True)
+
+
+@router.get("/stock-counts/{count_id}", response_model=StockCountDetailOut,
+            dependencies=[Depends(require_permission("inventory.stocktake"))])
+def get_stock_count(
+    count_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> StockCountDetailOut:
+    count = db.get(StockCount, count_id)
+    if count is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Stock count not found")
+    return _serialize_count(db, count, detail=True)
+
+
+@router.patch("/stock-counts/{count_id}/lines/{line_id}", response_model=StockCountLineOut)
+def update_stock_count_line(
+    count_id: UUID,
+    line_id: UUID,
+    payload: StockCountLineUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("inventory.stocktake"))],
+) -> StockCountLineOut:
+    """Enter the physically counted quantity on a line; variance is recomputed."""
+    count = db.get(StockCount, count_id)
+    if count is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Stock count not found")
+    if count.status != "draft":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Инвентаризация уже проведена")
+    line = db.get(StockCountLine, line_id)
+    if line is None or line.stock_count_id != count_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Line not found")
+    line.counted_qty = payload.counted_qty
+    line.variance = Decimal(payload.counted_qty) - Decimal(line.expected_qty)
+    db.flush()
+    db.commit()
+    batch = db.get(StockBatch, line.batch_id) if line.batch_id else None
+    return _serialize_line(line, batch)
+
+
+@router.post("/stock-counts/{count_id}/commit", response_model=StockCountDetailOut)
+def commit_stock_count(
+    count_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("inventory.stocktake"))],
+) -> StockCountDetailOut:
+    """Force every counted batch to its ABSOLUTE physical count (an `adjustment`
+    movement records the actually-applied change: counted − live), then mark the
+    count committed. The count reconciles the ledger to the shelf, so stock must
+    NOT move while the count is open; committing sets counted outright rather than
+    applying the frozen counted−expected-at-open variance (which would double-count
+    any interim movement). Idempotency: committing an already-committed count
+    returns 409 (movements are applied once)."""
+    count = db.get(StockCount, count_id)
+    if count is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Stock count not found")
+    if count.status != "draft":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Инвентаризация уже проведена")
+
+    touched: set[UUID] = set()
+    for line in count.lines:
+        if line.batch_id is None:
+            continue
+        batch = db.get(StockBatch, line.batch_id)
+        if batch is None:
+            continue  # batch vanished (SET NULL / deleted) — nothing to adjust
+        counted = Decimal(line.counted_qty)
+        if counted == Decimal(batch.quantity):
+            continue  # ledger already matches the shelf — no movement to write
+        set_batch_absolute(
+            db, batch=batch, counted=counted,
+            reason=f"Инвентаризация {count.id}",
+            ref_type="stock_count", ref_id=count.id, actor_id=actor.id,
+        )
+        touched.add(line.product_id)
+    count.status = "committed"
+    db.flush()
+    record_audit(db, action="update", entity_type="stock_count", entity_id=count.id, actor_id=actor.id,
+                 branch_id=count.branch_id, summary=f"Инвентаризация проведена: {len(touched)} товаров скорректировано")
+    db.commit()
+    if touched:
+        check_low_stock(db, list(touched), count.branch_id)  # post-commit, never raises
+    db.refresh(count)
+    return _serialize_count(db, count, detail=True)
+
+
+# ── Inter-branch transfer ─────────────────────────────────────────────────────
+@router.post("/transfers", response_model=list[MovementOut])
+def create_transfer(
+    payload: TransferIn,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("inventory.manage"))],
+) -> list[MovementOut]:
+    """Move stock FEFO between branches, preserving each source lot's expiry/партия."""
+    if payload.from_branch_id == payload.to_branch_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Филиалы должны отличаться")
+    product = db.get(Product, payload.product_id)
+    if product is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
+    if db.get(Branch, payload.from_branch_id) is None or db.get(Branch, payload.to_branch_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Branch not found")
+    try:
+        out_movements, _ = transfer_fefo(
+            db,
+            product_id=payload.product_id,
+            from_branch_id=payload.from_branch_id,
+            to_branch_id=payload.to_branch_id,
+            quantity=payload.quantity,
+            reason=f"Перемещение {product.name}",
+            actor_id=actor.id,
+        )
+    except InsufficientStockError as exc:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Insufficient stock for {product.name} ({product.sku}): "
+            f"requested {exc.requested}, available {exc.available}",
+        ) from None
+    record_audit(db, action="update", entity_type="stock", entity_id=product.id, actor_id=actor.id,
+                 branch_id=payload.from_branch_id,
+                 summary=f"Перемещение {payload.quantity} {product.unit} {product.name} в другой филиал")
+    db.commit()
+    check_low_stock(db, [payload.product_id], payload.from_branch_id)  # post-commit, never raises
+    return [MovementOut.model_validate(m) for m in out_movements]
+
+
+# ── Supplier return ───────────────────────────────────────────────────────────
+@router.post("/supplier-returns", response_model=list[MovementOut])
+def create_supplier_return(
+    payload: SupplierReturnIn,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("inventory.manage"))],
+) -> list[MovementOut]:
+    """Return a specific batch to a supplier: write it down with a dedicated
+    `supplier_return` movement (distinct from порча/write-off)."""
+    product = db.get(Product, payload.product_id)
+    if product is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Product not found")
+    batch = db.get(StockBatch, payload.batch_id)
+    if batch is None or batch.product_id != payload.product_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Batch not found")
+    if payload.supplier_id and db.get(Supplier, payload.supplier_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Supplier not found")
+    quantity = Decimal(payload.quantity)
+    try:
+        movement = draw_down_batch(
+            db,
+            batch=batch,
+            quantity=quantity,
+            movement_type="supplier_return",
+            reason=payload.reason,
+            ref_type="supplier_return",
+            ref_id=payload.supplier_id,
+            actor_id=actor.id,
+        )
+    except InsufficientStockError as exc:
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Insufficient stock in batch for {product.name} ({product.sku}): "
+            f"requested {exc.requested}, available {exc.available}",
+        ) from None
+    record_audit(db, action="write_off", entity_type="stock", entity_id=product.id, actor_id=actor.id,
+                 branch_id=batch.branch_id,
+                 summary=f"Возврат поставщику {quantity} {product.unit} {product.name}: {payload.reason}")
+    db.commit()
+    check_low_stock(db, [payload.product_id], batch.branch_id)  # post-commit, never raises
+    return [MovementOut.model_validate(movement)]

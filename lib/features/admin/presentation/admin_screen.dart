@@ -10,33 +10,44 @@ import '../../cabinets/domain/cabinet.dart';
 import '../../reception/domain/service.dart';
 import '../data/admin_repository.dart';
 import '../domain/admin_branch.dart';
+import '../domain/admin_role.dart';
 import '../domain/staff_user.dart';
 
 /// Owner Control Center: услуги и цены · филиалы · сотрудники.
 /// Владелец управляет клиникой из UI — без программиста.
-class AdminScreen extends StatelessWidget {
+class AdminScreen extends ConsumerWidget {
   const AdminScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final me = ref.watch(authControllerProvider).user;
+    // Вкладка «Роли» видна только при roles.read — держим список вкладок и
+    // вьюшек согласованным по длине (как «Инвентаризация» в inventory_screen).
+    final canReadRoles = me?.can('roles.read') ?? false;
+
+    final tabs = <Tab>[
+      const Tab(text: 'Филиалы'),
+      const Tab(text: 'Кабинеты'),
+      const Tab(text: 'Сотрудники'),
+      const Tab(text: 'Диагнозы'),
+      if (canReadRoles) const Tab(text: 'Роли'),
+    ];
+    final views = <Widget>[
+      const _BranchesTab(),
+      const _CabinetsTab(),
+      const _StaffTab(),
+      const _DiagnosesTab(),
+      if (canReadRoles) const _RolesTab(),
+    ];
+
     return DefaultTabController(
-      length: 4,
+      length: tabs.length,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Администрирование'),
-          bottom: const TabBar(
-            isScrollable: true,
-            tabs: [
-              Tab(text: 'Филиалы'),
-              Tab(text: 'Кабинеты'),
-              Tab(text: 'Сотрудники'),
-              Tab(text: 'Диагнозы'),
-            ],
-          ),
+          bottom: TabBar(isScrollable: true, tabs: tabs),
         ),
-        body: const TabBarView(
-          children: [_BranchesTab(), _CabinetsTab(), _StaffTab(), _DiagnosesTab()],
-        ),
+        body: TabBarView(children: views),
       ),
     );
   }
@@ -2212,6 +2223,371 @@ class _CabinetDialogState extends ConsumerState<_CabinetDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2))
               : Text(editing ? 'Сохранить' : 'Создать'),
         ),
+      ],
+    );
+  }
+}
+
+// ═══ Роли и права ════════════════════════════════════════════════════════════
+// Просмотр под roles.read; создание/правка/удаление под roles.create/.update/
+// .delete. Системные роли (is_system) защищены — только просмотр набора прав.
+
+/// Модуль права = префикс кода до первой точки (patients.read → «patients»).
+/// Служит заголовком группы в пикере прав.
+String _permModule(String code) {
+  final dot = code.indexOf('.');
+  return dot < 0 ? code : code.substring(0, dot);
+}
+
+class _RolesTab extends ConsumerWidget {
+  const _RolesTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final roles = ref.watch(adminRolesProvider);
+    final me = ref.watch(authControllerProvider).user;
+    final canRead = me?.can('roles.read') ?? false;
+    final canCreate = me?.can('roles.create') ?? false;
+    final canUpdate = me?.can('roles.update') ?? false;
+    final canDelete = me?.can('roles.delete') ?? false;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    if (!canRead) {
+      return const Center(child: Text('Нет доступа к ролям.'));
+    }
+
+    return Scaffold(
+      floatingActionButton: canCreate
+          ? FloatingActionButton.extended(
+              onPressed: () => _openCreate(context, ref),
+              icon: const Icon(Icons.add_moderator_outlined),
+              label: const Text('Новая роль'),
+            )
+          : null,
+      body: AsyncValueWidget<List<AdminRole>>(
+        value: roles,
+        onRetry: () => ref.invalidate(adminRolesProvider),
+        builder: (items) {
+          if (items.isEmpty) {
+            return const Center(child: Text('Ролей пока нет.'));
+          }
+          return ListView.separated(
+            padding: const EdgeInsets.only(bottom: 88),
+            itemCount: items.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, i) {
+              final r = items[i];
+              // Системную роль правит только просмотр прав; своя удаляема/правима.
+              final editable = canUpdate && !r.isSystem;
+              final deletable = canDelete && !r.isSystem && r.id != null;
+              return ListTile(
+                leading: Icon(
+                  r.isSystem
+                      ? Icons.shield_outlined
+                      : Icons.admin_panel_settings_outlined,
+                  color: primary,
+                ),
+                title: Text(r.name),
+                subtitle: Text(
+                  [
+                    if (r.description != null && r.description!.isNotEmpty)
+                      r.description!,
+                    'прав: ${r.permissionCount}',
+                  ].join(' · '),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (r.isSystem)
+                      const Chip(
+                        label: Text('системная'),
+                        visualDensity: VisualDensity.compact,
+                        side: BorderSide.none,
+                      ),
+                    if (deletable)
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Удалить роль',
+                        onPressed: () => _confirmDelete(context, ref, r),
+                      ),
+                  ],
+                ),
+                // Тап открывает редактор (или просмотр набора прав системной роли).
+                onTap: () => _openEdit(context, ref, r, readOnly: !editable),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openCreate(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _RoleDialog(),
+    );
+    if (ok == true && context.mounted) {
+      ref.invalidate(adminRolesProvider);
+      _showSnack(context, 'Роль создана');
+    }
+  }
+
+  Future<void> _openEdit(
+    BuildContext context,
+    WidgetRef ref,
+    AdminRole role, {
+    required bool readOnly,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _RoleDialog(role: role, readOnly: readOnly),
+    );
+    if (ok == true && context.mounted) {
+      ref.invalidate(adminRolesProvider);
+      _showSnack(context, 'Роль обновлена');
+    }
+  }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    WidgetRef ref,
+    AdminRole role,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить роль?'),
+        content: Text(
+          'Роль «${role.name}» будет удалена. Это действие необратимо.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref.read(adminRepositoryProvider).deleteRole(role.id!);
+      ref.invalidate(adminRolesProvider);
+      if (context.mounted) _showSnack(context, 'Роль удалена: ${role.name}');
+    } catch (e) {
+      if (context.mounted) _showSnack(context, e.toString(), error: true);
+    }
+  }
+}
+
+/// Диалог создания/правки роли. При [readOnly] (системная роль) поля заблокированы
+/// — только просмотр набора прав. Без [role] — режим создания.
+class _RoleDialog extends ConsumerStatefulWidget {
+  const _RoleDialog({this.role, this.readOnly = false});
+
+  final AdminRole? role;
+  final bool readOnly;
+
+  @override
+  ConsumerState<_RoleDialog> createState() => _RoleDialogState();
+}
+
+class _RoleDialogState extends ConsumerState<_RoleDialog> {
+  late final _name = TextEditingController(text: widget.role?.name ?? '');
+  late final _description = TextEditingController(
+    text: widget.role?.description ?? '',
+  );
+  late final _selected = <String>{...?widget.role?.permissionCodes};
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  bool get _isCreate => widget.role == null;
+
+  bool get _canSave =>
+      !_saving && !widget.readOnly && _name.text.trim().isNotEmpty;
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    final desc = _description.text.trim();
+    try {
+      final repo = ref.read(adminRepositoryProvider);
+      if (_isCreate) {
+        await repo.createRole(
+          name: _name.text.trim(),
+          permissionCodes: _selected.toList(),
+          description: desc.isEmpty ? null : desc,
+        );
+      } else {
+        await repo.updateRole(
+          widget.role!.id!,
+          permissionCodes: _selected.toList(),
+          description: desc.isEmpty ? null : desc,
+        );
+      }
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        _showSnack(context, e.toString(), error: true);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final catalog = ref.watch(adminPermissionsProvider);
+    final title = widget.readOnly
+        ? 'Роль «${widget.role!.name}»'
+        : _isCreate
+            ? 'Новая роль'
+            : 'Роль «${widget.role!.name}»';
+
+    return AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Имя системной роли неизменяемо — показываем в заголовке, поле
+              // рисуем только при создании (у роли имя уникально и immutable на API).
+              if (_isCreate)
+                TextField(
+                  controller: _name,
+                  decoration: const InputDecoration(
+                    labelText: 'Название (уникальное)',
+                    hintText: 'reception',
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              if (_isCreate) const SizedBox(height: 12),
+              TextField(
+                controller: _description,
+                enabled: !widget.readOnly,
+                decoration: const InputDecoration(
+                  labelText: 'Описание (необязательно)',
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Права',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              catalog.when(
+                data: (perms) => _PermissionPicker(
+                  permissions: perms,
+                  selected: _selected,
+                  readOnly: widget.readOnly,
+                  onChanged: () => setState(() {}),
+                ),
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                ),
+                error: (e, _) => Text(
+                  'Каталог прав недоступен: $e',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: Text(widget.readOnly ? 'Закрыть' : 'Отмена'),
+        ),
+        if (!widget.readOnly)
+          FilledButton(
+            onPressed: _canSave ? _save : null,
+            child: _saving
+                ? const SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(_isCreate ? 'Создать' : 'Сохранить'),
+          ),
+      ],
+    );
+  }
+}
+
+/// Каталог прав, сгруппированный по модулю (префикс кода до точки). Каждая группа
+/// — сворачиваемая секция с чекбоксами прав. [readOnly] отключает переключатели.
+class _PermissionPicker extends StatelessWidget {
+  const _PermissionPicker({
+    required this.permissions,
+    required this.selected,
+    required this.onChanged,
+    required this.readOnly,
+  });
+
+  final List<PermissionRef> permissions;
+  // Мутируется на месте: тап переключает код и зовёт onChanged (родитель setState).
+  final Set<String> selected;
+  final VoidCallback onChanged;
+  final bool readOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    if (permissions.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Text('Прав в каталоге нет.'),
+      );
+    }
+    // Группируем по модулю, сохраняя порядок появления групп.
+    final groups = <String, List<PermissionRef>>{};
+    for (final p in permissions) {
+      groups.putIfAbsent(_permModule(p.code), () => []).add(p);
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final entry in groups.entries)
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(left: 8),
+            title: Text('${entry.key}.*'),
+            subtitle: Text(
+              'выбрано ${entry.value.where((p) => selected.contains(p.code)).length} из ${entry.value.length}',
+            ),
+            children: [
+              for (final p in entry.value)
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: Text(p.code),
+                  subtitle: p.description == null ? null : Text(p.description!),
+                  value: selected.contains(p.code),
+                  onChanged: readOnly
+                      ? null
+                      : (v) {
+                          if (v ?? false) {
+                            selected.add(p.code);
+                          } else {
+                            selected.remove(p.code);
+                          }
+                          onChanged();
+                        },
+                ),
+            ],
+          ),
       ],
     );
   }

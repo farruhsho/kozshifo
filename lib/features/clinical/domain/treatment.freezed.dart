@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Treatment {
 
- String get id; String get visitId; String get patientId; String? get doctorId; String get kind; String get name; String? get productId; String? get quantity; String? get instructions; String get status; String? get performedAt; String get createdAt;
+ String get id; String get visitId; String get patientId; String? get doctorId; String get kind; String get name; String? get productId; String? get quantity; String? get instructions; String get status; String? get performedAt; String get createdAt; int get sessionsTotal; int get sessionsDone;
 /// Create a copy of Treatment
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +28,16 @@ $TreatmentCopyWith<Treatment> get copyWith => _$TreatmentCopyWithImpl<Treatment>
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Treatment&&(identical(other.id, id) || other.id == id)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.doctorId, doctorId) || other.doctorId == doctorId)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.name, name) || other.name == name)&&(identical(other.productId, productId) || other.productId == productId)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.instructions, instructions) || other.instructions == instructions)&&(identical(other.status, status) || other.status == status)&&(identical(other.performedAt, performedAt) || other.performedAt == performedAt)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Treatment&&(identical(other.id, id) || other.id == id)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.doctorId, doctorId) || other.doctorId == doctorId)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.name, name) || other.name == name)&&(identical(other.productId, productId) || other.productId == productId)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.instructions, instructions) || other.instructions == instructions)&&(identical(other.status, status) || other.status == status)&&(identical(other.performedAt, performedAt) || other.performedAt == performedAt)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.sessionsTotal, sessionsTotal) || other.sessionsTotal == sessionsTotal)&&(identical(other.sessionsDone, sessionsDone) || other.sessionsDone == sessionsDone));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,visitId,patientId,doctorId,kind,name,productId,quantity,instructions,status,performedAt,createdAt);
+int get hashCode => Object.hash(runtimeType,id,visitId,patientId,doctorId,kind,name,productId,quantity,instructions,status,performedAt,createdAt,sessionsTotal,sessionsDone);
 
 @override
 String toString() {
-  return 'Treatment(id: $id, visitId: $visitId, patientId: $patientId, doctorId: $doctorId, kind: $kind, name: $name, productId: $productId, quantity: $quantity, instructions: $instructions, status: $status, performedAt: $performedAt, createdAt: $createdAt)';
+  return 'Treatment(id: $id, visitId: $visitId, patientId: $patientId, doctorId: $doctorId, kind: $kind, name: $name, productId: $productId, quantity: $quantity, instructions: $instructions, status: $status, performedAt: $performedAt, createdAt: $createdAt, sessionsTotal: $sessionsTotal, sessionsDone: $sessionsDone)';
 }
 
 
@@ -48,7 +48,7 @@ abstract mixin class $TreatmentCopyWith<$Res>  {
   factory $TreatmentCopyWith(Treatment value, $Res Function(Treatment) _then) = _$TreatmentCopyWithImpl;
 @useResult
 $Res call({
- String id, String visitId, String patientId, String? doctorId, String kind, String name, String? productId, String? quantity, String? instructions, String status, String? performedAt, String createdAt
+ String id, String visitId, String patientId, String? doctorId, String kind, String name, String? productId, String? quantity, String? instructions, String status, String? performedAt, String createdAt, int sessionsTotal, int sessionsDone
 });
 
 
@@ -65,7 +65,7 @@ class _$TreatmentCopyWithImpl<$Res>
 
 /// Create a copy of Treatment
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? visitId = null,Object? patientId = null,Object? doctorId = freezed,Object? kind = null,Object? name = null,Object? productId = freezed,Object? quantity = freezed,Object? instructions = freezed,Object? status = null,Object? performedAt = freezed,Object? createdAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? visitId = null,Object? patientId = null,Object? doctorId = freezed,Object? kind = null,Object? name = null,Object? productId = freezed,Object? quantity = freezed,Object? instructions = freezed,Object? status = null,Object? performedAt = freezed,Object? createdAt = null,Object? sessionsTotal = null,Object? sessionsDone = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,visitId: null == visitId ? _self.visitId : visitId // ignore: cast_nullable_to_non_nullable
@@ -79,7 +79,9 @@ as String?,instructions: freezed == instructions ? _self.instructions : instruct
 as String?,status: null == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
 as String,performedAt: freezed == performedAt ? _self.performedAt : performedAt // ignore: cast_nullable_to_non_nullable
 as String?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as String,
+as String,sessionsTotal: null == sessionsTotal ? _self.sessionsTotal : sessionsTotal // ignore: cast_nullable_to_non_nullable
+as int,sessionsDone: null == sessionsDone ? _self.sessionsDone : sessionsDone // ignore: cast_nullable_to_non_nullable
+as int,
   ));
 }
 
@@ -164,10 +166,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String visitId,  String patientId,  String? doctorId,  String kind,  String name,  String? productId,  String? quantity,  String? instructions,  String status,  String? performedAt,  String createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String visitId,  String patientId,  String? doctorId,  String kind,  String name,  String? productId,  String? quantity,  String? instructions,  String status,  String? performedAt,  String createdAt,  int sessionsTotal,  int sessionsDone)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Treatment() when $default != null:
-return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind,_that.name,_that.productId,_that.quantity,_that.instructions,_that.status,_that.performedAt,_that.createdAt);case _:
+return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind,_that.name,_that.productId,_that.quantity,_that.instructions,_that.status,_that.performedAt,_that.createdAt,_that.sessionsTotal,_that.sessionsDone);case _:
   return orElse();
 
 }
@@ -185,10 +187,10 @@ return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String visitId,  String patientId,  String? doctorId,  String kind,  String name,  String? productId,  String? quantity,  String? instructions,  String status,  String? performedAt,  String createdAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String visitId,  String patientId,  String? doctorId,  String kind,  String name,  String? productId,  String? quantity,  String? instructions,  String status,  String? performedAt,  String createdAt,  int sessionsTotal,  int sessionsDone)  $default,) {final _that = this;
 switch (_that) {
 case _Treatment():
-return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind,_that.name,_that.productId,_that.quantity,_that.instructions,_that.status,_that.performedAt,_that.createdAt);case _:
+return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind,_that.name,_that.productId,_that.quantity,_that.instructions,_that.status,_that.performedAt,_that.createdAt,_that.sessionsTotal,_that.sessionsDone);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -205,10 +207,10 @@ return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String visitId,  String patientId,  String? doctorId,  String kind,  String name,  String? productId,  String? quantity,  String? instructions,  String status,  String? performedAt,  String createdAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String visitId,  String patientId,  String? doctorId,  String kind,  String name,  String? productId,  String? quantity,  String? instructions,  String status,  String? performedAt,  String createdAt,  int sessionsTotal,  int sessionsDone)?  $default,) {final _that = this;
 switch (_that) {
 case _Treatment() when $default != null:
-return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind,_that.name,_that.productId,_that.quantity,_that.instructions,_that.status,_that.performedAt,_that.createdAt);case _:
+return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind,_that.name,_that.productId,_that.quantity,_that.instructions,_that.status,_that.performedAt,_that.createdAt,_that.sessionsTotal,_that.sessionsDone);case _:
   return null;
 
 }
@@ -220,7 +222,7 @@ return $default(_that.id,_that.visitId,_that.patientId,_that.doctorId,_that.kind
 @JsonSerializable()
 
 class _Treatment extends Treatment {
-  const _Treatment({required this.id, required this.visitId, required this.patientId, this.doctorId, required this.kind, required this.name, this.productId, this.quantity, this.instructions, required this.status, this.performedAt, required this.createdAt}): super._();
+  const _Treatment({required this.id, required this.visitId, required this.patientId, this.doctorId, required this.kind, required this.name, this.productId, this.quantity, this.instructions, required this.status, this.performedAt, required this.createdAt, this.sessionsTotal = 1, this.sessionsDone = 0}): super._();
   factory _Treatment.fromJson(Map<String, dynamic> json) => _$TreatmentFromJson(json);
 
 @override final  String id;
@@ -235,6 +237,8 @@ class _Treatment extends Treatment {
 @override final  String status;
 @override final  String? performedAt;
 @override final  String createdAt;
+@override@JsonKey() final  int sessionsTotal;
+@override@JsonKey() final  int sessionsDone;
 
 /// Create a copy of Treatment
 /// with the given fields replaced by the non-null parameter values.
@@ -249,16 +253,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Treatment&&(identical(other.id, id) || other.id == id)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.doctorId, doctorId) || other.doctorId == doctorId)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.name, name) || other.name == name)&&(identical(other.productId, productId) || other.productId == productId)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.instructions, instructions) || other.instructions == instructions)&&(identical(other.status, status) || other.status == status)&&(identical(other.performedAt, performedAt) || other.performedAt == performedAt)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Treatment&&(identical(other.id, id) || other.id == id)&&(identical(other.visitId, visitId) || other.visitId == visitId)&&(identical(other.patientId, patientId) || other.patientId == patientId)&&(identical(other.doctorId, doctorId) || other.doctorId == doctorId)&&(identical(other.kind, kind) || other.kind == kind)&&(identical(other.name, name) || other.name == name)&&(identical(other.productId, productId) || other.productId == productId)&&(identical(other.quantity, quantity) || other.quantity == quantity)&&(identical(other.instructions, instructions) || other.instructions == instructions)&&(identical(other.status, status) || other.status == status)&&(identical(other.performedAt, performedAt) || other.performedAt == performedAt)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.sessionsTotal, sessionsTotal) || other.sessionsTotal == sessionsTotal)&&(identical(other.sessionsDone, sessionsDone) || other.sessionsDone == sessionsDone));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,visitId,patientId,doctorId,kind,name,productId,quantity,instructions,status,performedAt,createdAt);
+int get hashCode => Object.hash(runtimeType,id,visitId,patientId,doctorId,kind,name,productId,quantity,instructions,status,performedAt,createdAt,sessionsTotal,sessionsDone);
 
 @override
 String toString() {
-  return 'Treatment(id: $id, visitId: $visitId, patientId: $patientId, doctorId: $doctorId, kind: $kind, name: $name, productId: $productId, quantity: $quantity, instructions: $instructions, status: $status, performedAt: $performedAt, createdAt: $createdAt)';
+  return 'Treatment(id: $id, visitId: $visitId, patientId: $patientId, doctorId: $doctorId, kind: $kind, name: $name, productId: $productId, quantity: $quantity, instructions: $instructions, status: $status, performedAt: $performedAt, createdAt: $createdAt, sessionsTotal: $sessionsTotal, sessionsDone: $sessionsDone)';
 }
 
 
@@ -269,7 +273,7 @@ abstract mixin class _$TreatmentCopyWith<$Res> implements $TreatmentCopyWith<$Re
   factory _$TreatmentCopyWith(_Treatment value, $Res Function(_Treatment) _then) = __$TreatmentCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String visitId, String patientId, String? doctorId, String kind, String name, String? productId, String? quantity, String? instructions, String status, String? performedAt, String createdAt
+ String id, String visitId, String patientId, String? doctorId, String kind, String name, String? productId, String? quantity, String? instructions, String status, String? performedAt, String createdAt, int sessionsTotal, int sessionsDone
 });
 
 
@@ -286,7 +290,7 @@ class __$TreatmentCopyWithImpl<$Res>
 
 /// Create a copy of Treatment
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? visitId = null,Object? patientId = null,Object? doctorId = freezed,Object? kind = null,Object? name = null,Object? productId = freezed,Object? quantity = freezed,Object? instructions = freezed,Object? status = null,Object? performedAt = freezed,Object? createdAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? visitId = null,Object? patientId = null,Object? doctorId = freezed,Object? kind = null,Object? name = null,Object? productId = freezed,Object? quantity = freezed,Object? instructions = freezed,Object? status = null,Object? performedAt = freezed,Object? createdAt = null,Object? sessionsTotal = null,Object? sessionsDone = null,}) {
   return _then(_Treatment(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,visitId: null == visitId ? _self.visitId : visitId // ignore: cast_nullable_to_non_nullable
@@ -300,7 +304,9 @@ as String?,instructions: freezed == instructions ? _self.instructions : instruct
 as String?,status: null == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
 as String,performedAt: freezed == performedAt ? _self.performedAt : performedAt // ignore: cast_nullable_to_non_nullable
 as String?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as String,
+as String,sessionsTotal: null == sessionsTotal ? _self.sessionsTotal : sessionsTotal // ignore: cast_nullable_to_non_nullable
+as int,sessionsDone: null == sessionsDone ? _self.sessionsDone : sessionsDone // ignore: cast_nullable_to_non_nullable
+as int,
   ));
 }
 

@@ -19,6 +19,8 @@ _Treatment _$TreatmentFromJson(Map<String, dynamic> json) => _Treatment(
   status: json['status'] as String,
   performedAt: json['performed_at'] as String?,
   createdAt: json['created_at'] as String,
+  sessionsTotal: (json['sessions_total'] as num?)?.toInt() ?? 1,
+  sessionsDone: (json['sessions_done'] as num?)?.toInt() ?? 0,
 );
 
 Map<String, dynamic> _$TreatmentToJson(_Treatment instance) =>
@@ -35,4 +37,6 @@ Map<String, dynamic> _$TreatmentToJson(_Treatment instance) =>
       'status': instance.status,
       'performed_at': instance.performedAt,
       'created_at': instance.createdAt,
+      'sessions_total': instance.sessionsTotal,
+      'sessions_done': instance.sessionsDone,
     };

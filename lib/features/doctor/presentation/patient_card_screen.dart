@@ -43,6 +43,15 @@ class _FollowUpChoice {
   }
 }
 
+/// Прибавляет [months] месяцев к дате, кламп дня к последнему валидному дню
+/// целевого месяца (31 янв + 1 мес → 28/29 фев, а не «перекат» в март).
+DateTime addMonthClamped(DateTime d, int months) {
+  final year = d.year + ((d.month - 1 + months) ~/ 12);
+  final month = (d.month - 1 + months) % 12 + 1;
+  final lastDay = DateTime(year, month + 1, 0).day;
+  return DateTime(year, month, d.day < lastDay ? d.day : lastDay);
+}
+
 /// Слитлампово-структурные поля формы 025-8, в порядке бланка.
 const _structureFields = <(String, String)>[
   ('orbit', 'Орбита'),
@@ -412,9 +421,7 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                   ),
                   ActionChip(
                     label: const Text('Через 1 мес'),
-                    onPressed: () => pick(
-                      DateTime(today.year, today.month + 1, today.day),
-                    ),
+                    onPressed: () => pick(addMonthClamped(today, 1)),
                   ),
                   ActionChip(
                     avatar: const Icon(Icons.event_outlined, size: 18),

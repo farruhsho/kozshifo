@@ -96,10 +96,14 @@ const _openVisit = ReceptionVisit(
 );
 
 /// Authenticated front-desk user (queue.manage — Л-талон, queue.admin —
-/// «Направить к врачу»).
+/// «Направить к врачу»). [extraPermissions] adds rights like visits.close.
 class _FakeAuthController extends AuthController {
+  _FakeAuthController([this._extra = const []]);
+
+  final List<String> _extra;
+
   @override
-  AuthState build() => const AuthState(
+  AuthState build() => AuthState(
         AuthStatus.authenticated,
         AuthUser(
           id: 'u1',
@@ -113,6 +117,7 @@ class _FakeAuthController extends AuthController {
             'payments.create',
             'queue.manage',
             'queue.admin',
+            ..._extra,
           ],
         ),
       );
@@ -218,6 +223,7 @@ class _FakeReceptionRepository extends ReceptionRepository {
 Future<void> _pumpScreen(
   WidgetTester tester, {
   required _FakeReceptionRepository reception,
+  List<String> extraPermissions = const [],
 }) async {
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1.0;
@@ -226,7 +232,8 @@ Future<void> _pumpScreen(
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        authControllerProvider.overrideWith(_FakeAuthController.new),
+        authControllerProvider
+            .overrideWith(() => _FakeAuthController(extraPermissions)),
         patientsRepositoryProvider.overrideWithValue(_FakePatientsRepository()),
         receptionRepositoryProvider.overrideWithValue(reception),
       ],
@@ -398,6 +405,46 @@ void main() {
 
       expect(find.text('Оплата принята'), findsOneWidget);
       expect(find.text('Направить к врачу'), findsNothing);
+      await _drainTimers(tester);
+    });
+  });
+
+  group('«Закрыть визит» гейт visits.close', () {
+    // Терминальный визит без долга: _canCloseVisit == true, поэтому видимость
+    // кнопки решает только право visits.close.
+    const closableVisit = ReceptionVisit(
+      id: 'v1',
+      visitNo: 'V-20260704-0001',
+      status: 'open',
+      flowStatus: 'completed',
+      totalAmount: '150000.00',
+      paidAmount: '150000.00',
+      balance: '0.00',
+    );
+
+    testWidgets('видна при наличии visits.close', (tester) async {
+      final reception = _FakeReceptionRepository(visitToReturn: closableVisit);
+      await _pumpScreen(
+        tester,
+        reception: reception,
+        extraPermissions: const ['visits.close'],
+      );
+      await _selectPatient(tester);
+      await _openVisitFlow(tester);
+
+      expect(find.text('Закрыть визит'), findsOneWidget);
+      await _drainTimers(tester);
+    });
+
+    testWidgets('скрыта без visits.close (canBill не даёт закрытие)',
+        (tester) async {
+      final reception = _FakeReceptionRepository(visitToReturn: closableVisit);
+      // Без visits.close, хотя есть visits.create+payments.create (canBill).
+      await _pumpScreen(tester, reception: reception);
+      await _selectPatient(tester);
+      await _openVisitFlow(tester);
+
+      expect(find.text('Закрыть визит'), findsNothing);
       await _drainTimers(tester);
     });
   });

@@ -63,11 +63,16 @@ def system_monitoring(
     if hide:
         online = [uid for uid in online if uid not in hide]
     today_start = local_day_bounds_utc(business_today())[0]
-    logins_today = db.execute(
+    logins_stmt = (
         select(func.count()).select_from(UserSession)
         .where(UserSession.started_at >= today_start)
-    ).scalar_one()
-    total_sessions = db.execute(select(func.count()).select_from(UserSession)).scalar_one()
+    )
+    total_stmt = select(func.count()).select_from(UserSession)
+    if hide:
+        logins_stmt = logins_stmt.where(UserSession.user_id.not_in(hide))
+        total_stmt = total_stmt.where(UserSession.user_id.not_in(hide))
+    logins_today = db.execute(logins_stmt).scalar_one()
+    total_sessions = db.execute(total_stmt).scalar_one()
 
     online_users: list[OnlineUser] = []
     if online:

@@ -74,15 +74,19 @@ _PRE_DOCTOR = ("registered", "waiting_diagnostic", "awaiting_assignment",
 
 
 def _is_locked(visit: Visit) -> bool:
-    """The flow is frozen only when the VISIT itself is closed/cancelled.
+    """The flow is frozen when the VISIT itself is closed/cancelled.
 
-    flow_status == "completed" alone (appointment finished early) must NOT
-    swallow later real events — the doctor may legitimately prescribe after
-    marking the ticket done, and a live (open) visit keeps flowing.
+    A terminal billing status (completed/cancelled) means the encounter is over —
+    ANY stray late event (a stale D-ticket call, a no-show skip) must not rewrite
+    the flow. This holds regardless of flow_status: an auto-closed follow_up visit
+    (status=completed, flow=follow_up) is just as frozen as a completed one.
+
+    A live (open) visit keeps flowing — flow_status == "completed" alone (the
+    appointment finished early) must NOT swallow later real events, since the
+    doctor may legitimately prescribe after marking the ticket done. A refund that
+    re-opens an auto-closed visit (status back to "open") makes it editable again.
     """
-    if visit.flow_status == "cancelled":
-        return True
-    return visit.flow_status == "completed" and visit.status in ("completed", "cancelled")
+    return visit.status in ("completed", "cancelled")
 
 
 def advance_flow(db: Session, visit: Visit, event: str) -> None:
@@ -281,10 +285,18 @@ def close_visit_if_done(db: Session, visit: Visit) -> None:
     ).first()
     if still_active is not None:
         return
+    # Активной работой считаем ЛЮБУЮ не-cancelled операцию без финзакрытия
+    # (financially_closed_at IS NULL). Проверка симметрична гарду set_operation_price
+    # («цена редактируема, пока операция не финзакрыта»): и незавершённая
+    # (OPEN_STATUSES), и performed, и completed операция без финзакрытия держат визит
+    # открытым — иначе авто-close заморозил бы визит (status=completed → _is_locked),
+    # а вместе с ним и цену операции, ДО явного финзакрытия. Визит закроется потом,
+    # когда financial_close_operation сам позовёт этот хелпер.
     open_op = db.execute(
         select(Operation.id).where(
             Operation.visit_id == visit.id,
-            Operation.status.in_(Operation.OPEN_STATUSES),
+            Operation.status != "cancelled",
+            Operation.financially_closed_at.is_(None),
         ).limit(1)
     ).first()
     if open_op is not None:

@@ -37,6 +37,40 @@ def test_finish_without_active_ticket_advances_flow(client, auth):
     listed = client.get(f"{API}/visits", headers=auth,
                         params={"flow_status": "completed,follow_up"})
     assert v["id"] in {r["id"] for r in listed.json()["items"]}
+    # finish-appointment MUST NOT auto-close the visit: the doctor may still add a
+    # late referral/prescription after marking the ticket done (see
+    # flow._is_locked). The billing status stays 'open'; reception closes it.
+    assert resp.json()["status"] == "open"
+
+
+def test_finish_without_assignment_lets_doctor_refer_late_then_close(client, auth):
+    """Регрессия контракта late-prescribe: голая консультация (finish без
+    назначений) остаётся open → врач может ПОСЛЕ этого направить на операцию
+    (не 409), а ресепшен затем закрывает визит вручную."""
+    branch = _branch_id(client, auth)
+    v = _open_visit(client, auth, branch, "late-refer")
+
+    fin = client.post(f"{API}/visits/{v['id']}/finish-appointment", headers=auth, json={})
+    assert fin.status_code == 200, fin.text
+    assert fin.json()["flow_status"] == "completed"
+    assert fin.json()["status"] == "open"  # NOT auto-closed
+
+    # Doctor dictates a late referral — would 409 «Cannot refer on a completed
+    # visit» if finish had auto-closed the visit.
+    op_type = client.get(f"{API}/operation-types", headers=auth).json()[0]
+    refer = client.post(
+        f"{API}/visits/{v['id']}/operations", headers=auth,
+        json={"operation_type_id": op_type["id"], "eye": "od"},
+    )
+    assert refer.status_code == 201, refer.text
+
+    # Cancel the referral so nothing blocks, then reception closes manually
+    # (no balance → 200).
+    assert client.post(f"{API}/operations/{refer.json()['id']}/cancel",
+                       headers=auth).status_code == 200
+    closed = client.post(f"{API}/visits/{v['id']}/close", headers=auth)
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "completed"
 
 
 def test_finish_closes_active_doctor_ticket(client, auth):

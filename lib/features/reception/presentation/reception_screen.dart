@@ -567,6 +567,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     final canBill =
         (user?.can('visits.create') ?? false) &&
         (user?.can('payments.create') ?? false);
+    // «Закрыть визит» бьёт в /visits/close (visits.close), отдельно от canBill.
+    final canClose = user?.can('visits.close') ?? false;
     final canRegister = user?.can('patients.create') ?? false;
     final canDiscount = user?.can('visits.update') ?? false;
     final canQueue = user?.can('queue.manage') ?? false;
@@ -583,7 +585,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         _servicesSection(services, canBill),
       ],
     );
-    final right = _cartSection(canBill, canDiscount, canRefer);
+    final right = _cartSection(canBill, canDiscount, canRefer, canClose);
 
     // Reception hotkeys (spec): Ctrl+N новый пациент · Ctrl+F поиск ·
     // Ctrl+P печать чека · Ctrl+Enter сохранить визит / принять оплату.
@@ -1106,7 +1108,12 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     );
   }
 
-  Widget _cartSection(bool canBill, bool canDiscount, bool canRefer) {
+  Widget _cartSection(
+    bool canBill,
+    bool canDiscount,
+    bool canRefer,
+    bool canClose,
+  ) {
     final result = _result;
     final visit = _visit;
     final preTotal = cartTotalValue(
@@ -1276,7 +1283,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           label: const Text('Отменить визит'),
         ),
         // Ручное закрытие: приём завершён / переведён в повторный, долга нет.
-        if (canBill && _canCloseVisit(visit)) ...[
+        if (canClose && _canCloseVisit(visit)) ...[
           const SizedBox(height: 8),
           FilledButton.tonalIcon(
             onPressed: _busy ? null : _closeVisit,

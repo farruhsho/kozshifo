@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.audit import record_audit
 from app.core.database import get_db
@@ -203,21 +203,42 @@ def create_visit(
 @router.get("/recall", response_model=list[RecallEntry])
 def list_recall(
     db: Annotated[Session, Depends(get_db)],
-    actor: Annotated[CurrentUser, Depends(require_permission("visits.read"))],
+    actor: Annotated[CurrentUser, Depends(require_permission("visits.update"))],
     due_by: date | None = Query(
         None, description="Вернуть визиты с датой повторного приёма <= due_by "
                           "(по умолчанию — сегодня по локальной дате)"),
 ) -> list[RecallEntry]:
-    """Список визитов «на повторный приём»: flow_status='follow_up',
-    follow_up_date <= due_by и status='open'. Сортировка по follow_up_date asc."""
+    """Список визитов «на повторный приём» — фронт-офисный ворклист (gated
+    visits.update). Завязан на follow_up_date, а НЕ на flow_status: врач всегда
+    может назначить дату повтора, вне зависимости от терминального flow.
+
+    Условия: follow_up_date IS NOT NULL, follow_up_date <= due_by, status !=
+    'cancelled' И это САМЫЙ СВЕЖИЙ визит пациента В ЭТОМ ЖЕ ФИЛИАЛЕ (нет более
+    позднего НЕ-отменённого визита того же пациента в том же филиале по opened_at) —
+    запись «гаснет», когда пациент вернулся (появился новый визит). Сортировка по
+    follow_up_date asc."""
     cutoff = due_by if due_by is not None else datetime.now().date()
+    later = aliased(Visit)
     stmt = (
         select(Visit)
         .where(
-            Visit.flow_status == "follow_up",
-            Visit.status == "open",
             Visit.follow_up_date.is_not(None),
             Visit.follow_up_date <= cutoff,
+            Visit.status != "cancelled",
+            # «Пациент вернулся» судим ПО ФИЛИАЛУ (мульти-филиальность — ядро
+            # платформы): визит в другом филиале не должен гасить recall филиала А.
+            # Отменённый/no-show поздний визит НЕ считается возвратом. Тай-брейк по
+            # id при равном opened_at (SQLite CURRENT_TIMESTAMP — секундная точность):
+            # при коллизии таймстампов «позже» = больший id, чтобы выживала ровно
+            # ОДНА строка (иначе оба визита взаимно гасят друг друга → дубли/пропуски).
+            ~select(later.id).where(
+                later.patient_id == Visit.patient_id,
+                later.branch_id == Visit.branch_id,
+                later.status != "cancelled",
+                later.id != Visit.id,
+                (later.opened_at > Visit.opened_at)
+                | ((later.opened_at == Visit.opened_at) & (later.id > Visit.id)),
+            ).exists(),
         )
     )
     # Изоляция по филиалу: не-суперпользователь видит только свой филиал.
@@ -485,6 +506,11 @@ def close_visit(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
     if visit.status in ("completed", "cancelled"):
         raise HTTPException(status.HTTP_409_CONFLICT, f"Cannot close a {visit.status} visit")
+    # Серверный гард долга: визит с непогашенным балансом (payable > paid) закрыть
+    # нельзя — иначе он «завершён с долгом». Клиент прячет кнопку, но сервер обязан
+    # это гардить (долг закрывает касса рефандом/доплатой).
+    if Decimal(visit.payable) - Decimal(visit.paid_amount) > Decimal("0.00"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "visit has outstanding balance")
     visit.status = "completed"
     visit.closed_at = datetime.now(timezone.utc)
     # Closing the visit freezes its operations' finances — the price/bill can no
@@ -544,14 +570,24 @@ def finish_appointment(
                      actor_id=actor.id, branch_id=visit.branch_id,
                      summary=f"Ticket {ticket.ticket_number} -> done (приём завершён)")
     advance_flow(db, visit, "appointment_finished")  # follow_up | completed
-    # Дата повторного приёма сохраняется только когда визит реально ушёл в
-    # follow_up (что-то назначено). Приём «в никуда» (completed) даты не несёт.
-    if payload is not None and payload.follow_up_date is not None \
-            and visit.flow_status == "follow_up":
+    # Дата повторного приёма сохраняется ВСЕГДА, когда передана: врач может
+    # назначить повтор независимо от терминального flow (recall завязан на
+    # follow_up_date, а не на flow_status).
+    if payload is not None and payload.follow_up_date is not None:
         visit.follow_up_date = payload.follow_up_date
     record_audit(db, action="finish_appointment", entity_type="visit", entity_id=visit.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Приём завершён по визиту {visit.visit_no}")
+    # НАМЕРЕННО НЕ авто-закрываем визит здесь. Отметка «приём завершён» переводит
+    # flow в follow_up/completed, но визит остаётся OPEN — это защищает контракт
+    # «врач может дописать назначение после отметки талона done» (flow._is_locked):
+    # авто-close (status=completed) заморозил бы визит и последующий refer_operation/
+    # prescribe_treatment упал бы 409. Закрытие визита остаётся за оплатой
+    # (take_payment), завершением лечения (complete_if_treatment_done), финзакрытием
+    # операции (financial_close_operation) и ручной кнопкой «Закрыть визит»
+    # (POST /visits/{id}/close). Оплаченная-вперёд консультация без назначений
+    # останется open до ручного закрытия ресепшеном (детектор done_not_closed
+    # подсветит, если она ещё и с долгом).
     db.commit()
     db.refresh(visit)
     return visit

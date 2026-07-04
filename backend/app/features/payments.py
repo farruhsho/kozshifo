@@ -22,6 +22,7 @@ from app.core.print_forms import build_receipt_pdf
 from app.core.sequences import next_receipt_no, next_ticket_number
 from app.features.queue import issue_doctor_ticket
 from app.models.catalog import Service
+from app.models.operation import Operation
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
 from app.models.visit import Visit
@@ -236,6 +237,28 @@ def refund_payment(
             for item in visit.items:
                 if item.status == "paid":
                     item.status = "ordered"
+            # Рефанд «размораживает» авто-закрытый визит: если баланс снова >0 и
+            # визит был авто-закрыт (status='completed'), возвращаем его в 'open'
+            # и очищаем closed_at — зеркало отката строк в 'ordered'. Иначе визит
+            # навсегда завершён С ДОЛГОМ: нельзя пере-биллить/скидка/отмена.
+            if visit.status == "completed":
+                visit.status = "open"
+                visit.closed_at = None
+                # Разморозка должна быть ПОЛНОЙ: close_visit замораживает финансы
+                # операций визита (financially_closed_at), поэтому при откате в
+                # 'open' их надо разморозить — иначе cancel/unschedule/set-price
+                # операции упрутся в 409 «financially closed» (частичный тупик:
+                # визит открыт, но операцию не пере-биллить/отменить). Зеркало
+                # freeze-цикла из visits.close_visit.
+                for op in db.execute(
+                    select(Operation).where(
+                        Operation.visit_id == visit.id,
+                        Operation.status != "cancelled",
+                        Operation.financially_closed_at.is_not(None),
+                    )
+                ).scalars().all():
+                    op.financially_closed_at = None
+                    op.financially_closed_by_id = None
         if Decimal(visit.paid_amount) <= Decimal("0.00"):
             # Fully refunded — the patient leaves the flow: active queue
             # tickets must not stay on the TV board or auto-advance later.

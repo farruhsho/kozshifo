@@ -62,3 +62,17 @@ def test_ghost_owner_hidden_from_director_but_visible_to_owner(client, auth, dir
     owner_enroll = client.get(f"{API}/access-control/enrollment", headers=auth,
                               params={"only_active": False}).json()
     assert any(r["user_id"] == su_id for r in owner_enroll)
+
+
+def test_monitoring_counters_exclude_ghost_owner_for_director(client, auth, director_auth):
+    # The owner logs in → a session for the ghost owner exists / is touched.
+    assert client.get(f"{API}/admin/monitoring", headers=auth).status_code == 200
+
+    owner_mon = client.get(f"{API}/admin/monitoring", headers=auth).json()
+    director_mon = client.get(f"{API}/admin/monitoring", headers=director_auth).json()
+
+    # The owner sees his own sessions in the aggregate counters; the Director
+    # must not — his counts exclude every ghost-owner session, so they are
+    # strictly smaller (owner has ≥1 session today and in total).
+    assert owner_mon["total_sessions"] > director_mon["total_sessions"]
+    assert owner_mon["logins_today"] > director_mon["logins_today"]

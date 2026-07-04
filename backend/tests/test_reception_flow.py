@@ -187,7 +187,8 @@ def test_full_discount_settles_visit_and_enters_journey(client, auth):
 
 
 def test_discount_on_closed_or_cancelled_visit_409(client, auth):
-    _, closed = _make_visit(client, auth, last_name="СкидкаЗакрыт")
+    # Pay in full first: close now guards against an outstanding balance (409).
+    _, closed = _make_visit(client, auth, last_name="СкидкаЗакрыт", pay=True)
     assert client.post(f"{API}/visits/{closed['id']}/close", headers=auth).status_code == 200
     resp = client.post(f"{API}/visits/{closed['id']}/discount", headers=auth,
                        json={"discount_percent": "10", "discount_reason": "Поздно"})

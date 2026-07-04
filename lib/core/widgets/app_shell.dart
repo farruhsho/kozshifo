@@ -106,13 +106,14 @@ const kAppDestinations = <AppDestination>[
   ),
   // «Повторные приёмы» — пациенты в follow_up, кому пора вернуться (дата
   // повтора наступила / просрочена). Рабочий список для ресепшена. Gate:
-  // visits.read (тот же, что наследует /recall в redirect guard).
+  // visits.update (эндпоинт /visits/recall требует visits.update; visits.read
+  // тёк бы на Diagnost/TreatmentRoom, у которых нет visits.update).
   AppDestination(
     Icons.event_repeat_outlined,
     Icons.event_repeat,
     'Повторные приёмы',
     '/recall',
-    permissions: ['visits.read'],
+    permissions: ['visits.update'],
   ),
   // Объединённый кабинет врача «Приём» (exams.write): вкладки «Моя очередь»
   // (свои V-талоны) + «Лечение» (Л-талоны). Врач приземляется сюда; диагност и

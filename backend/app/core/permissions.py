@@ -144,7 +144,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         "patients.read", "patients.create", "patients.update",
         # scanned analyses (УЗИ-заключения, анализ на ВИЧ перед операцией и т.п.)
         "attachments.read", "attachments.write",
-        "visits.read", "visits.create", "visits.update",
+        "visits.read", "visits.create", "visits.update", "visits.close",
         # FULL till incl. refunds (касса) + patient debts / top debtors (Долги)
         "payments.read", "payments.create", "payments.refund", "debts.read",
         # owns the general two-track queue board

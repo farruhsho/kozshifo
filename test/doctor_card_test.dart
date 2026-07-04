@@ -223,6 +223,43 @@ void main() {
     });
   });
 
+  group('addMonthClamped', () {
+    test('31 Jan + 1 мес clamps to 28 Feb (non-leap)', () {
+      expect(
+        addMonthClamped(DateTime(2026, 1, 31), 1),
+        DateTime(2026, 2, 28),
+      );
+    });
+
+    test('31 Jan + 1 мес clamps to 29 Feb (leap year)', () {
+      expect(
+        addMonthClamped(DateTime(2024, 1, 31), 1),
+        DateTime(2024, 2, 29),
+      );
+    });
+
+    test('31 Mar + 1 мес clamps to 30 Apr', () {
+      expect(
+        addMonthClamped(DateTime(2026, 3, 31), 1),
+        DateTime(2026, 4, 30),
+      );
+    });
+
+    test('mid-month keeps the same day', () {
+      expect(
+        addMonthClamped(DateTime(2026, 6, 13), 1),
+        DateTime(2026, 7, 13),
+      );
+    });
+
+    test('December rolls over into next January', () {
+      expect(
+        addMonthClamped(DateTime(2026, 12, 15), 1),
+        DateTime(2027, 1, 15),
+      );
+    });
+  });
+
   group('PatientInfoCard.ageFromBirthDate', () {
     test('full years counted, before/after birthday', () {
       final now = DateTime(2026, 6, 13);

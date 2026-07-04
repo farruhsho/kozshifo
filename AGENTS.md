@@ -20,7 +20,37 @@ tokens re-deriving the project from scratch.
 > ⚠️ **Do not assume a module exists just because `CLAUDE.md` mentions it.**
 > Check the status matrix in `PLATFORM.md` first.
 
-## 1. Status at a glance (2026-06)
+## 1. Status at a glance (2026-07)
+
+> **2026-07-04 — Actor-journey audit + 3 build waves (HEAD `95eedd4`, in `main`).**
+> An orchestrator pass modelled all 14 actors (`docs/ACTORS.md`), ran a 50-agent
+> journey audit against the code, then shipped three reviewed waves. Every actor now
+> completes their journey with **no dead-ends**. Gates: **pytest 461 / flutter 218 /
+> analyze clean / alembic head `c2b1f4e6d302` (linear, applies clean on a fresh DB)**.
+> Migrations added this wave: `b3e7d2a4c916` (visit.follow_up_date), `c1a0f3e5d201`
+> (stocktake + inter-branch transfers + supplier returns), `c2b1f4e6d302` (treatment
+> multi-day sessions). Owner run `alembic upgrade head` to apply.
+> - **Wave 1** — journey-blockers: emergency-priority in call-next, safe Л-ticket
+>   auto-bind, `uuid.UUID` bug that broke all of `/openapi.json`, 3 hanging-visit
+>   categories, surgeon fee in day-P&L (payroll semantics) hidden without `payroll.read`,
+>   exit from the "hold" dead-end, fail-closed prod guard, token_version session revocation.
+> - **Wave 2** — dead-end removal: visit auto-close + manual «Закрыть визит», follow-up
+>   date + «Повторные приёмы» recall screen, diagnostician can fix own conclusion,
+>   device-result unlink/relink, ghost-superadmin no longer leaks in monitoring/audit/
+>   sessions/enrollment. Visit-lifecycle invariant hardened over two adversarial rounds
+>   (auto-close frozen by `_is_locked`; refund thaws visit **and** its operations; op
+>   visits auto-close only after financial-close; debted visit stays open by design).
+> - **Prescription print** — doctor prints a рецепт (glasses sph/cyl/ax + Тавсия);
+>   `GET /exams/{id}/prescription.pdf`.
+> - **Wave 3** (owner-picked enhancements) — **stocktake** (`StockCount`, commit sets
+>   the batch to the absolute counted qty via guarded UPDATE), **inter-branch transfer**
+>   + **supplier return** (all stock mutations atomic/guarded in `core/stock.py`),
+>   **multi-day treatment course** (`Treatment.sessions_total/done`, atomic
+>   `mark-session`, sessions procedures-only), **role-management UI** (`/admin` «Роли»
+>   tab; backend guards: system roles uneditable, in-use roles undeletable).
+> - **Owner decision:** finance revenue semantics left as-is (panels intentionally
+>   measure cash-received vs accrued-services). Still deferred (need hardware/creds):
+>   real device transports, SMS gateway, Firebase FCM/hosting.
 
 - **Phase 0 — Backend core: ✅ done & tested.**
 - **Phase 1 — Flutter client + hardening: ✅ done** (all screens live; Alembic

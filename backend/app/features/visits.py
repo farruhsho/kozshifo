@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.deps import CurrentUser, require_any_permission, require_permission
 from app.core.flow import advance_flow
 from app.core.sequences import next_ticket_number, next_visit_no
+from app.features.queue import issue_doctor_ticket
 from app.models.branch import Branch
 from app.models.catalog import Service
 from app.models.diagnosis import VisitDiagnosis
@@ -227,17 +228,25 @@ def list_recall(
             Visit.status != "cancelled",
             # «Пациент вернулся» судим ПО ФИЛИАЛУ (мульти-филиальность — ядро
             # платформы): визит в другом филиале не должен гасить recall филиала А.
-            # Отменённый/no-show поздний визит НЕ считается возвратом. Тай-брейк по
-            # id при равном opened_at (SQLite CURRENT_TIMESTAMP — секундная точность):
-            # при коллизии таймстампов «позже» = больший id, чтобы выживала ровно
-            # ОДНА строка (иначе оба визита взаимно гасят друг друга → дубли/пропуски).
+            # Отменённый/no-show поздний визит НЕ считается возвратом. Тай-брейк при
+            # равном opened_at (SQLite CURRENT_TIMESTAMP — секундная точность):
+            # сначала по created_at (тоже func.now(), но отражает порядок вставки на
+            # секундной сетке — при разных секундах разрешает корректно), затем по id
+            # как финальный детерминированный дизамбигуатор. id — случайный UUIDv4,
+            # поэтому при полном совпадении и opened_at, и created_at «позже» = больший
+            # id: порядок произволен, но выживает ровно ОДНА строка (иначе оба визита
+            # взаимно гасят друг друга → дубли/пропуски). ОГРАНИЧЕНИЕ: у Visit нет
+            # суб-секундной монотонной колонки (обе даты — func.now()), поэтому при
+            # коллизии в одну секунду «самый свежий» неизбежно неоднозначен.
             ~select(later.id).where(
                 later.patient_id == Visit.patient_id,
                 later.branch_id == Visit.branch_id,
                 later.status != "cancelled",
                 later.id != Visit.id,
                 (later.opened_at > Visit.opened_at)
-                | ((later.opened_at == Visit.opened_at) & (later.id > Visit.id)),
+                | ((later.opened_at == Visit.opened_at)
+                   & ((later.created_at > Visit.created_at)
+                      | ((later.created_at == Visit.created_at) & (later.id > Visit.id)))),
             ).exists(),
         )
     )
@@ -348,16 +357,28 @@ def apply_discount(
         visit.discount_reason = (payload.discount_reason or "").strip()
 
     # A discount that fully covers the bill leaves nothing to pay, so a payment
-    # (which the journey relies on to start) can never be taken. Settle the
-    # visit here the same way a full payment would: items -> paid, advance the
-    # flow, and mint a diagnostic ticket — otherwise a free visit is stranded.
+    # (which the journey relies on to start) can never be taken. Settle the visit
+    # here the same way a full payment would — this MIRRORS take_payment
+    # (payments.py): items -> paid, advance the flow per referral_intent, and mint
+    # the matching ticket (diagnostic D-…, doctor С-…, or none for hold). Otherwise
+    # a free visit is either stranded or wrongly routed to diagnostics.
+    # NB: deliberate duplication of take_payment's settlement branch — a future
+    # shared helper (e.g. core.settlement.settle_visit) should unify both paths.
     ticket_number: str | None = None
     if not payload.clear and visit.balance <= Decimal("0.00"):
         for item in visit.items:
             if item.status == "ordered":
                 item.status = "paid"
-        advance_flow(db, visit, "paid_in_full")  # workflow engine (same transaction)
-        if payload.issue_queue_ticket and visit.flow_status == "waiting_diagnostic":
+        # Reception's registration choice drives where the patient goes — same
+        # event mapping as take_payment (journey still starts exactly once, events
+        # are guarded to "registered").
+        advance_flow(db, visit, {
+            "doctor": "referred_to_doctor",   # Вариант 2: «Направлен к врачу»
+            "hold": "held_for_assignment",    # Вариант 1: «Ожидает назначения»
+        }.get(payload.referral_intent, "paid_in_full"))  # default: diagnostics
+        if payload.issue_queue_ticket:
+            # Dedupe ignores the track: a patient already mid-flow must never get a
+            # second ticket — the active ticket's number is just reported back.
             existing = db.execute(
                 select(QueueTicket).where(
                     QueueTicket.visit_id == visit.id,
@@ -366,13 +387,34 @@ def apply_discount(
             ).scalar_one_or_none()
             if existing is not None:
                 ticket_number = existing.ticket_number
-            else:
+            # «Направлен к врачу» (Вариант 2): mint the doctor ticket directly.
+            # «Ожидает назначения» leaves flow at awaiting_assignment, mints nothing.
+            elif visit.flow_status == "waiting_doctor":
+                new_ticket = issue_doctor_ticket(db, visit, actor, room=payload.room,
+                                                 audit_note=" (free visit, направлен к врачу)")
+                if new_ticket is not None:
+                    ticket_number = new_ticket.ticket_number
+            # A NEW diagnostics ticket is minted only when the JOURNEY starts (flow
+            # is waiting_diagnostic). Tag it with the visit's single diagnostic
+            # service so call-next routes it to the matching diagnostician; NULL
+            # (open pool) when there are 0 or ≥2 diagnostic services — mirror
+            # take_payment exactly.
+            elif visit.flow_status == "waiting_diagnostic":
+                billed_service_ids = [it.service_id for it in visit.items if it.service_id is not None]
+                diag_service_ids = db.execute(
+                    select(Service.id).where(
+                        Service.id.in_(billed_service_ids),
+                        Service.is_diagnostic.is_(True),
+                    )
+                ).scalars().all() if billed_service_ids else []
+                diag_service_id = diag_service_ids[0] if len(diag_service_ids) == 1 else None
                 ticket = QueueTicket(
-                    ticket_number=next_ticket_number(db, visit.branch_id, "diagnostic"),
+                    ticket_number=next_ticket_number(db, visit.branch_id, "D"),
                     track="diagnostic",
                     patient_id=visit.patient_id,
                     branch_id=visit.branch_id,
                     visit_id=visit.id,
+                    service_id=diag_service_id,
                     room=payload.room,
                     priority=visit.priority,
                     priority_reason=visit.priority_reason,
@@ -539,7 +581,7 @@ def finish_appointment(
     visit_id: UUID,
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(
-        require_any_permission("exams.write", "queue.manage"))],
+        require_any_permission("exams.write", "visits.update"))],
     payload: FinishAppointmentRequest | None = None,
 ) -> Visit:
     """Завершить приём врача — переводит визит в follow_up/completed через flow

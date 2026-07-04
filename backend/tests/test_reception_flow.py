@@ -179,11 +179,83 @@ def test_full_discount_settles_visit_and_enters_journey(client, auth):
     assert Decimal(body["balance"]) <= Decimal("0.00")
     assert body["flow_status"] == "waiting_diagnostic"
     assert all(it["status"] == "paid" for it in body["items"])
-    # A diagnostic ticket was minted for the free visit.
+    # A diagnostic ticket was minted for the free visit — with the D-… prefix
+    # (regression: the free-settlement path used to pass the track name
+    # "diagnostic" as the prefix, minting "diagnostic-001" instead of "D-001").
     tickets = client.get(f"{API}/queue", headers=auth,
                          params={"branch_id": branch_id, "track": "diagnostic"}).json()
-    assert any(t["visit_id"] == visit["id"] for t in tickets)
+    ours = [t for t in tickets if t["visit_id"] == visit["id"]]
+    assert ours, "free visit did not enter the diagnostic queue"
+    assert ours[0]["ticket_number"].startswith("D-"), ours[0]["ticket_number"]
     _park_visit_tickets(client, auth, branch_id, visit["id"])  # order-independence
+
+
+def test_full_discount_referral_intent_doctor_mints_doctor_ticket(client, auth):
+    """A free (100%-discount) visit with referral_intent='doctor' must route to a
+    doctor exactly like a paid «Направлен к врачу» — a doctor-track ticket (NOT a
+    D-… diagnostic one), flow at waiting_doctor. Regression: the free-settlement
+    path used to ignore referral_intent and always mint a diagnostic ticket."""
+    branch_id, visit = _make_visit(client, auth, last_name="СкидкаКВрачу")
+    resp = client.post(f"{API}/visits/{visit['id']}/discount", headers=auth,
+                       json={"discount_percent": "100", "discount_reason": "Сотрудник",
+                             "referral_intent": "doctor"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert Decimal(body["balance"]) <= Decimal("0.00")
+    assert body["flow_status"] == "waiting_doctor"
+    # A doctor-track ticket was minted (not diagnostic).
+    doctor_q = client.get(f"{API}/queue", headers=auth,
+                          params={"branch_id": branch_id, "track": "doctor"}).json()
+    ours = [t for t in doctor_q if t["visit_id"] == visit["id"]]
+    assert ours, "free doctor-intent visit did not enter the doctor queue"
+    assert not ours[0]["ticket_number"].startswith("D-"), ours[0]["ticket_number"]
+    # And no diagnostic ticket leaked out.
+    diag_q = client.get(f"{API}/queue", headers=auth,
+                        params={"branch_id": branch_id, "track": "diagnostic"}).json()
+    assert not any(t["visit_id"] == visit["id"] for t in diag_q)
+    _park_visit_tickets(client, auth, branch_id, visit["id"])
+
+
+def test_full_discount_referral_intent_hold_mints_nothing(client, auth):
+    """referral_intent='hold' on a free visit: no ticket, flow parks at
+    awaiting_assignment (mirrors the paid «Ожидает назначения» path)."""
+    branch_id, visit = _make_visit(client, auth, last_name="СкидкаОжидает")
+    resp = client.post(f"{API}/visits/{visit['id']}/discount", headers=auth,
+                       json={"discount_percent": "100", "discount_reason": "Сотрудник",
+                             "referral_intent": "hold"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["flow_status"] == "awaiting_assignment"
+    q = client.get(f"{API}/queue", headers=auth, params={"branch_id": branch_id}).json()
+    assert not any(t["visit_id"] == visit["id"] for t in q), "hold must mint no ticket"
+
+
+def test_finish_appointment_gate_rejects_queue_only_role(client, auth):
+    """POST /visits/{id}/finish-appointment is gated on exams.write OR
+    visits.update. A queue-only clinical role (Diagnost: has queue.manage +
+    visits.read but NOT visits.update / exams.write) must be denied (403) — it
+    must not be able to finish a doctor's appointment. Regression: the gate used
+    to accept queue.manage, which Diagnost / TreatmentRoom hold."""
+    _, visit = _make_visit(client, auth, last_name="ГейтДиагност")
+    created = client.post(
+        f"{API}/users", headers=auth,
+        json={"email": "finish.diag@kozshifo.uz", "full_name": "Диагност Гейт",
+              "password": "Diag!2026fin", "role_names": ["Diagnost"]},
+    )
+    assert created.status_code == 201, created.text
+    diag_token = client.post(
+        f"{API}/auth/login",
+        data={"username": "finish.diag@kozshifo.uz", "password": "Diag!2026fin"},
+    ).json()["access_token"]
+    diag_auth = {"Authorization": f"Bearer {diag_token}"}
+
+    # queue.manage-only role → 403 (not a 404 or 200): the gate refuses it despite
+    # the visit existing and the role having visits.read.
+    denied = client.post(f"{API}/visits/{visit['id']}/finish-appointment", headers=diag_auth)
+    assert denied.status_code == 403, denied.text
+
+    # The privileged setup account (superuser) still finishes fine.
+    ok = client.post(f"{API}/visits/{visit['id']}/finish-appointment", headers=auth)
+    assert ok.status_code == 200, ok.text
 
 
 def test_discount_on_closed_or_cancelled_visit_409(client, auth):

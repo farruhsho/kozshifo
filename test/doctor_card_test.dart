@@ -500,4 +500,39 @@ void main() {
       expect(doctor.prescriptionExamId, 'e1');
     });
   });
+
+  group('гейт кнопки «Завершить приём»', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    Future<void> openScreen(
+      WidgetTester tester, {
+      required List<String> permissions,
+    }) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        _harness(doctor: _FakeDoctorRepository(), permissions: permissions),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets('видна при exams.write', (tester) async {
+      await openScreen(tester, permissions: const ['exams.write']);
+      expect(find.text('Завершить приём'), findsOneWidget);
+    });
+
+    testWidgets('видна при visits.update без exams.write', (tester) async {
+      await openScreen(tester, permissions: const ['visits.update']);
+      expect(find.text('Завершить приём'), findsOneWidget);
+    });
+
+    testWidgets('скрыта без exams.write и visits.update', (tester) async {
+      await openScreen(tester, permissions: const ['queue.manage']);
+      expect(find.text('Завершить приём'), findsNothing);
+    });
+  });
 }

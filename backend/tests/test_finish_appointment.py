@@ -64,13 +64,17 @@ def test_finish_without_assignment_lets_doctor_refer_late_then_close(client, aut
     )
     assert refer.status_code == 201, refer.text
 
-    # Cancel the referral so nothing blocks, then reception closes manually
-    # (no balance → 200).
+    # Cancelling the sole (late) referral empties the plan → the flow returns to
+    # 'completed' and, with no debt / active work, the visit AUTO-closes (the
+    # cancel path now pairs recompute_plan with close_visit_if_done — no more
+    # zero-debt zombie visits).
     assert client.post(f"{API}/operations/{refer.json()['id']}/cancel",
                        headers=auth).status_code == 200
-    closed = client.post(f"{API}/visits/{v['id']}/close", headers=auth)
-    assert closed.status_code == 200, closed.text
-    assert closed.json()["status"] == "completed"
+    reread = client.get(f"{API}/visits/{v['id']}", headers=auth).json()
+    assert reread["status"] == "completed"
+    # A redundant manual close is now a no-op that 409s (already terminal).
+    assert client.post(f"{API}/visits/{v['id']}/close",
+                       headers=auth).status_code == 409
 
 
 def test_finish_closes_active_doctor_ticket(client, auth):

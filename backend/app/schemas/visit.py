@@ -5,6 +5,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -26,10 +28,16 @@ class VisitDiscountApply(BaseModel):
     discount_reason: str | None = Field(None, max_length=128)
     clear: bool = False
     # When a discount fully covers the bill (nothing left to pay), settle the
-    # visit like a full payment would: mint a diagnostic queue ticket. Mirrors
-    # PaymentCreate so a 100%-discount (free) visit still enters the journey.
+    # visit like a full payment would: mint a queue ticket. Mirrors PaymentCreate
+    # so a 100%-discount (free) visit still enters the journey.
     issue_queue_ticket: bool = True
     room: str | None = Field(None, max_length=32)
+    # Where the free (fully-discounted) patient goes once settled — mirrors
+    # PaymentCreate.referral_intent so a free visit routes exactly like a paid one:
+    #   diagnostic — mint a D-… diagnostics ticket (default; eye-clinic norm)
+    #   doctor     — «Направлен к врачу»: mint the doctor ticket directly (Вариант 2)
+    #   hold       — «Ожидает назначения»: no ticket, await a routing decision (Вариант 1)
+    referral_intent: Literal["diagnostic", "doctor", "hold"] = "diagnostic"
 
     @model_validator(mode="after")
     def _exactly_one_kind(self) -> "VisitDiscountApply":

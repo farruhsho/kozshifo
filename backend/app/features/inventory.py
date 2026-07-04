@@ -445,6 +445,17 @@ def create_stock_count(
     with stock are always snapshotted regardless of product state."""
     if db.get(Branch, payload.branch_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Branch not found")
+    existing_draft = db.execute(
+        select(StockCount.id).where(
+            StockCount.branch_id == payload.branch_id,
+            StockCount.status == "draft",
+        ).limit(1)
+    ).first()
+    if existing_draft is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Для филиала уже открыт незавершённый пересчёт — завершите или отмените его",
+        )
     count = StockCount(branch_id=payload.branch_id, created_by_id=actor.id,
                        status="draft", note=payload.note)
     db.add(count)

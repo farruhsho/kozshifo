@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
-from app.core.flow import advance_flow, complete_if_treatment_done, recompute_plan
+from app.core.flow import (
+    advance_flow,
+    close_visit_if_done,
+    complete_if_treatment_done,
+    recompute_plan,
+)
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, write_off_fefo
 from app.features.visits import _make_item, _recompute_total
@@ -302,6 +307,10 @@ def cancel_treatment(
     # The lifecycle must stop advertising a plan that no longer exists.
     if visit is not None:
         recompute_plan(db, visit)
+        # Отмена курса на середине завершает флоу (completed) без долга —
+        # авто-закрываем, иначе визит остался бы open навсегда и невидим для
+        # детектора зависших.
+        close_visit_if_done(db, visit)
     db.commit()
     db.refresh(treatment)
     return treatment

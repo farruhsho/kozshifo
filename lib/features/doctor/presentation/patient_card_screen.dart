@@ -513,8 +513,10 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
         ),
         actions: [
           if (_visitId != null &&
-              (ref.watch(authControllerProvider).user?.can('queue.manage') ??
-                  false))
+              (ref.watch(authControllerProvider).user?.can('exams.write') ==
+                      true ||
+                  ref.watch(authControllerProvider).user?.can('visits.update') ==
+                      true))
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: FilledButton.tonalIcon(

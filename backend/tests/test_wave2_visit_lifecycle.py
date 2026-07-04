@@ -192,16 +192,33 @@ def test_visit_with_open_operation_not_closed_until_operation_done(client, auth)
     finally:
         db.close()
 
-    # Cancel the operation, then the helper closes the visit (nothing pending).
+    # Cancel the operation: the endpoint now auto-closes the visit itself (its
+    # single plan is gone, no debt, nothing pending) — no manual helper call.
     assert client.post(f"{API}/operations/{op_id}/cancel", headers=auth).status_code == 200
-    db = SL()
-    try:
-        row = db.get(V, uuid.UUID(v["id"]))
-        close_visit_if_done(db, row)
-        db.commit()
-        assert row.status == "completed"
-    finally:
-        db.close()
+    assert _visit(client, auth, v["id"])["status"] == "completed"
+
+
+# --- (в2) cancelling a treatment auto-closes a debt-free visit ------------------
+
+def test_cancel_treatment_auto_closes_debtless_visit(client, auth):
+    """Курс на середине флоу (treatment_assigned) — единственный план визита; после
+    отмены recompute_plan уводит флоу в completed, и раз долга/операций/талонов нет,
+    эндпоинт сам авто-закрывает визит (иначе он завис бы open навсегда, невидимый
+    для детектора зависших: done_not_closed требует долг)."""
+    branch = _branch_id(client, auth)
+    v = _new_visit(client, auth, branch, "tx-cancel")
+
+    # A prescribed treatment, and the flow already advanced to treatment_assigned
+    # (mid-course: the patient left the doctor with a plan).
+    tx = client.post(f"{API}/visits/{v['id']}/treatments", headers=auth,
+                     json={"kind": "procedure", "name": "Магнит", "sessions_total": 3})
+    assert tx.status_code == 201, tx.text
+    tid = tx.json()["id"]
+    _seed(v["id"], flow_status="treatment_assigned")
+
+    # Cancel the treatment: the single plan is gone, no debt -> auto-close.
+    assert client.post(f"{API}/treatments/{tid}/cancel", headers=auth).status_code == 200
+    assert _visit(client, auth, v["id"])["status"] == "completed"
 
 
 # --- (а) full payment -> auto-close -> refund unfreezes the visit --------------

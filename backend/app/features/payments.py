@@ -233,32 +233,47 @@ def refund_payment(
         # balance must revert them to "ordered" — otherwise operations
         # detach/cancel keep seeing a "paid" line and demand "refund first" even
         # though the refund already happened (a dead-end right after a refund).
-        if Decimal(visit.balance) > Decimal("0.00"):
+        #
+        # CRITICAL: only wholesale-revert when the refund zeroed paid_amount
+        # ENTIRELY (a full unwind). A PARTIAL refund — e.g. a visit with an
+        # operation (900000) + consultation (100000), both paid, where only the
+        # consultation is refunded — leaves paid_amount>0. Reverting every paid
+        # line then would demote the still-paid operation to "ordered", letting
+        # it be unscheduled/cancelled/detached while its 900000 stays paid → the
+        # money orphans (day-summary revenue drops, COGS remains). So we touch
+        # item.status ONLY on a full refund; a partial refund keeps paid lines
+        # paid and simply surfaces the re-opened balance. The C9a detach flow
+        # (single payment → full refund → detach) still works: full refund zeroes
+        # paid_amount → the revert branch runs.
+        if Decimal(visit.paid_amount) <= Decimal("0.00") and Decimal(visit.balance) > Decimal("0.00"):
             for item in visit.items:
                 if item.status == "paid":
                     item.status = "ordered"
-            # Рефанд «размораживает» авто-закрытый визит: если баланс снова >0 и
-            # визит был авто-закрыт (status='completed'), возвращаем его в 'open'
-            # и очищаем closed_at — зеркало отката строк в 'ordered'. Иначе визит
-            # навсегда завершён С ДОЛГОМ: нельзя пере-биллить/скидка/отмена.
-            if visit.status == "completed":
-                visit.status = "open"
-                visit.closed_at = None
-                # Разморозка должна быть ПОЛНОЙ: close_visit замораживает финансы
-                # операций визита (financially_closed_at), поэтому при откате в
-                # 'open' их надо разморозить — иначе cancel/unschedule/set-price
-                # операции упрутся в 409 «financially closed» (частичный тупик:
-                # визит открыт, но операцию не пере-биллить/отменить). Зеркало
-                # freeze-цикла из visits.close_visit.
-                for op in db.execute(
-                    select(Operation).where(
-                        Operation.visit_id == visit.id,
-                        Operation.status != "cancelled",
-                        Operation.financially_closed_at.is_not(None),
-                    )
-                ).scalars().all():
-                    op.financially_closed_at = None
-                    op.financially_closed_by_id = None
+        # Рефанд «размораживает» авто-закрытый визит: если баланс снова >0 и
+        # визит был авто-закрыт (status='completed'), возвращаем его в 'open'
+        # и очищаем closed_at. Это НЕ зависит от того, полный возврат или
+        # частичный: любой возврат, вернувший долг, должен снова сделать визит
+        # редактируемым, иначе он навсегда завершён С ДОЛГОМ (нельзя
+        # пере-биллить/скидка/отмена). При частичном возврате строки-позиции
+        # остаются 'paid' — размораживаем только сам визит и финансы операций.
+        if Decimal(visit.balance) > Decimal("0.00") and visit.status == "completed":
+            visit.status = "open"
+            visit.closed_at = None
+            # Разморозка должна быть ПОЛНОЙ: close_visit замораживает финансы
+            # операций визита (financially_closed_at), поэтому при откате в
+            # 'open' их надо разморозить — иначе cancel/unschedule/set-price
+            # операции упрутся в 409 «financially closed» (частичный тупик:
+            # визит открыт, но операцию не пере-биллить/отменить). Зеркало
+            # freeze-цикла из visits.close_visit.
+            for op in db.execute(
+                select(Operation).where(
+                    Operation.visit_id == visit.id,
+                    Operation.status != "cancelled",
+                    Operation.financially_closed_at.is_not(None),
+                )
+            ).scalars().all():
+                op.financially_closed_at = None
+                op.financially_closed_by_id = None
         if Decimal(visit.paid_amount) <= Decimal("0.00"):
             # Fully refunded — the patient leaves the flow: active queue
             # tickets must not stay on the TV board or auto-advance later.

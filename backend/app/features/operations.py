@@ -857,6 +857,10 @@ def cancel_operation(
     db.flush()
     # The lifecycle must stop advertising a surgery that no longer exists.
     recompute_plan(db, visit)
+    # Отмена единственного плана оплаченного визита завершает флоу (completed) без
+    # долга — авто-закрываем, иначе визит остался бы open навсегда и невидим для
+    # детектора зависших (done_not_closed требует долг).
+    close_visit_if_done(db, visit)
     db.commit()
     db.refresh(operation)
     return operation

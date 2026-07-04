@@ -6,6 +6,7 @@ import '../../../core/network/api_exception.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/widgets/async_value_widget.dart';
+import '../../auth/application/auth_controller.dart';
 import '../data/debt_repository.dart';
 import '../domain/patient_debt_detail.dart';
 
@@ -147,6 +148,9 @@ class _VisitDebtCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
+    final canPay =
+        ref.watch(authControllerProvider).user?.can('payments.create') ??
+            false;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
@@ -170,15 +174,17 @@ class _VisitDebtCard extends ConsumerWidget {
               Text(visit.services,
                   style: const TextStyle(color: AppColors.muted, fontSize: 13)),
             ],
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton.tonalIcon(
-                icon: const Icon(Icons.payments_outlined, size: 18),
-                label: const Text('Погасить'),
-                onPressed: () => _openRepayDialog(context, ref),
+            if (canPay) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.tonalIcon(
+                  icon: const Icon(Icons.payments_outlined, size: 18),
+                  label: const Text('Погасить'),
+                  onPressed: () => _openRepayDialog(context, ref),
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

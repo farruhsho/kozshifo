@@ -168,6 +168,34 @@ def test_stock_count_edit_after_commit_409(client, auth):
     assert blocked.status_code == 409, blocked.text
 
 
+def test_second_open_draft_same_branch_409(client, auth):
+    """Only one draft count per branch: a concurrent second open is rejected 409
+    (otherwise two stale snapshots would clobber each other's corrections on
+    commit — last committer wins). After the first is committed, a new one opens."""
+    branch_id = _branch_id(client, auth)
+    p = _create_product(client, auth, "ST-ONE", "Тест-один")
+    _receipt(client, auth, branch_id, p["id"], "5", "ONE-1")
+
+    first = client.post(f"{API}/inventory/stock-counts", headers=auth,
+                        json={"branch_id": branch_id})
+    assert first.status_code == 201, first.text
+    count_id = first.json()["id"]
+
+    # A second open for the SAME branch while the first is still draft → 409.
+    second = client.post(f"{API}/inventory/stock-counts", headers=auth,
+                         json={"branch_id": branch_id})
+    assert second.status_code == 409, second.text
+
+    # Close the first, then a fresh open succeeds.
+    committed = client.post(f"{API}/inventory/stock-counts/{count_id}/commit", headers=auth)
+    assert committed.status_code == 200, committed.text
+    third = client.post(f"{API}/inventory/stock-counts", headers=auth,
+                        json={"branch_id": branch_id})
+    assert third.status_code == 201, third.text
+    # Clean up so a leftover draft cannot 409 unrelated tests sharing the branch.
+    client.post(f"{API}/inventory/stock-counts/{third.json()['id']}/commit", headers=auth)
+
+
 def test_stock_count_rbac_doctor_denied(client, auth):
     """Doctor lacks inventory.stocktake → cannot open a count."""
     branch_id = _branch_id(client, auth)

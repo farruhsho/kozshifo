@@ -888,6 +888,7 @@ _HANGING_NO_DOCTOR_AGE = timedelta(hours=4)   # зарегистрирован, 
 _HANGING_IN_DOCTOR_AGE = timedelta(hours=3)   # на приёме, не завершён
 _HANGING_REFERRAL_AGE = timedelta(hours=24)   # направлен на операцию, не запланирована
 _HANGING_POST_OP_AGE = timedelta(hours=3)     # операция выполнена, визит не завершён
+_HANGING_STALE_OPEN_AGE = timedelta(hours=6)  # флоу завершён, долга нет, а визит открыт
 _HANGING_ROW_CAP = 50                         # максимум строк-пациентов на категорию
 
 # flow_status пациента, который ещё НЕ дошёл до врача (до in_doctor).
@@ -938,13 +939,14 @@ def _category(category: str, label: str, severity: str, route: str | None,
 @router.get("/hanging-visits", response_model=list[HangingCategory],
             dependencies=[Depends(require_permission("dashboard.view"))])
 def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCategory]:
-    """Зависшие визиты в семи категориях, с конкретными пациентами:
+    """Зависшие визиты в категориях, с конкретными пациентами:
     (1) зарегистрирован, но не дошёл до врача; (2) был у врача, приём не завершён;
     (3) назначена диагностика, но нет результата; (4) операция не закрыта
     (вкл. направление >24 ч без даты); (5) операция выполнена, визит не завершён;
-    (6) лечение не завершено; (7) флоу завершён, визит открыт с долгом.
-    Самоочищается — визит исчезает, как только проблема решена (вычисляется на
-    чтение по текущему состоянию)."""
+    (6) лечение не завершено; (7) флоу завершён, визит открыт с долгом;
+    (7б) флоу завершён, долга нет, но визит не закрыт (защита в глубину —
+    авто-закрытие должно было сработать). Самоочищается — визит исчезает, как
+    только проблема решена (вычисляется на чтение по текущему состоянию)."""
     now = datetime.now(timezone.utc)
     out: list[HangingCategory] = []
 
@@ -1118,6 +1120,46 @@ def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCateg
     out.append(_category(
         "done_not_closed", "Завершён, не закрыт — есть долг", "info",
         "/patients", rows7))
+
+    # ── (7б) Защита в глубину: флоу завершён (completed/follow_up), ДОЛГА НЕТ, а
+    #    визит всё ещё open дольше порога. В норме такой визит закрывает авто-
+    #    закрытие (close_visit_if_done) в момент терминального перехода; если он
+    #    висит — что-то помешало (старый баг: отмена плана без авто-закрытия). Не
+    #    задваивает cat7 (там долг > 0). Показываем только когда ничего не держит
+    #    визит открытым: нет активных талонов и нет не-cancelled операций без
+    #    финзакрытия (иначе визит держит открытым сама незакрытая операция).
+    stale_open = db.execute(
+        select(Visit).where(
+            Visit.status == "open",
+            Visit.flow_status.in_(("completed", "follow_up")),
+            Visit.opened_at < now - _HANGING_STALE_OPEN_AGE,
+        ).order_by(Visit.opened_at)
+    ).scalars().all()
+    stale_open = [v for v in stale_open if v.balance <= 0]
+    rows7b: list[HangingVisitRow] = []
+    for v in stale_open:
+        active_ticket = db.execute(
+            select(QueueTicket.id).where(
+                QueueTicket.visit_id == v.id,
+                QueueTicket.status.in_(("waiting", "called", "serving")),
+            ).limit(1)
+        ).first()
+        if active_ticket is not None:
+            continue
+        open_op = db.execute(
+            select(Operation.id).where(
+                Operation.visit_id == v.id,
+                Operation.status != "cancelled",
+                Operation.financially_closed_at.is_(None),
+            ).limit(1)
+        ).first()
+        if open_op is not None:
+            continue
+        rows7b.append(_hanging_row(
+            v, "Приём завершён, долга нет, но визит не закрыт — авто-закрытие не сработало"))
+    out.append(_category(
+        "stale_open_no_debt", "Завершён, не закрыт — без долга", "info",
+        "/patients", rows7b))
 
     # Только непустые категории; критичные — первыми, info — в конце.
     _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}

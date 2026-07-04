@@ -174,7 +174,7 @@ ROLE_TEMPLATES: dict[str, list[str]] = {
         # workstation). Reception keeps the full two-track board. Also finishes
         # walk-in patients auto-queued after diagnostics → cashier (TZ §7.1.6).
         "queue.read", "queue.manage", "services.read", "cabinets.read",
-        "exams.read", "exams.write", "diagnoses.read", "diagnoses.manage", "diagnoses.record",
+        "exams.read", "exams.write", "diagnoses.read", "diagnoses.record",
         "devices.read", "device_results.read", "device_results.create",
         "inventory.read",
         "operations.read", "operations.prescribe", "operations.perform",

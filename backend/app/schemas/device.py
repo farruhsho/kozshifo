@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 DeviceType = Literal["ab_ultrasound", "refractometer", "other"]
 ConnectionType = Literal["manual", "file", "serial", "usb", "hl7", "dicom"]
@@ -98,3 +98,14 @@ class DeviceResultOut(BaseModel):
     measured_at: datetime
     source: str
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def original_name(self) -> str | None:
+        """Original filename of an uploaded result (from payload metadata) — lets
+        staff see WHAT a file result is before linking, instead of the stored UUID."""
+        if isinstance(self.payload, dict):
+            name = self.payload.get("original_name")
+            if isinstance(name, str) and name:
+                return name
+        return None

@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dates import local_day_bounds_utc
-from app.core.deps import require_permission
+from app.core.deps import CurrentUser, require_permission
+from app.core.visibility import caller_is_owner, owner_user_id_set, owner_user_ids
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.schemas.audit import AuditLogOut
@@ -23,10 +24,10 @@ from app.schemas.common import Page
 router = APIRouter(prefix="/admin", tags=["Super Admin"])
 
 
-@router.get("/audit-logs", response_model=Page[AuditLogOut],
-            dependencies=[Depends(require_permission("audit.read"))])
+@router.get("/audit-logs", response_model=Page[AuditLogOut])
 def list_audit_logs(
     db: Annotated[Session, Depends(get_db)],
+    viewer: Annotated[CurrentUser, Depends(require_permission("audit.read"))],
     actor_id: UUID | None = None,
     entity_type: str | None = None,
     action: str | None = None,
@@ -41,6 +42,11 @@ def list_audit_logs(
                             "date_from must be <= date_to")
 
     stmt = select(AuditLog)
+    # Ghost owner: a non-owner viewer must not see the owner's own actions
+    # (row-level filter — hiding the actor's name/email alone would still leak
+    # the fact that the owner account acted).
+    if not caller_is_owner(viewer, owner_user_id_set(db)):
+        stmt = stmt.where(AuditLog.actor_id.not_in(owner_user_ids()))
     if actor_id is not None:
         stmt = stmt.where(AuditLog.actor_id == actor_id)
     if entity_type:

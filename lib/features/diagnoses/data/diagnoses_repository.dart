@@ -41,6 +41,20 @@ class DiagnosesRepository {
       throw ApiException.from(e);
     }
   }
+
+  /// Removes a WRONG conclusion the current user recorded on this visit (medical
+  /// amend). `DELETE /visits/{visit_id}/diagnostic-conclusion/{id}` — gated on
+  /// `diagnoses.record`; the backend enforces «own record, visit still live».
+  Future<void> deleteConclusion({
+    required String visitId,
+    required String conclusionId,
+  }) async {
+    try {
+      await _dio.delete('/visits/$visitId/diagnostic-conclusion/$conclusionId');
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
 }
 
 /// The current user's allowed diagnoses (for the conclusion picker).

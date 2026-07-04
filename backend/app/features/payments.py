@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
-from app.core.flow import advance_flow
+from app.core.flow import advance_flow, close_visit_if_done
 from app.core.print_forms import build_receipt_pdf
 from app.core.sequences import next_receipt_no, next_ticket_number
 from app.features.queue import issue_doctor_ticket
@@ -164,6 +164,12 @@ def take_payment(
             ticket_number = ticket.ticket_number
             record_audit(db, action="create", entity_type="queue_ticket", entity_id=ticket.id, actor_id=actor.id,
                          branch_id=visit.branch_id, summary=f"Issued queue ticket {ticket_number}")
+
+    # Полная оплата терминального визита (follow_up/completed без активных талонов
+    # и открытых операций) закрывает его — долг был последним, что держало визит
+    # открытым. Для нетерминальных визитов (только начавших путь) — no-op.
+    if fully_paid:
+        close_visit_if_done(db, visit)
 
     db.commit()
     db.refresh(payment)

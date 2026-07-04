@@ -37,6 +37,8 @@ which re-derives the assignment state from what actually remains planned.
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -239,3 +241,55 @@ def complete_if_treatment_done(db: Session, visit: Visit) -> None:
     if pending_tx is not None:
         return
     visit.flow_status = "completed"
+    # Лечение завершено и ничего не осталось — если долга/операций нет, закрываем
+    # и биллинговый статус визита (иначе он висит open навсегда).
+    close_visit_if_done(db, visit)
+
+
+# Terminal flow states from which a visit may be auto-closed (its clinical work
+# is over): the appointment finished with nothing left (completed) or with a
+# follow-up plan whose in-clinic work is already done (follow_up).
+_CLOSEABLE_FLOW = ("completed", "follow_up")
+
+
+def close_visit_if_done(db: Session, visit: Visit) -> None:
+    """Авто-закрытие визита: ставит visit.status='completed', когда клиническая и
+    финансовая работа по визиту завершена — flow_status терминальный
+    (completed/follow_up), долга нет (balance<=0), нет активных талонов ЛЮБОЙ
+    дорожки и нет открытых операций.
+
+    Идемпотентно: уже completed/cancelled визит не трогается; вызывается из
+    терминальных переходов (полная оплата, завершение лечения, закрытие/финзакрытие
+    операции), поэтому лишний вызов безопасен.
+    """
+    if visit.status in ("completed", "cancelled"):
+        return
+    if visit.flow_status not in _CLOSEABLE_FLOW:
+        return
+    # Долг закрывает кассир — визит с непогашенным балансом не закрываем.
+    if Decimal(visit.payable) - Decimal(visit.paid_amount) > Decimal("0.00"):
+        return
+    # Local imports: operations/queue import flow (avoid module cycles).
+    from app.models.operation import Operation
+    from app.models.queue import QueueTicket
+
+    still_active = db.execute(
+        select(QueueTicket.id).where(
+            QueueTicket.visit_id == visit.id,
+            QueueTicket.status.in_(("waiting", "called", "serving")),
+        ).limit(1)
+    ).first()
+    if still_active is not None:
+        return
+    open_op = db.execute(
+        select(Operation.id).where(
+            Operation.visit_id == visit.id,
+            Operation.status.in_(Operation.OPEN_STATUSES),
+        ).limit(1)
+    ).first()
+    if open_op is not None:
+        return
+    visit.status = "completed"
+    if visit.closed_at is None:
+        from datetime import datetime, timezone
+        visit.closed_at = datetime.now(timezone.utc)

@@ -27,7 +27,15 @@ abstract class DeviceResult with _$DeviceResult {
   bool get isScan =>
       resultType == 'bscan_image' || resultType == 'biometry' || resultType == 'file';
 
-  /// «OD sph -1.25 cyl -0.50 ax 170» — refraction summary for lists.
+  /// Original filename of an uploaded result (from payload metadata) — so staff
+  /// see WHAT a file result is, not the stored UUID name.
+  String? get originalName {
+    final name = payload?['original_name'];
+    return (name is String && name.isNotEmpty) ? name : null;
+  }
+
+  /// «OD sph -1.25 cyl -0.50 ax 170» — refraction summary for lists. For file
+  /// results shows the original filename instead of the raw UUID stored name.
   String get summary {
     if (isRefraction && payload != null) {
       String eye(String key) {
@@ -38,6 +46,6 @@ abstract class DeviceResult with _$DeviceResult {
 
       return [eye('od'), eye('os')].where((s) => s.isNotEmpty).join(' · ');
     }
-    return filePath ?? resultType;
+    return originalName ?? filePath ?? resultType;
   }
 }

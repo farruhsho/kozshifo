@@ -6,10 +6,10 @@ payments draw down the balance. Totals are kept in sync by the visit service.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Uuid, func
+from sqlalchemy import Date, ForeignKey, Integer, Numeric, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -55,6 +55,9 @@ class Visit(UUIDPKMixin, TimestampMixin, Base):
     priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     priority_reason: Mapped[str | None] = mapped_column(String(128), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    # Дата повторного приёма (recall). Проставляется врачом при завершении приёма
+    # с переводом визита в follow_up; питает список «на повторный приём» (recall).
+    follow_up_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     opened_at: Mapped[datetime] = mapped_column(
         UTCDateTime, server_default=func.now(), nullable=False
     )

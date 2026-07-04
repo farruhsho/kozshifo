@@ -1,7 +1,7 @@
 """Visit DTOs."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -106,6 +106,27 @@ class VisitOut(BaseModel):
     priority: int
     priority_reason: str | None
     notes: str | None
+    # Дата повторного приёма (recall): проставляется при завершении приёма с
+    # переводом в follow_up. NULL, если повторный приём не назначен.
+    follow_up_date: date | None = None
     opened_at: datetime
     closed_at: datetime | None
     items: list[VisitItemOut]
+
+
+class FinishAppointmentRequest(BaseModel):
+    """Тело POST /visits/{id}/finish-appointment (опционально). Когда врач
+    завершает приём с переводом в follow_up — передаёт дату повторного приёма."""
+
+    follow_up_date: date | None = None
+
+
+class RecallEntry(BaseModel):
+    """Строка списка «на повторный приём» (GET /visits/recall)."""
+
+    visit_id: UUID
+    patient_id: UUID
+    patient_name: str
+    phone: str | None = None
+    follow_up_date: date
+    last_visit_date: datetime

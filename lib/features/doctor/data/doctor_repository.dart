@@ -210,9 +210,15 @@ class DoctorRepository {
   /// follow_up/completed и сам закрывает активный талон врача, если он есть. Не
   /// требует активного талона (owner brief 2026-06-20 — «Нет активного талона»
   /// больше не блокирует завершение приёма).
-  Future<void> finishAppointment(String visitId) async {
+  ///
+  /// [followUpDate] (ISO 'YYYY-MM-DD') — опциональная дата повторного приёма;
+  /// когда указана, сервер сохраняет её на визите. Без даты поведение прежнее.
+  Future<void> finishAppointment(String visitId, {String? followUpDate}) async {
     try {
-      await _dio.post('/visits/$visitId/finish-appointment');
+      await _dio.post(
+        '/visits/$visitId/finish-appointment',
+        data: {'follow_up_date': ?followUpDate},
+      );
     } on DioException catch (e) {
       throw ApiException.from(e);
     }

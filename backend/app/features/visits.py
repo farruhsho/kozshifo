@@ -1,7 +1,7 @@
 """Visits (encounters): open a visit, add billed services, close it."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -25,6 +25,8 @@ from app.models.user import User
 from app.models.visit import Visit, VisitItem
 from app.schemas.common import Page
 from app.schemas.visit import (
+    FinishAppointmentRequest,
+    RecallEntry,
     VisitCreate,
     VisitDiscountApply,
     VisitItemAdd,
@@ -196,6 +198,43 @@ def create_visit(
     db.commit()
     db.refresh(visit)
     return visit
+
+
+@router.get("/recall", response_model=list[RecallEntry])
+def list_recall(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("visits.read"))],
+    due_by: date | None = Query(
+        None, description="Вернуть визиты с датой повторного приёма <= due_by "
+                          "(по умолчанию — сегодня по локальной дате)"),
+) -> list[RecallEntry]:
+    """Список визитов «на повторный приём»: flow_status='follow_up',
+    follow_up_date <= due_by и status='open'. Сортировка по follow_up_date asc."""
+    cutoff = due_by if due_by is not None else datetime.now().date()
+    stmt = (
+        select(Visit)
+        .where(
+            Visit.flow_status == "follow_up",
+            Visit.status == "open",
+            Visit.follow_up_date.is_not(None),
+            Visit.follow_up_date <= cutoff,
+        )
+    )
+    # Изоляция по филиалу: не-суперпользователь видит только свой филиал.
+    if not actor.is_superuser and actor.branch_id is not None:
+        stmt = stmt.where(Visit.branch_id == actor.branch_id)
+    rows = db.execute(stmt.order_by(Visit.follow_up_date.asc())).scalars().all()
+    return [
+        RecallEntry(
+            visit_id=v.id,
+            patient_id=v.patient_id,
+            patient_name=v.patient.full_name,
+            phone=v.patient.phone,
+            follow_up_date=v.follow_up_date,
+            last_visit_date=v.opened_at,
+        )
+        for v in rows
+    ]
 
 
 @router.get("/{visit_id}", response_model=VisitOut, dependencies=[Depends(require_permission("visits.read"))])
@@ -475,11 +514,14 @@ def finish_appointment(
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(
         require_any_permission("exams.write", "queue.manage"))],
+    payload: FinishAppointmentRequest | None = None,
 ) -> Visit:
     """Завершить приём врача — переводит визит в follow_up/completed через flow
     engine, работая ОТ ВИЗИТА, а не от наличия активного талона очереди (owner
     brief 2026-06-20: «Нет активного талона» больше не блокирует завершение).
-    Если активный талон врача есть — закрывает его (убирает с табло)."""
+    Если активный талон врача есть — закрывает его (убирает с табло).
+    Опциональный follow_up_date сохраняется на визите при переводе в follow_up
+    (дата повторного приёма)."""
     visit = db.get(Visit, visit_id)
     if visit is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Visit not found")
@@ -502,6 +544,11 @@ def finish_appointment(
                      actor_id=actor.id, branch_id=visit.branch_id,
                      summary=f"Ticket {ticket.ticket_number} -> done (приём завершён)")
     advance_flow(db, visit, "appointment_finished")  # follow_up | completed
+    # Дата повторного приёма сохраняется только когда визит реально ушёл в
+    # follow_up (что-то назначено). Приём «в никуда» (completed) даты не несёт.
+    if payload is not None and payload.follow_up_date is not None \
+            and visit.flow_status == "follow_up":
+        visit.follow_up_date = payload.follow_up_date
     record_audit(db, action="finish_appointment", entity_type="visit", entity_id=visit.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Приём завершён по визиту {visit.visit_no}")

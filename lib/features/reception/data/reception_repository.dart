@@ -124,6 +124,17 @@ class ReceptionRepository {
     }
   }
 
+  /// Ручное закрытие визита оператором (терминальный flow + долга нет).
+  /// Авто-закрытие делает бэкенд; кнопка нужна, когда авто-условие не
+  /// сработало / для явного действия ресепшена.
+  Future<void> closeVisit(String visitId) async {
+    try {
+      await _dio.post('/visits/$visitId/close');
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   Future<PaymentResult> takePayment({
     required String visitId,
     required String amount,

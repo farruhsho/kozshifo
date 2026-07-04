@@ -143,7 +143,7 @@ def test_set_password_unknown_user_404(client, auth):
 # change silently reverts to repo-public values at the next restart.
 
 def test_seed_rerun_preserves_changed_director_password(client, auth):
-    from sqlalchemy import select
+    from sqlalchemy import select, update
 
     from app.core.database import SessionLocal
     from app.models.user import User
@@ -152,9 +152,11 @@ def test_seed_rerun_preserves_changed_director_password(client, auth):
 
     db = SessionLocal()
     try:
-        director_id = str(db.execute(
-            select(User.id).where(User.email == DIRECTOR_EMAIL)
-        ).scalar_one())
+        director = db.execute(
+            select(User).where(User.email == DIRECTOR_EMAIL)
+        ).scalar_one()
+        director_id = str(director.id)
+        original_token_version = director.token_version
     finally:
         db.close()
 
@@ -169,10 +171,23 @@ def test_seed_rerun_preserves_changed_director_password(client, auth):
         # …and the owner's password keeps working.
         assert _login(client, DIRECTOR_EMAIL, new).status_code == 200
     finally:
-        # Restore the well-known test password for the rest of the session.
+        # Restore the well-known test password AND the original token_version, so
+        # the shared session-scoped director token (minted with the original
+        # version) keeps validating for the rest of the suite — set-password bumps
+        # token_version to revoke old sessions, which would otherwise 401 every
+        # downstream test that reuses `director_auth`.
         restore = client.post(f"{API}/users/{director_id}/set-password", headers=auth,
                               json={"password": DIRECTOR_PASSWORD})
         assert restore.status_code == 204, restore.text
+        db = SessionLocal()
+        try:
+            db.execute(
+                update(User).where(User.email == DIRECTOR_EMAIL)
+                .values(token_version=original_token_version)
+            )
+            db.commit()
+        finally:
+            db.close()
     assert _login(client, DIRECTOR_EMAIL, DIRECTOR_PASSWORD).status_code == 200
 
 

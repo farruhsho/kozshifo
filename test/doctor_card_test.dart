@@ -13,6 +13,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kozshifo/features/auth/application/auth_controller.dart';
 import 'package:kozshifo/features/auth/domain/auth_user.dart';
+import 'package:kozshifo/features/devices/data/devices_repository.dart';
+import 'package:kozshifo/features/devices/domain/device_result.dart';
 import 'package:kozshifo/features/doctor/data/doctor_repository.dart';
 import 'package:kozshifo/features/doctor/domain/exam_template.dart';
 import 'package:kozshifo/features/doctor/domain/eye_exam.dart';
@@ -25,6 +27,30 @@ import 'package:kozshifo/features/doctor/presentation/patient_info_card.dart';
 import 'package:kozshifo/features/patients/data/patients_repository.dart';
 import 'package:kozshifo/features/patients/domain/patient.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// Records the last request and replies with a canned body — no sockets.
+class _MockAdapter implements HttpClientAdapter {
+  RequestOptions? lastOptions;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<dynamic>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    lastOptions = options;
+    return ResponseBody.fromString(
+      '{}',
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/json'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
 
 const _patient = Patient(
   id: 'p1',
@@ -52,15 +78,19 @@ const _visit = VisitSummary(
 
 /// Doctor with full clinical permissions; build() is synchronous → no network.
 class _FakeAuthController extends AuthController {
+  _FakeAuthController([this._permissions = const ['exams.write']]);
+
+  final List<String> _permissions;
+
   @override
-  AuthState build() => const AuthState(
+  AuthState build() => AuthState(
     AuthStatus.authenticated,
     AuthUser(
       id: 'u1',
       email: 'doctor@kozshifo.uz',
       fullName: 'Врач',
       branchId: 'br-1',
-      permissions: ['exams.write'],
+      permissions: _permissions,
     ),
   );
 }
@@ -107,18 +137,92 @@ class _FakeDoctorRepository extends DoctorRepository {
 
   @override
   Future<Uint8List> cardPdf(String visitId) async => Uint8List(0);
+
+  bool finishCalled = false;
+  String? finishFollowUpDate;
+
+  @override
+  Future<void> finishAppointment(String visitId, {String? followUpDate}) async {
+    finishCalled = true;
+    finishFollowUpDate = followUpDate;
+  }
 }
 
-Widget _harness() => ProviderScope(
+/// One scan result linked to v1; records unlinkResult calls — no Dio traffic.
+class _FakeDevicesRepository extends DevicesRepository {
+  _FakeDevicesRepository() : super(Dio());
+
+  String? unlinkedId;
+
+  @override
+  Future<List<DeviceResult>> resultsForVisit(String visitId) async => const [
+    DeviceResult(
+      id: 'dr1',
+      deviceId: 'ab1',
+      visitId: 'v1',
+      resultType: 'bscan_image',
+      payload: {'original_name': 'scan.jpg'},
+      filePath: '/files/dr1.jpg',
+      measuredAt: '2026-06-13T09:05:00Z',
+      source: 'file',
+    ),
+  ];
+
+  @override
+  Future<DeviceResult> unlinkResult(String resultId) async {
+    unlinkedId = resultId;
+    return const DeviceResult(
+      id: 'dr1',
+      deviceId: 'ab1',
+      resultType: 'bscan_image',
+      measuredAt: '2026-06-13T09:05:00Z',
+      source: 'file',
+    );
+  }
+}
+
+Widget _harness({
+  _FakeDoctorRepository? doctor,
+  _FakeDevicesRepository? devices,
+  List<String> permissions = const ['exams.write'],
+}) => ProviderScope(
   overrides: [
-    authControllerProvider.overrideWith(_FakeAuthController.new),
+    authControllerProvider.overrideWith(() => _FakeAuthController(permissions)),
     patientsRepositoryProvider.overrideWithValue(_FakePatientsRepository()),
-    doctorRepositoryProvider.overrideWithValue(_FakeDoctorRepository()),
+    doctorRepositoryProvider.overrideWithValue(
+      doctor ?? _FakeDoctorRepository(),
+    ),
+    if (devices != null)
+      devicesRepositoryProvider.overrideWithValue(devices),
   ],
   child: const MaterialApp(home: PatientCardScreen(patientId: 'p1')),
 );
 
 void main() {
+  group('DoctorRepository.finishAppointment', () {
+    late _MockAdapter adapter;
+    late DoctorRepository repo;
+
+    setUp(() {
+      adapter = _MockAdapter();
+      final dio = Dio(BaseOptions(baseUrl: 'http://x'))
+        ..httpClientAdapter = adapter;
+      repo = DoctorRepository(dio);
+    });
+
+    test('with a date sends follow_up_date', () async {
+      await repo.finishAppointment('v1', followUpDate: '2026-07-11');
+      expect(adapter.lastOptions!.path, '/visits/v1/finish-appointment');
+      expect(adapter.lastOptions!.method, 'POST');
+      expect(adapter.lastOptions!.data, {'follow_up_date': '2026-07-11'});
+    });
+
+    test('without a date omits follow_up_date', () async {
+      await repo.finishAppointment('v1');
+      expect(adapter.lastOptions!.data, isNot(contains('follow_up_date')));
+    });
+  });
+
   group('PatientInfoCard.ageFromBirthDate', () {
     test('full years counted, before/after birthday', () {
       final now = DateTime(2026, 6, 13);
@@ -174,6 +278,132 @@ void main() {
       // РЕШЕНИЕ ВРАЧА column: conclusion + save.
       expect(find.text('Ташхис / Тавсия (заключение)'), findsOneWidget);
       expect(find.text('Сохранить осмотр'), findsOneWidget);
+    });
+  });
+
+  group('follow-up date on finish appointment', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    Future<_FakeDoctorRepository> openScreen(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final doctor = _FakeDoctorRepository();
+      await tester.pumpWidget(
+        _harness(
+          doctor: doctor,
+          permissions: const ['exams.write', 'queue.manage'],
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      return doctor;
+    }
+
+    testWidgets('quick chip sends follow_up_date', (tester) async {
+      final doctor = await openScreen(tester);
+      await tester.tap(find.text('Завершить приём'));
+      await tester.pumpAndSettle();
+
+      // Dialog opened with the quick chips.
+      expect(find.text('Повторный приём'), findsOneWidget);
+      await tester.tap(find.text('Через 1 нед'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(doctor.finishCalled, isTrue);
+      // A concrete ISO date was propagated (exact day depends on «now»).
+      expect(doctor.finishFollowUpDate, matches(r'^\d{4}-\d{2}-\d{2}$'));
+    });
+
+    testWidgets('«Без повтора» finishes without a date', (tester) async {
+      final doctor = await openScreen(tester);
+      await tester.tap(find.text('Завершить приём'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Без повтора'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(doctor.finishCalled, isTrue);
+      expect(doctor.finishFollowUpDate, isNull);
+    });
+
+    testWidgets('«Отмена» aborts — finish not called', (tester) async {
+      final doctor = await openScreen(tester);
+      await tester.tap(find.text('Завершить приём'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Отмена'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(doctor.finishCalled, isFalse);
+    });
+  });
+
+  group('unlink a mis-linked device result', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    Future<_FakeDevicesRepository> openScreen(
+      WidgetTester tester, {
+      required List<String> permissions,
+    }) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final devices = _FakeDevicesRepository();
+      await tester.pumpWidget(
+        _harness(devices: devices, permissions: permissions),
+      );
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      return devices;
+    }
+
+    testWidgets('«Отвязать» hidden without device_results.create', (
+      tester,
+    ) async {
+      await openScreen(
+        tester,
+        permissions: const ['exams.write', 'device_results.read'],
+      );
+      // The scan row renders (read right) but no unlink action is offered.
+      expect(find.text('scan.jpg'), findsOneWidget);
+      expect(find.byIcon(Icons.link_off), findsNothing);
+    });
+
+    testWidgets('«Отвязать» confirms then calls unlinkResult', (tester) async {
+      final devices = await openScreen(
+        tester,
+        permissions: const [
+          'exams.write',
+          'device_results.read',
+          'device_results.create',
+        ],
+      );
+
+      // The unlink affordance shows on the linked scan.
+      expect(find.byIcon(Icons.link_off), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.link_off));
+      await tester.pumpAndSettle();
+
+      // Confirmation dialog.
+      expect(
+        find.text(
+          'Отвязать результат от визита? Он вернётся в список несвязанных.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Отвязать'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(devices.unlinkedId, 'dr1');
     });
   });
 }

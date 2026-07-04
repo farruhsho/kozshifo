@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/api_exception.dart';
 import '../../../core/utils/file_saver.dart';
 import '../../../core/utils/flow_labels.dart';
 import '../../../core/utils/formatters.dart';
@@ -25,6 +26,22 @@ import '../domain/timeline_event.dart';
 import '../domain/visit_diagnosis.dart';
 import '../domain/visit_summary.dart';
 import 'patient_info_card.dart';
+
+/// Результат диалога выбора даты повторного приёма: [date] == null означает
+/// «Без повтора». [isoDate] — 'YYYY-MM-DD' для follow_up_date или null.
+class _FollowUpChoice {
+  const _FollowUpChoice(this.date);
+
+  final DateTime? date;
+
+  String? get isoDate {
+    final d = date;
+    if (d == null) return null;
+    final mm = d.month.toString().padLeft(2, '0');
+    final dd = d.day.toString().padLeft(2, '0');
+    return '${d.year}-$mm-$dd';
+  }
+}
 
 /// Слитлампово-структурные поля формы 025-8, в порядке бланка.
 const _structureFields = <(String, String)>[
@@ -337,12 +354,20 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
   /// визит в follow_up/completed и сам закрывает активный талон врача, если он
   /// есть. Больше не зависит от наличия активного талона (owner brief
   /// 2026-06-20: ошибка «Нет активного талона» устранена).
+  ///
+  /// Перед завершением врач опционально указывает дату повторного приёма
+  /// (быстрые чипы 1нед/2нед/1мес, выбор даты, либо «Без повтора»). Дата — или
+  /// null — прокидывается в finish-appointment как follow_up_date.
   Future<void> _finishAppointment() async {
     final visitId = _visitId;
     if (visitId == null) return;
+    final choice = await _pickFollowUpDate();
+    if (choice == null || !mounted) return; // отмена диалога
     setState(() => _finishing = true);
     try {
-      await ref.read(doctorRepositoryProvider).finishAppointment(visitId);
+      await ref
+          .read(doctorRepositoryProvider)
+          .finishAppointment(visitId, followUpDate: choice.isoDate);
       if (!mounted) return;
       ref.invalidate(patientVisitsProvider(widget.patientId));
       ref.invalidate(patientTimelineProvider(widget.patientId));
@@ -352,6 +377,76 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     } finally {
       if (mounted) setState(() => _finishing = false);
     }
+  }
+
+  /// Компактный выбор даты повторного приёма перед завершением приёма.
+  /// Возвращает `null` при отмене диалога, `_FollowUpChoice(null)` для «Без
+  /// повтора» и `_FollowUpChoice(date)` с выбранной датой.
+  Future<_FollowUpChoice?> _pickFollowUpDate() {
+    return showDialog<_FollowUpChoice>(
+      context: context,
+      builder: (ctx) {
+        final today = DateTime.now();
+        DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+        void pick(DateTime d) =>
+            Navigator.of(ctx).pop(_FollowUpChoice(dateOnly(d)));
+        return AlertDialog(
+          title: const Text('Повторный приём'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Назначить дату повторного приёма?'),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ActionChip(
+                    label: const Text('Через 1 нед'),
+                    onPressed: () => pick(today.add(const Duration(days: 7))),
+                  ),
+                  ActionChip(
+                    label: const Text('Через 2 нед'),
+                    onPressed: () => pick(today.add(const Duration(days: 14))),
+                  ),
+                  ActionChip(
+                    label: const Text('Через 1 мес'),
+                    onPressed: () => pick(
+                      DateTime(today.year, today.month + 1, today.day),
+                    ),
+                  ),
+                  ActionChip(
+                    avatar: const Icon(Icons.event_outlined, size: 18),
+                    label: const Text('Выбрать дату'),
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: ctx,
+                        initialDate: today.add(const Duration(days: 7)),
+                        firstDate: today,
+                        lastDate: DateTime(today.year + 2),
+                      );
+                      if (picked != null && ctx.mounted) pick(picked);
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Отмена'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(ctx).pop(const _FollowUpChoice(null)),
+              child: const Text('Без повтора'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _snack(String message, {bool error = false}) {
@@ -1610,6 +1705,68 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
     }
   }
 
+  /// Отвязать ошибочно прикреплённый результат: он вернётся в список
+  /// несвязанных и его можно будет привязать к правильному визиту (медбезопасность).
+  Future<void> _unlink(DeviceResult r) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Отвязать результат'),
+        content: const Text(
+          'Отвязать результат от визита? Он вернётся в список несвязанных.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Отвязать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ref.read(devicesRepositoryProvider).unlinkResult(r.id);
+      if (!mounted) return;
+      ref.invalidate(visitDeviceResultsProvider(widget.visitId));
+      ref.invalidate(unlinkedDeviceResultsProvider);
+      _snack('Результат отвязан');
+    } on ApiException catch (e) {
+      _snack('$e', error: true);
+    } catch (e) {
+      _snack('$e', error: true);
+    }
+  }
+
+  /// Действия строки результата: превью (если есть файл) и «Отвязать»
+  /// (только при праве device_results.create).
+  Widget? _trailing(DeviceResult r, bool canUnlink) {
+    final preview = r.filePath == null
+        ? null
+        : (_previewingId == r.id
+              ? const SizedBox(
+                  height: 16,
+                  width: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.visibility_outlined));
+    if (!canUnlink) return preview;
+    final unlink = IconButton(
+      icon: const Icon(Icons.link_off),
+      tooltip: 'Отвязать от визита',
+      visualDensity: VisualDensity.compact,
+      onPressed: () => _unlink(r),
+    );
+    if (preview == null) return unlink;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [preview, const SizedBox(width: 8), unlink],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final results = ref.watch(visitDeviceResultsProvider(widget.visitId));
@@ -1645,17 +1802,7 @@ class _AbScanResultsState extends ConsumerState<_AbScanResults> {
                     subtitle: Text(
                       '${r.resultType} · ${r.measuredAt.replaceFirst('T', ' ').split('.').first}',
                     ),
-                    trailing: r.filePath == null
-                        ? null
-                        : (_previewingId == r.id
-                              ? const SizedBox(
-                                  height: 16,
-                                  width: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.visibility_outlined)),
+                    trailing: _trailing(r, canUpload),
                     onTap: r.filePath == null ? null : () => _openPreview(r),
                   ),
               ],

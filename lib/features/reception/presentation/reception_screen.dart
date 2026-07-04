@@ -332,6 +332,26 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
   }
 
+  /// Ручное закрытие визита: терминальный flow (completed/follow_up) и долга
+  /// нет. Авто-закрытие делает бэкенд, но явная кнопка нужна оператору, когда
+  /// авто-условие не сработало.
+  Future<void> _closeVisit() async {
+    final visit = _visit;
+    if (visit == null) return;
+    setState(() => _busy = true);
+    try {
+      await ref.read(receptionRepositoryProvider).closeVisit(visit.id);
+      final patient = _patient;
+      if (patient != null) ref.invalidate(patientSummaryProvider(patient.id));
+      _snack('Визит ${visit.visitNo} закрыт');
+      _reset();
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   /// «ЭКСТРЕННО» — mark/clear emergency on the open visit. The minted ticket
   /// inherits the priority + reason (jumps the queue, flags «ЭКСТРЕННЫЙ»).
   Future<void> _toggleEmergency() async {
@@ -1056,6 +1076,17 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
   static bool _hasDiscount(ReceptionVisit v) =>
       v.discountPercent != null || v.discountAmount != null;
 
+  /// Терминальный визит без долга — можно закрыть вручную (авто-закрытие тоже
+  /// делает бэкенд). flow_status: приём завершён / переведён в повторный приём,
+  /// баланс <= 0.
+  static bool _canCloseVisit(ReceptionVisit v) {
+    if (v.status != 'open') return false;
+    if (v.flowStatus != 'completed' && v.flowStatus != 'follow_up') {
+      return false;
+    }
+    return (double.tryParse(v.balance) ?? 0) <= 0;
+  }
+
   Widget _moneyRow(String label, String value, {bool bold = false}) {
     final style = bold
         ? Theme.of(
@@ -1244,6 +1275,15 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
           icon: const Icon(Icons.cancel_outlined),
           label: const Text('Отменить визит'),
         ),
+        // Ручное закрытие: приём завершён / переведён в повторный, долга нет.
+        if (canBill && _canCloseVisit(visit)) ...[
+          const SizedBox(height: 8),
+          FilledButton.tonalIcon(
+            onPressed: _busy ? null : _closeVisit,
+            icon: const Icon(Icons.check_circle_outline),
+            label: const Text('Закрыть визит'),
+          ),
+        ],
       ],
     ]);
   }

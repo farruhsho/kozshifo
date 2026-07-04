@@ -96,6 +96,17 @@ class DevicesRepository {
     }
   }
 
+  /// Detach a result linked to the WRONG visit/patient — it becomes an orphan
+  /// again so it can be re-linked to the correct visit.
+  Future<DeviceResult> unlinkResult(String resultId) async {
+    try {
+      final resp = await _dio.post('/device-results/$resultId/unlink');
+      return DeviceResult.fromJson(resp.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Raw bytes of a previously uploaded result file (for preview/download).
   Future<Uint8List> resultFileBytes(String resultId) async {
     try {

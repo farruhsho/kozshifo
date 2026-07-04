@@ -341,6 +341,36 @@ def link_device_result(
     return result
 
 
+@router.post("/device-results/{result_id}/unlink", response_model=DeviceResultOut,
+             dependencies=[Depends(require_permission("device_results.create"))])
+def unlink_device_result(
+    result_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("device_results.create"))],
+) -> DeviceResult:
+    """Detach a device result that was linked to the WRONG visit/patient — patient safety:
+    it becomes an orphan again (visit_id/patient_id NULL) so it can be re-linked to the
+    right visit via POST /device-results/{id}/link. Only a LINKED result can be unlinked."""
+    result = db.get(DeviceResult, result_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device result not found")
+    if result.visit_id is None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Result is not linked to a visit")
+    device = _get_or_404_device(db, result.device_id)
+    if not actor.is_superuser and actor.branch_id is not None and \
+            device.branch_id is not None and device.branch_id != actor.branch_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Device result not found")
+    result.visit_id = None
+    result.patient_id = None
+    record_audit(db, action="update", entity_type="device_result", entity_id=result.id,
+                 actor_id=actor.id, branch_id=device.branch_id,
+                 summary=f"Unlinked device result ({result.result_type}) from visit")
+    db.commit()
+    db.refresh(result)
+    return result
+
+
 @router.post("/visits/{visit_id}/exam/apply-refraction", response_model=EyeExamOut)
 def apply_refraction(
     visit_id: UUID,

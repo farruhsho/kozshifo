@@ -39,6 +39,7 @@ from app.core.database import get_db
 from app.core.dates import business_today
 from app.core.deps import CurrentUser, require_permission
 from app.core.devices.hikvision import HikvisionClient, TerminalError, TerminalUnreachable
+from app.core.visibility import caller_is_owner, owner_user_id_set, owner_user_ids
 from app.core.files import MAX_FILE_BYTES, save_upload
 from app.core.storage import upload_face_photo
 from app.models.attendance import AttendanceEvent
@@ -225,16 +226,19 @@ def configure_push(
 @router.get(
     "/enrollment",
     response_model=list[EnrollmentRow],
-    dependencies=[Depends(require_permission("access_control.read"))],
 )
 def list_enrollment(
     db: Annotated[Session, Depends(get_db)],
+    viewer: Annotated[CurrentUser, Depends(require_permission("access_control.read"))],
     only_active: bool = Query(True),
 ) -> list[EnrollmentRow]:
     """Every staff member with their Face ID enrollment status."""
     stmt = select(User)
     if only_active:
         stmt = stmt.where(User.is_active.is_(True))
+    # Ghost owner: excluded from the enrollment list for every non-owner viewer.
+    if not caller_is_owner(viewer, owner_user_id_set(db)):
+        stmt = stmt.where(User.id.not_in(owner_user_ids()))
     users = db.execute(stmt.order_by(User.full_name.asc())).scalars().all()
     return [
         EnrollmentRow(

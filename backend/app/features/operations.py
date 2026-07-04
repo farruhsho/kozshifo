@@ -19,7 +19,7 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.dates import local_day_bounds_utc
 from app.core.deps import CurrentUser, require_any_permission, require_permission
-from app.core.flow import advance_flow, recompute_plan
+from app.core.flow import advance_flow, close_visit_if_done, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, on_hand, write_off_fefo
 from app.core.visibility import owner_user_ids
@@ -621,6 +621,8 @@ def financial_close_operation(
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Financially closed operation {operation.type_name} on visit "
                          f"{visit.visit_no} (price {operation.price})")
+    if visit is not None:
+        close_visit_if_done(db, visit)
     db.commit()
     db.refresh(operation)
     return operation
@@ -804,6 +806,8 @@ def complete_operation(
     record_audit(db, action="complete", entity_type="operation", entity_id=operation.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Completed operation {operation.type_name} on visit {visit.visit_no}")
+    if visit is not None:
+        close_visit_if_done(db, visit)
     db.commit()
     db.refresh(operation)
     return operation

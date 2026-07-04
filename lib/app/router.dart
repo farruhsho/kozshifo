@@ -30,6 +30,7 @@ import '../features/patients/presentation/patient_visits_screen.dart';
 import '../features/patients/presentation/patients_screen.dart';
 import '../features/priem/presentation/priem_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
+import '../features/recall/presentation/recall_screen.dart';
 import '../features/reception/presentation/reception_screen.dart';
 import '../features/splash/splash_screen.dart';
 
@@ -55,6 +56,9 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (_, _) => const ReceptionScreen(),
           ),
           GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
+          // «Повторные приёмы» — пациенты в follow_up, кому пора вернуться.
+          // Gate наследуется от destination (visits.read) в redirect guard.
+          GoRoute(path: '/recall', builder: (_, _) => const RecallScreen()),
           // Объединённый кабинет врача «Приём»: вкладки «Моя очередь» (свои
           // V-пациенты) + «Лечение». Заменяет для врача /my-queue + /treatment-queue.
           GoRoute(path: '/priem', builder: (_, _) => const PriemScreen()),

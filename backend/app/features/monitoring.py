@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.core import monitoring
 from app.core.database import get_db
 from app.core.dates import business_today, local_day_bounds_utc
-from app.core.deps import require_permission
+from app.core.deps import CurrentUser, require_permission
+from app.core.visibility import caller_is_owner, owner_user_id_set
 from app.models.user import User
 from app.models.user_session import UserSession
 
@@ -49,10 +50,18 @@ class SessionOut(BaseModel):
     online: bool
 
 
-@router.get("/monitoring", response_model=MonitoringOut,
-            dependencies=[Depends(require_permission("audit.read"))])
-def system_monitoring(db: Annotated[Session, Depends(get_db)]) -> MonitoringOut:
+@router.get("/monitoring", response_model=MonitoringOut)
+def system_monitoring(
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("audit.read"))],
+) -> MonitoringOut:
+    # Ghost owner: hidden from every non-owner viewer (himself excepted).
+    owner_ids = owner_user_id_set(db)
+    hide = None if caller_is_owner(actor, owner_ids) else owner_ids
+
     online = monitoring.online_user_ids()
+    if hide:
+        online = [uid for uid in online if uid not in hide]
     today_start = local_day_bounds_utc(business_today())[0]
     logins_today = db.execute(
         select(func.count()).select_from(UserSession)
@@ -76,15 +85,21 @@ def system_monitoring(db: Annotated[Session, Depends(get_db)]) -> MonitoringOut:
     )
 
 
-@router.get("/sessions", response_model=list[SessionOut],
-            dependencies=[Depends(require_permission("audit.read"))])
+@router.get("/sessions", response_model=list[SessionOut])
 def list_sessions(
     db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("audit.read"))],
     limit: int = Query(100, ge=1, le=500),
 ) -> list[SessionOut]:
     """Recent login sessions (newest first), with an «online now» flag."""
+    owner_ids = owner_user_id_set(db)
+    hide = None if caller_is_owner(actor, owner_ids) else owner_ids
+
+    stmt = select(UserSession)
+    if hide:
+        stmt = stmt.where(UserSession.user_id.not_in(hide))
     rows = db.execute(
-        select(UserSession).order_by(UserSession.started_at.desc()).limit(limit)
+        stmt.order_by(UserSession.started_at.desc()).limit(limit)
     ).scalars().all()
     online = monitoring.online_user_ids()
     uids = {r.user_id for r in rows}

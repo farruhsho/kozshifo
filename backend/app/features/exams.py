@@ -191,6 +191,42 @@ def record_diagnostic_conclusion(
     return conclusion
 
 
+@router.delete("/visits/{visit_id}/diagnostic-conclusion/{conclusion_id}",
+               status_code=status.HTTP_204_NO_CONTENT)
+def delete_diagnostic_conclusion(
+    visit_id: UUID,
+    conclusion_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("diagnoses.record"))],
+) -> None:
+    """Medical-safety amend: let a diagnostician remove a WRONG conclusion they
+    themselves just recorded on THIS visit, under `diagnoses.record` (no need for
+    the doctor-only `exams.write`). Guards keep it narrow:
+
+    * only the record's own author (`doctor_id == actor.id`) — never someone
+      else's / the doctor's conclusion (404, indistinguishable from «not found»);
+    * only while the visit is still live (not completed/cancelled) — a closed
+      legal document isn't retro-edited.
+
+    Audited as `delete` so the removal is traceable."""
+    visit = get_or_404_visit(db, visit_id)
+    conclusion = db.get(VisitDiagnosis, conclusion_id)
+    if conclusion is None or conclusion.visit_id != visit_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conclusion not found")
+    # Only the author may amend their own record; hide others' as «not found».
+    if conclusion.doctor_id != actor.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conclusion not found")
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "Визит завершён — заключение изменить нельзя")
+    summary = f"Removed own conclusion «{conclusion.diagnosis}» from visit {visit.visit_no}"
+    db.delete(conclusion)
+    record_audit(db, action="delete", entity_type="visit_diagnosis",
+                 entity_id=conclusion_id, actor_id=actor.id, branch_id=visit.branch_id,
+                 summary=summary)
+    db.commit()
+
+
 @router.delete("/diagnoses/{diagnosis_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_diagnosis(
     diagnosis_id: UUID,

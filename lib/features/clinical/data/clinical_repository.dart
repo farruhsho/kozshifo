@@ -47,13 +47,16 @@ typedef Surgeon = ({
 });
 
 /// End-of-day operations P&L for one local day: revenue − COGS (consumables) −
-/// operation expenses = profit. Money fields are decimal strings (server owns
-/// the math); [operationsCount] is the number of operations counted that day.
+/// surgeon fees − operation expenses = profit. Money fields are decimal strings
+/// (server owns the math); [operationsCount] is the number of operations
+/// counted that day; [surgeonFees] is the Σ of per-op surgeon pay
+/// (percent-of-settled-price or fixed-per-op).
 typedef OperationDayPnl = ({
   int operationsCount,
   String revenue,
   String cogs,
   String expenses,
+  String surgeonFees,
   String profit,
 });
 
@@ -191,6 +194,8 @@ class ClinicalRepository {
         revenue: data['revenue'] as String,
         cogs: data['cogs'] as String,
         expenses: data['expenses'] as String,
+        // Absent on older backends/fixtures → no fees.
+        surgeonFees: data['surgeon_fees_total'] as String? ?? '0',
         profit: data['profit'] as String,
       );
     } on DioException catch (e) {

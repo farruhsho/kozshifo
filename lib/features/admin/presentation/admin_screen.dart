@@ -1726,6 +1726,10 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
       ),
       actions: [
         TextButton(
+          onPressed: _saving ? null : () => _resetPassword(context),
+          child: const Text('Сбросить пароль'),
+        ),
+        TextButton(
           onPressed: _saving ? null : () => Navigator.of(context).pop(),
           child: const Text('Отмена'),
         ),
@@ -1738,6 +1742,130 @@ class _UserEditDialogState extends ConsumerState<_UserEditDialog> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _resetPassword(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => _PasswordResetDialog(user: widget.user),
+    );
+    if (ok == true && context.mounted) {
+      _showSnack(context, 'Пароль обновлён: ${widget.user.fullName}');
+    }
+  }
+}
+
+/// Сброс пароля сотрудника: новый пароль (мин. 8 символов) + подтверждение.
+class _PasswordResetDialog extends ConsumerStatefulWidget {
+  const _PasswordResetDialog({required this.user});
+
+  final StaffUser user;
+
+  @override
+  ConsumerState<_PasswordResetDialog> createState() =>
+      _PasswordResetDialogState();
+}
+
+class _PasswordResetDialogState extends ConsumerState<_PasswordResetDialog> {
+  final _password = TextEditingController();
+  final _confirm = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  String? get _passwordError {
+    if (_password.text.isEmpty) return null;
+    if (_password.text.length < 8) return 'Минимум 8 символов';
+    return null;
+  }
+
+  String? get _confirmError {
+    if (_confirm.text.isEmpty) return null;
+    if (_confirm.text != _password.text) return 'Пароли не совпадают';
+    return null;
+  }
+
+  bool get _canSave =>
+      !_saving &&
+      _password.text.length >= 8 &&
+      _confirm.text == _password.text;
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      await ref
+          .read(adminRepositoryProvider)
+          .setUserPassword(widget.user.id, _password.text);
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        _showSnack(context, e.toString(), error: true);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Сбросить пароль'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${widget.user.fullName} · ${widget.user.email}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _password,
+              obscureText: true,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Новый пароль',
+                hintText: 'минимум 8 символов',
+                errorText: _passwordError,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _confirm,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: 'Подтверждение пароля',
+                errorText: _confirmError,
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _canSave ? _save : null,
+          child: _saving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Сбросить'),
         ),
       ],
     );

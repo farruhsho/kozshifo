@@ -24,7 +24,9 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(subject: str, extra_claims: dict | None = None) -> str:
+def create_access_token(
+    subject: str, version: int = 0, extra_claims: dict | None = None
+) -> str:
     now = datetime.now(timezone.utc)
     payload: dict = {
         "sub": subject,
@@ -34,17 +36,20 @@ def create_access_token(subject: str, extra_claims: dict | None = None) -> str:
         # iat has 1-second resolution — without jti two logins in the same
         # second mint byte-identical tokens; jti also enables revocation later.
         "jti": uuid.uuid4().hex,
+        # Token-revocation version — must match User.token_version at check time.
+        "ver": version,
     }
     if extra_claims:
         payload.update(extra_claims)
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token(subject: str, version: int = 0) -> str:
     """Long-lived JWT used solely to mint new token pairs at /auth/refresh.
 
     Carries a `jti` so every refresh token is unique (rotation-friendly, and a
-    future revocation list can key on it).
+    future revocation list can key on it) and a `ver` claim tying it to the
+    user's current token_version (a password reset bumps that → this token 401s).
     """
     now = datetime.now(timezone.utc)
     payload: dict = {
@@ -53,6 +58,7 @@ def create_refresh_token(subject: str) -> str:
         "exp": now + timedelta(days=settings.refresh_token_expire_days),
         "type": "refresh",
         "jti": uuid.uuid4().hex,
+        "ver": version,
     }
     return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 

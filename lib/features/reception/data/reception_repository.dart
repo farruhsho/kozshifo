@@ -187,17 +187,21 @@ class ReceptionRepository {
 
   /// Issues a «талон на лечение» — queues the patient onto the TV board's
   /// «Лечение» track for a course of treatment. The room may be omitted (the
-  /// backend mints the ticket without a fixed room). Returns the ticket number
-  /// (e.g. «Л-001»).
+  /// backend mints the ticket without a fixed room). [visitId] ties the ticket
+  /// to the patient's visit only when an open visit is on screen; otherwise it
+  /// is omitted and the backend picks the visit itself. Returns the ticket
+  /// number (e.g. «Л-001»).
   Future<String> issueTreatmentTicket({
     required String patientId,
     required String branchId,
+    String? visitId,
     String? room,
   }) async {
     try {
       final resp = await _dio.post('/queue/treatment-ticket', data: {
         'patient_id': patientId,
         'branch_id': branchId,
+        'visit_id': ?visitId,
         'room': ?room,
       });
       return resp.data['ticket_number'] as String;

@@ -393,6 +393,16 @@ class AdminRepository {
     }
   }
 
+  /// Сброс пароля сотрудника (POST /users/{id}/set-password, min 8 символов).
+  /// Единственный способ сменить пароль после создания аккаунта.
+  Future<void> setUserPassword(String id, String password) async {
+    try {
+      await _dio.post('/users/$id/set-password', data: {'password': password});
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   // ── Roles (display + assignment only) ─────────────────────────────────────
 
   Future<List<AdminRole>> roles() async {

@@ -90,6 +90,7 @@ Copy `.env.example` → `.env`. Key settings:
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | unset | enable Telegram notifications (otherwise log-only) |
 | `CORS_ORIGINS` | localhost dev ports | comma-separated |
 | `SEED_ON_STARTUP` | `true` | idempotent; safe to leave on |
+| `SEED_DEMO_STAFF` | `true` | demo quick-login accounts (repo-public passwords). **Must be `false` in production** — the boot guard refuses to start otherwise |
 
 ## Project layout
 
@@ -154,7 +155,8 @@ docker compose up --build        # api on :8000 + Postgres 16 (named volume)
 
 A repo-root `.env` **must** define `SECRET_KEY` and `SEED_DIRECTOR_PASSWORD`
 (compose fails fast without them, and the app re-validates at boot — the
-repo-committed defaults never run in production). `POSTGRES_PASSWORD` is
+repo-committed defaults never run in production; compose already sets
+`SEED_DEMO_STAFF=false` for the same reason). `POSTGRES_PASSWORD` is
 optional but must be URL-safe (it is spliced into the DSN). See
 `backend/.env.example`. **Note:** authored statically; the dev machine has no
 Docker, so run the first real build on a Docker-capable host.

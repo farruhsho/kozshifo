@@ -64,6 +64,12 @@ FLOW_EVENTS: dict[str, str] = {
 # patient leaves with a plan -> follow_up, not completed.
 _ASSIGNED = ("treatment_assigned", "surgery_assigned", "surgery_scheduled", "surgery_completed")
 
+# Pre-doctor states: the patient has not yet reached (let alone been seen by) the
+# doctor. A stray treatment ticket must never let complete_if_treatment_done close
+# a visit still parked in this leg — it would silently kill a live journey.
+_PRE_DOCTOR = ("registered", "waiting_diagnostic", "awaiting_assignment",
+               "in_diagnostic", "waiting_doctor")
+
 
 def _is_locked(visit: Visit) -> bool:
     """The flow is frozen only when the VISIT itself is closed/cancelled.
@@ -100,6 +106,14 @@ def advance_flow(db: Session, visit: Visit, event: str) -> None:
     if event == "held_for_assignment" and current != "registered":
         return
     if event == "referred_to_doctor" and current not in ("registered", "awaiting_assignment"):
+        return
+    # Diagnostic events only make sense around the diagnostics leg: a late call
+    # / completion of a stale D-ticket must never drag a visit that already
+    # advanced (in_doctor, surgery_/treatment_assigned…) back into diagnostics.
+    if event == "diagnostic_called" and current not in (
+            "waiting_diagnostic", "in_diagnostic", "registered", "awaiting_assignment"):
+        return
+    if event == "diagnostic_done" and current not in ("in_diagnostic", "waiting_diagnostic"):
         return
     # No-show skips revert the "in the room" claim without inventing progress.
     if event == "diagnostic_skipped" and current != "in_diagnostic":
@@ -189,6 +203,12 @@ def complete_if_treatment_done(db: Session, visit: Visit) -> None:
     debts concern.
     """
     if _is_locked(visit) or visit.flow_status == "cancelled":
+        return
+    # Never close a visit that has not passed through the doctor yet: only a real
+    # treatment leg (treatment_assigned / follow_up / in_doctor) may be finished
+    # this way. A pre-doctor visit that a stray Л-ticket happened to reference must
+    # stay open — its journey is not over.
+    if visit.flow_status in _PRE_DOCTOR:
         return
     # Local imports: operations/queue import flow (avoid module cycles).
     from app.models.operation import Operation, Treatment

@@ -11,7 +11,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,7 @@ from app.core.sequences import next_ticket_number
 from app.core.visibility import owner_user_ids
 from app.models.branch import Branch
 from app.models.catalog import service_doctors
+from app.models.operation import Treatment
 from app.models.patient import Patient
 from app.models.queue import QueueTicket
 from app.models.user import User
@@ -184,6 +185,12 @@ def call_next(
         )
         # Adressed routing (opt-in): a specialist claims tickets routed to them
         # OR still in the open pool. Omitted -> unchanged: any waiting ticket.
+        # Priority (ЭКСТРЕННО) always wins first: an emergency ticket from the
+        # open pool must outrank a specialist's own NON-emergency addressed one —
+        # otherwise «свои первыми» would let a routine patient jump an emergency.
+        # Only WITHIN the same priority does the specialist's own ticket come
+        # before the open pool.
+        order_by = [QueueTicket.priority.desc()]
         if payload.for_user_id is not None:
             stmt = stmt.where(
                 or_(
@@ -191,6 +198,10 @@ def call_next(
                     QueueTicket.assigned_user_id.is_(None),
                 )
             )
+            order_by.append(
+                case((QueueTicket.assigned_user_id == payload.for_user_id, 0), else_=1)
+            )
+        order_by.append(QueueTicket.created_at.asc())
         # Diagnostic queue is distributed BY SERVICE: a diagnostician who serves
         # specific services (service_doctors) only pulls tickets tagged with one
         # of those services (or untagged = open). A caller with no assigned
@@ -205,7 +216,7 @@ def call_next(
                     )
                 )
         ticket = db.execute(
-            stmt.order_by(QueueTicket.priority.desc(), QueueTicket.created_at.asc()).limit(1)
+            stmt.order_by(*order_by).limit(1)
         ).scalar_one_or_none()
         if ticket is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "No waiting tickets")
@@ -666,17 +677,50 @@ def issue_treatment_ticket(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
     if db.get(Branch, payload.branch_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Branch not found")
+    visit: Visit | None = None
     if payload.visit_id is not None:
         visit = db.get(Visit, payload.visit_id)
         if visit is None or visit.patient_id != patient.id:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 "visit_id does not belong to this patient")
+        # The ticket and its visit must live in the same branch — a Л-ticket
+        # issued in branch A must not drive the lifecycle of a visit in branch B.
+        if visit.branch_id != payload.branch_id:
+            raise HTTPException(status.HTTP_409_CONFLICT,
+                                "visit_id belongs to another branch")
         # A closed/cancelled visit's lifecycle is over — don't queue new treatment
         # work onto it (mirrors prescribe_treatment's guard; also keeps the new
         # treatment-completion advance from re-touching a dead visit).
         if visit.status in ("completed", "cancelled"):
             raise HTTPException(status.HTTP_409_CONFLICT,
                                 f"Cannot issue a treatment ticket on a {visit.status} visit")
+    else:
+        # No explicit visit: bind ONLY to a freshest OPEN visit that is really in
+        # a treatment leg — flow_status in (treatment_assigned, follow_up) OR a
+        # prescribed Treatment exists on it. A pre-doctor visit (registered /
+        # waiting_diagnostic / awaiting_assignment …) must NOT be captured, or the
+        # later complete_if_treatment_done would silently finish a journey that
+        # never reached the doctor. No matching visit is fine — a walk-in
+        # procedure keeps a visit-less ticket, as before.
+        visit = db.execute(
+            select(Visit)
+            .where(
+                Visit.patient_id == patient.id,
+                Visit.branch_id == payload.branch_id,
+                Visit.status == "open",
+                or_(
+                    Visit.flow_status.in_(("treatment_assigned", "follow_up")),
+                    select(Treatment.id)
+                    .where(
+                        Treatment.visit_id == Visit.id,
+                        Treatment.status == "prescribed",
+                    )
+                    .exists(),
+                ),
+            )
+            .order_by(Visit.opened_at.desc())
+            .limit(1)
+        ).scalars().first()
     assigned: User | None = None
     if payload.assigned_user_id is not None:
         assigned = db.get(User, payload.assigned_user_id)
@@ -688,10 +732,14 @@ def issue_treatment_ticket(
         track="treatment",
         patient_id=patient.id,
         branch_id=payload.branch_id,
-        visit_id=payload.visit_id,
+        visit_id=visit.id if visit is not None else None,
         room=room,
         assigned_user_id=payload.assigned_user_id,
         status="waiting",
+        # Emergency intake jumps the queue on the treatment track too: inherit
+        # the visit's priority + reason (same as the D- and V-ticket mints).
+        priority=visit.priority if visit is not None else 0,
+        priority_reason=visit.priority_reason if visit is not None else None,
     )
     db.add(ticket)
     db.flush()

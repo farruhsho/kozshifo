@@ -92,6 +92,8 @@ class OperationSchedule(BaseModel):
     """Reception fixes the organisational details and bills the visit."""
 
     scheduled_at: datetime
+    # Omitted/None = keep the operation's current surgeon (a bare re-schedule
+    # must not drop the assignment); there is no «clear surgeon» use case.
     surgeon_id: UUID | None = None
     # Optional price override; absent -> the linked service's catalog price.
     price: Decimal | None = Field(default=None, ge=0)
@@ -193,13 +195,18 @@ class OperationReport(BaseModel):
 
 
 class OperationDaySummary(BaseModel):
-    """End-of-day operations P&L: profit = revenue − COGS − day expenses."""
+    """End-of-day operations P&L:
+    profit = revenue − COGS − surgeon fees − day expenses."""
 
     date: date
     operations_count: int
     revenue: Decimal   # Σ price of operations performed that day
     cogs: Decimal      # Σ consumables cost (qty × batch unit_cost)
     expenses: Decimal  # Σ day operation-expenses (Expense category «Операции»)
+    # Σ per-op surgeon fee (obligation for ALL performed work, mirrors payroll):
+    # 'percent' → % of the op's price, 'fixed' → flat sum per op. Salary data:
+    # 0 for a caller without payroll.read (profit then omits the fee).
+    surgeon_fees_total: Decimal = Decimal("0")
     profit: Decimal
 
 

@@ -51,6 +51,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in repo-root .env}
       SEED_DIRECTOR_PASSWORD: ${SEED_DIRECTOR_PASSWORD:?SEED_DIRECTOR_PASSWORD must be set in repo-root .env}
       ENVIRONMENT: production
+      # Demo accounts (incl. an is_superuser one) ship repo-public passwords;
+      # the production guard refuses to boot when this is left on.
+      SEED_DEMO_STAFF: "false"
       # Clinic timezone — local-date logic (cash reports, attendance) depends on
       # it; the image installs tzdata so a named zone resolves. Change per site.
       TZ: ${TZ:-Asia/Tashkent}

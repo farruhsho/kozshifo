@@ -18,7 +18,7 @@ from app.models.diagnosis import Diagnosis
 from app.models.rbac import Role
 from app.models.user import User
 from app.schemas.common import Page
-from app.schemas.user import UserCreate, UserOut, UserUpdate
+from app.schemas.user import UserCreate, UserOut, UserSetPassword, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["Identity & Access"])
 
@@ -198,3 +198,26 @@ def update_user(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.post("/{user_id}/set-password", status_code=status.HTTP_204_NO_CONTENT)
+def set_user_password(
+    user_id: UUID,
+    payload: UserSetPassword,
+    db: Annotated[Session, Depends(get_db)],
+    actor: Annotated[CurrentUser, Depends(require_permission("users.update"))],
+) -> None:
+    """Admin password reset — the only post-creation way to change a staff
+    password. Audited WITHOUT the password itself. Bumping token_version
+    immediately revokes every previously-issued access/refresh token for this
+    user (they carry the old `ver` claim → 401), so a stolen refresh token dies
+    the moment the password is reset."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    _guard_owner_target(actor, user)
+    user.hashed_password = hash_password(payload.password)
+    user.token_version = (user.token_version or 0) + 1
+    record_audit(db, action="password_reset", entity_type="user", entity_id=user.id,
+                 actor_id=actor.id, summary=f"Password reset for {user.email}")
+    db.commit()

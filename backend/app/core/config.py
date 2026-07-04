@@ -9,6 +9,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_SECRET_KEY = "dev-insecure-change-me-please-0123456789abcdef"
 _DEV_DIRECTOR_PASSWORD = "Director!2026"
+# Environments where repo-public dev defaults are acceptable. The production
+# guards are FAIL-CLOSED: any ENVIRONMENT value outside this allow-list —
+# "production", "prod", "staging", a typo, anything — is treated as production
+# and must provide real secrets. Matching is done on the normalized
+# (strip().lower()) value, so "Production " or "PROD" cannot slip past.
+_DEV_ENVIRONMENTS = frozenset({"development", "dev", "local", "test", "testing"})
 # backend/ — anchor file paths here so the SQLite DB / uploads are the SAME
 # regardless of the process working directory (uvicorn from repo root vs backend,
 # preview, scripts). A CWD-relative default silently opens a different, stale DB.
@@ -87,12 +93,24 @@ class Settings(BaseSettings):
     seed_director_email: str = "director@kozshifo.uz"
     seed_director_password: str = _DEV_DIRECTOR_PASSWORD
     seed_on_startup: bool = True
-    # Demo accounts (superadmin/vrach/reception/diagnost/kassa/sklad + the
-    # director password) are (re)seeded to KNOWN values on every startup so the
-    # one-click quick-login buttons always work — in any environment. Set
-    # SEED_DEMO_STAFF=false for a hardened deploy (then the owner manages real
-    # staff via /admin and only the director bootstrap account is created).
+    # Demo accounts (superadmin/vrach/reception/diagnost + the director
+    # password) are created with KNOWN repo-public passwords on FIRST startup so
+    # the one-click quick-login buttons work out of the box. Existing accounts
+    # never have their password overwritten. DEV ONLY: _production_guards
+    # rejects seed_demo_staff=True in every non-development environment — there
+    # the owner manages real staff via /admin and only the director bootstrap
+    # account is created.
     seed_demo_staff: bool = True
+
+    @field_validator("environment", mode="before")
+    @classmethod
+    def _normalize_environment(cls, v: object) -> object:
+        """Normalize once so every comparison in the codebase ("development",
+        _DEV_ENVIRONMENTS membership) sees a canonical lowercase value —
+        "Production "/"PROD" must not bypass the fail-closed guards below."""
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
     @field_validator("cors_origins", "hikvision_allowed_ips", mode="before")
     @classmethod
@@ -123,19 +141,33 @@ class Settings(BaseSettings):
     def _production_guards(self) -> "Settings":
         """Fail fast instead of running production with repo-public secrets.
 
-        Both values are committed to the repository — running a JWT issuer or
+        These values are committed to the repository — running a JWT issuer or
         seeding an is_superuser account with them in production would let
         anyone who can read the repo forge tokens / log in as the owner.
+
+        FAIL-CLOSED: the guards apply to EVERY environment except the explicit
+        dev allow-list (_DEV_ENVIRONMENTS). "prod", "staging", "Production ",
+        or any typo therefore gets the same protection as "production" —
+        a misspelled ENVIRONMENT must never silently disable the checks.
         """
-        if self.environment == "production":
+        if self.environment not in _DEV_ENVIRONMENTS:
+            env = self.environment
             if self.secret_key == _DEV_SECRET_KEY or len(self.secret_key) < 32:
                 raise ValueError(
-                    "SECRET_KEY must be a unique value of at least 32 chars in production "
+                    f"SECRET_KEY must be a unique value of at least 32 chars in "
+                    f"non-development environments (ENVIRONMENT={env!r}) "
                     "(generate: python -c \"import secrets;print(secrets.token_urlsafe(48))\")"
                 )
             if self.seed_on_startup and self.seed_director_password == _DEV_DIRECTOR_PASSWORD:
                 raise ValueError(
-                    "SEED_DIRECTOR_PASSWORD must be changed from the repo default in production"
+                    "SEED_DIRECTOR_PASSWORD must be changed from the repo default in "
+                    f"non-development environments (ENVIRONMENT={env!r})"
+                )
+            if self.seed_demo_staff:
+                raise ValueError(
+                    "SEED_DEMO_STAFF must be disabled in non-development environments "
+                    f"(ENVIRONMENT={env!r}) — demo accounts (incl. an is_superuser one) "
+                    "use well-known repo-public passwords"
                 )
         return self
 

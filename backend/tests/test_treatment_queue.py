@@ -88,18 +88,28 @@ def test_treatment_ticket_rejects_foreign_visit(client, auth):
 
 
 def test_treatment_only_visit_auto_completes_when_last_ticket_done(client, auth):
-    """A treatment-only visit (Л-ticket, no doctor/diagnostic) must reach
+    """A visit in a real TREATMENT leg (a prescribed treatment) must reach
     flow_status='completed' once its last treatment ticket is done — otherwise it
-    lingers in its pre-treatment flow_status forever (the orphaned-open-record bug)."""
+    lingers in its treatment flow_status forever (the orphaned-open-record bug).
+    A bare pre-doctor visit is deliberately NOT closed this way."""
     branch = _branch(client, auth)
     patient = _patient(client, auth, "Авто")
     visit = client.post(f"{API}/visits", headers=auth,
                         json={"patient_id": patient["id"], "branch_id": branch}).json()
     assert visit["flow_status"] != "completed"
+    # Put the visit into a genuine treatment leg (treatment_assigned) so finishing
+    # its Л-ticket may close the lifecycle.
+    tx = client.post(f"{API}/visits/{visit['id']}/treatments", headers=auth,
+                     json={"kind": "procedure", "name": "Процедура"})
+    assert tx.status_code == 201, tx.text
 
     t = client.post(f"{API}/queue/treatment-ticket", headers=auth,
                     json={"patient_id": patient["id"], "branch_id": branch,
                           "visit_id": visit["id"], "room": "Процедурная"}).json()
+    # Perform the prescription (so no pending treatment blocks completion); the
+    # still-active Л-ticket keeps the visit open for now.
+    assert client.post(f"{API}/treatments/{tx.json()['id']}/complete",
+                       headers=auth).status_code == 200
     # While the treatment ticket is still active the visit must NOT be completed.
     mid = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
     assert mid["flow_status"] != "completed"

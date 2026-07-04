@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, String, Uuid
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -60,6 +60,12 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # Surfaced in surgeon pickers; such an account may exist only as a directory
     # entry (no real login).
     is_external_surgeon: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Session-revocation counter baked into every issued access/refresh token as
+    # the `ver` claim. An admin password reset increments it, so all previously
+    # minted tokens (incl. stolen refresh tokens) fail the version check → 401.
+    token_version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
     roles: Mapped[list[Role]] = relationship(
         secondary=user_roles, back_populates="users", lazy="selectin"

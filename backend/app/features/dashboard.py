@@ -886,6 +886,8 @@ def insights(db: Annotated[Session, Depends(get_db)]) -> list[InsightOut]:
 # Стадия считается «зависшей» после этого времени (свежая работа — это норма).
 _HANGING_NO_DOCTOR_AGE = timedelta(hours=4)   # зарегистрирован, к врачу не попал
 _HANGING_IN_DOCTOR_AGE = timedelta(hours=3)   # на приёме, не завершён
+_HANGING_REFERRAL_AGE = timedelta(hours=24)   # направлен на операцию, не запланирована
+_HANGING_POST_OP_AGE = timedelta(hours=3)     # операция выполнена, визит не завершён
 _HANGING_ROW_CAP = 50                         # максимум строк-пациентов на категорию
 
 # flow_status пациента, который ещё НЕ дошёл до врача (до in_doctor).
@@ -906,9 +908,11 @@ class HangingVisitRow(BaseModel):
 
 
 class HangingCategory(BaseModel):
-    category: str  # no_doctor | in_doctor | diag_no_result | op_not_closed | treatment_unfinished
+    # no_doctor | in_doctor | diag_no_result | op_not_closed |
+    # post_op_not_finished | treatment_unfinished | done_not_closed
+    category: str
     label: str
-    severity: Literal["warning", "critical"]
+    severity: Literal["info", "warning", "critical"]
     count: int  # total matched (visits list may be capped at _HANGING_ROW_CAP)
     route: str | None = None
     visits: list[HangingVisitRow]
@@ -934,11 +938,13 @@ def _category(category: str, label: str, severity: str, route: str | None,
 @router.get("/hanging-visits", response_model=list[HangingCategory],
             dependencies=[Depends(require_permission("dashboard.view"))])
 def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCategory]:
-    """Зависшие визиты в пяти категориях, с конкретными пациентами:
+    """Зависшие визиты в семи категориях, с конкретными пациентами:
     (1) зарегистрирован, но не дошёл до врача; (2) был у врача, приём не завершён;
-    (3) назначена диагностика, но нет результата; (4) операция не закрыта;
-    (5) лечение не завершено. Самоочищается — визит исчезает, как только проблема
-    решена (вычисляется на чтение по текущему состоянию)."""
+    (3) назначена диагностика, но нет результата; (4) операция не закрыта
+    (вкл. направление >24 ч без даты); (5) операция выполнена, визит не завершён;
+    (6) лечение не завершено; (7) флоу завершён, визит открыт с долгом.
+    Самоочищается — визит исчезает, как только проблема решена (вычисляется на
+    чтение по текущему состоянию)."""
     now = datetime.now(timezone.utc)
     out: list[HangingCategory] = []
 
@@ -996,7 +1002,8 @@ def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCateg
          for v in cat3]))
 
     # ── (4) Операция не закрыта: выполняется/выполнена, но не завершена, ИЛИ
-    #    запланирована на прошедшую дату (не состоялась/забыта).
+    #    запланирована на прошедшую дату (не состоялась/забыта), ИЛИ направление
+    #    выдано >24 ч назад, а дата так и не назначена (referred без scheduled).
     ops = db.execute(
         select(Operation).where(
             or_(
@@ -1004,30 +1011,76 @@ def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCateg
                 and_(Operation.status == "scheduled",
                      Operation.scheduled_at.is_not(None),
                      Operation.scheduled_at < now),
+                and_(Operation.status == "referred",
+                     Operation.created_at < now - _HANGING_REFERRAL_AGE),
             )
-        ).order_by(Operation.scheduled_at)
+        )
     ).scalars().all()
-    op_by_visit: dict[uuid.UUID, Operation] = {}
-    for op in ops:
-        op_by_visit.setdefault(op.visit_id, op)
     visits4 = {
         v.id: v for v in db.execute(
-            select(Visit).where(Visit.id.in_(op_by_visit.keys()))
+            select(Visit).where(Visit.id.in_({op.visit_id for op in ops}))
         ).scalars().all()
-    } if op_by_visit else {}
+    } if ops else {}
     _OP_STATUS_RU = {"scheduled": "запланирована", "in_progress": "идёт",
                      "performed": "выполнена"}
-    rows4: list[HangingVisitRow] = []
-    for visit_id, op in op_by_visit.items():
-        visit = visits4.get(visit_id)
+
+    def _op_candidate(op: Operation, visit: Visit) -> tuple[int, str] | None:
+        """Приоритет и текст зависшей операции; None — не показывать.
+        Приоритет 0 = реальная просрочка (важнее просроченного направления 1),
+        чтобы при двух операциях одного визита не потерять просроченную из-за
+        свежего referred и не зависеть от NULL-порядка scheduled_at в БД."""
+        if op.status == "referred":
+            # Только реально зависшее направление: флоу визита всё ещё
+            # surgery_assigned (дата не назначалась, визит не ушёл дальше).
+            if visit.flow_status != "surgery_assigned":
+                return None
+            return (1, f"Операция «{op.type_name}» — направление старше 24 ч, дата не назначена")
+        if op.status == "performed" and visit.flow_status == "surgery_completed":
+            # Такой визит принадлежит категории (4б) — не дублируем его здесь.
+            return None
+        if op.status == "scheduled":
+            return (0, f"Операция «{op.type_name}» запланирована, дата прошла — не состоялась/не закрыта")
+        return (0, f"Операция «{op.type_name}» — {_OP_STATUS_RU.get(op.status, op.status)}, не закрыта")
+
+    best4: dict[uuid.UUID, tuple[int, str]] = {}
+    for op in ops:
+        visit = visits4.get(op.visit_id)
         if visit is None:
             continue
-        detail = f"Операция «{op.type_name}» — {_OP_STATUS_RU.get(op.status, op.status)}, не закрыта"
-        if op.status == "scheduled":
-            detail = f"Операция «{op.type_name}» запланирована, дата прошла — не состоялась/не закрыта"
-        rows4.append(_hanging_row(visit, detail))
+        cand = _op_candidate(op, visit)
+        if cand is None:
+            continue
+        prev = best4.get(op.visit_id)
+        if prev is None or cand[0] < prev[0]:
+            best4[op.visit_id] = cand
+    rows4 = [_hanging_row(visits4[vid], detail) for vid, (_p, detail) in best4.items()]
     out.append(_category(
         "op_not_closed", "Операция не закрыта", "warning", "/operations", rows4))
+
+    # ── (4б) Операция выполнена, а визит так и не завершён: флоу дошёл до
+    #    surgery_completed, но дольше порога никто не закрыл приём/визит.
+    post_op_pairs = db.execute(
+        select(Visit, Operation)
+        .join(Operation, Operation.visit_id == Visit.id)
+        .where(
+            Visit.status == "open",
+            Visit.flow_status == "surgery_completed",
+            Operation.status.in_(Operation.DONE_STATUSES),
+            Operation.performed_at.is_not(None),
+            Operation.performed_at < now - _HANGING_POST_OP_AGE,
+        ).order_by(Operation.performed_at)
+    ).all()
+    seen_post_op: set[uuid.UUID] = set()
+    rows_post: list[HangingVisitRow] = []
+    for visit, op in post_op_pairs:
+        if visit.id in seen_post_op:
+            continue
+        seen_post_op.add(visit.id)
+        rows_post.append(_hanging_row(
+            visit, f"Операция «{op.type_name}» выполнена, визит не завершён"))
+    out.append(_category(
+        "post_op_not_finished", "После операции визит не завершён", "warning",
+        "/operations", rows_post))
 
     # ── (5) Лечение назначено, но не завершено (status prescribed).
     treatments = db.execute(
@@ -1049,9 +1102,27 @@ def hanging_visits(db: Annotated[Session, Depends(get_db)]) -> list[HangingCateg
     out.append(_category(
         "treatment_unfinished", "Лечение не завершено", "warning", "/patients", rows5))
 
-    # Только непустые категории; критичные — первыми.
+    # ── (7) Флоу завершён, но визит не закрыт И остался долг: пациент ушёл,
+    #    деньги не собраны. Без долга открытый завершённый визит — норма
+    #    (его закроет авто-закрытие), поэтому не показываем.
+    cat7 = db.execute(
+        select(Visit).where(
+            Visit.status == "open",
+            Visit.flow_status.in_(("completed", "follow_up")),
+        ).order_by(Visit.opened_at)
+    ).scalars().all()
+    rows7 = [
+        _hanging_row(v, f"Приём завершён, визит не закрыт — долг {v.balance}")
+        for v in cat7 if v.balance > 0
+    ]
+    out.append(_category(
+        "done_not_closed", "Завершён, не закрыт — есть долг", "info",
+        "/patients", rows7))
+
+    # Только непустые категории; критичные — первыми, info — в конце.
+    _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
     result = [c for c in out if c is not None]
-    result.sort(key=lambda c: 0 if c.severity == "critical" else 1)
+    result.sort(key=lambda c: _SEVERITY_ORDER.get(c.severity, 3))
     return result
 
 
@@ -1197,7 +1268,7 @@ def finance_by_direction(
     actor: CurrentUser,
     period: Literal["day", "week", "month", "year"] = "month",
     d: date | None = Query(None, alias="date"),
-    branch_id: UUID | None = None,
+    branch_id: uuid.UUID | None = None,
 ) -> FinanceByDirectionReport:
     """Director finance panel: per-direction Доход/Расход/Прибыль + a clinic total.
 

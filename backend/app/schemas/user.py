@@ -73,6 +73,13 @@ class UserUpdate(BaseModel):
     _check_percent = model_validator(mode="after")(_validate_percent_caps)
 
 
+class UserSetPassword(BaseModel):
+    """Admin password reset (POST /users/{id}/set-password) — the only way to
+    change a staff password after creation. Same length floor as UserCreate."""
+
+    password: str = Field(min_length=8)
+
+
 class RoleRef(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

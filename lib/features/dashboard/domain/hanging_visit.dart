@@ -29,7 +29,7 @@ abstract class HangingCategory with _$HangingCategory {
   const factory HangingCategory({
     required String category,
     required String label,
-    required String severity, // warning | critical
+    required String severity, // info | warning | critical
     required int count,
     String? route,
     @Default(<HangingVisitRow>[]) List<HangingVisitRow> visits,
@@ -39,4 +39,5 @@ abstract class HangingCategory with _$HangingCategory {
       _$HangingCategoryFromJson(json);
 
   bool get isCritical => severity == 'critical';
+  bool get isInfo => severity == 'info';
 }

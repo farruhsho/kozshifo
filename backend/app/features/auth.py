@@ -24,8 +24,8 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 def _issue_token_pair(user: User) -> Token:
     return Token(
-        access_token=create_access_token(str(user.id)),
-        refresh_token=create_refresh_token(str(user.id)),
+        access_token=create_access_token(str(user.id), version=user.token_version),
+        refresh_token=create_refresh_token(str(user.id), version=user.token_version),
         expires_in_minutes=settings.access_token_expire_minutes,
     )
 
@@ -70,6 +70,9 @@ def refresh(body: RefreshRequest, db: Annotated[Session, Depends(get_db)]) -> To
 
     user = db.get(User, user_id)
     if user is None or not user.is_active:
+        raise invalid
+    # Revocation: a token minted before the last password reset is stale.
+    if payload.get("ver", 0) != user.token_version:
         raise invalid
     return _issue_token_pair(user)
 

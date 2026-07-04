@@ -365,6 +365,21 @@ def operation_report(
 OPERATIONS_EXPENSE_CATEGORY = "Операции"
 
 
+def _surgeon_fee(surgeon: User | None, price) -> Decimal:
+    """Per-operation surgeon fee, mirroring the payroll rules (finance
+    `_operation_pay`): the fee is the clinic's OBLIGATION for the performed work,
+    owed regardless of whether the patient has paid yet — 'percent' → % of the
+    operation's price, 'fixed' → flat sum per performed operation."""
+    if surgeon is None or surgeon.operation_salary_value is None:
+        return Decimal("0")
+    value = Decimal(surgeon.operation_salary_value)
+    if surgeon.operation_salary_type == "fixed":
+        return value
+    if surgeon.operation_salary_type == "percent" and price is not None:
+        return Decimal(price) * value / 100
+    return Decimal("0")
+
+
 @router.get("/operations/day-summary", response_model=OperationDaySummary,
             dependencies=[Depends(require_permission("operations.read"))])
 def operation_day_summary(
@@ -374,15 +389,20 @@ def operation_day_summary(
     branch_id: UUID | None = None,
 ) -> OperationDaySummary:
     """End-of-day operations P&L for the director: revenue (Σ price of operations
-    PERFORMED that local day) − COGS (consumables written off for them, qty ×
-    batch unit_cost) − the day's operation expenses (finance Expense category
-    «Операции»). Branch scope: explicit param, else the caller's own branch."""
+    PERFORMED that local day whose bill is still SETTLED) − COGS (consumables
+    written off for them, qty × batch unit_cost) − surgeon fees (per-op
+    percent/fixed pay of the operating surgeon, an obligation for ALL performed
+    work — mirrors payroll `_operation_pay`, so an unpaid-but-performed operation
+    still owes the surgeon) − the day's operation expenses (finance Expense
+    category «Операции»). Surgeon fees are salary data behind payroll.read: a
+    caller without it gets surgeon_fees_total=0 and a profit that omits the fee.
+    Branch scope: explicit param, else the caller's own branch."""
     start, end = local_day_bounds_utc(d)
     branch = branch_id if branch_id is not None else (
         None if actor.is_superuser else actor.branch_id)
 
     op_stmt = (
-        select(Operation.id, Operation.price, VisitItem.status)
+        select(Operation.id, Operation.price, VisitItem.status, Operation.surgeon_id)
         .join(Visit, Operation.visit_id == Visit.id)
         .outerjoin(VisitItem, Operation.visit_item_id == VisitItem.id)
         .where(
@@ -419,6 +439,26 @@ def operation_day_summary(
             )
         ).scalar_one())
 
+    # Surgeon fees of the day's operations: the surgeon's cut is a direct cost of
+    # each operation, so the P&L subtracts it — otherwise an external (or
+    # percent-paid staff) surgeon's operations show inflated profit. Salary is
+    # payroll data: a caller holding only operations.read (Doctor, операционный
+    # менеджер) must NOT see it, so the fee stays 0 for them and profit omits it.
+    can_payroll = actor.is_superuser or "payroll.read" in actor.effective_permission_codes()
+    surgeon_fees = Decimal("0")
+    if can_payroll:
+        surgeon_ids = {r[3] for r in op_rows if r[3] is not None}
+        surgeons: dict[UUID, User] = {}
+        if surgeon_ids:
+            surgeons = {
+                u.id: u
+                for u in db.execute(select(User).where(User.id.in_(surgeon_ids))).scalars()
+            }
+        surgeon_fees = sum(
+            (_surgeon_fee(surgeons.get(r[3]), r[1]) for r in op_rows),
+            Decimal("0"),
+        ).quantize(Decimal("0.01"))
+
     exp_stmt = select(func.coalesce(func.sum(Expense.amount), 0)).where(
         Expense.expense_date == d,
         Expense.category == OPERATIONS_EXPENSE_CATEGORY,
@@ -433,7 +473,8 @@ def operation_day_summary(
         revenue=revenue,
         cogs=cogs,
         expenses=expenses,
-        profit=revenue - cogs - expenses,
+        surgeon_fees_total=surgeon_fees,
+        profit=revenue - cogs - surgeon_fees - expenses,
     )
 
 
@@ -490,7 +531,11 @@ def schedule_operation(
             item.total = final_price * item.quantity
             _recompute_total(visit)
 
-    operation.surgeon_id = payload.surgeon_id
+    # Omitted surgeon_id = «не менять»: a bare re-schedule (date/price change)
+    # must not silently drop the assigned surgeon — payroll and the by-surgeon
+    # reports attribute the operation through this field.
+    if payload.surgeon_id is not None:
+        operation.surgeon_id = payload.surgeon_id
     operation.scheduled_at = payload.scheduled_at
     operation.price = final_price
     if payload.notes is not None:

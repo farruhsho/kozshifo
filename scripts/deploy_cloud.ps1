@@ -44,7 +44,7 @@ $DB_URL = "postgresql+psycopg://kozshifo:${DB_PW}@/kozshifo?host=/cloudsql/${SQL
 & $g run deploy kozshifo-api --source backend --region $REGION --project $PROJECT `
     --allow-unauthenticated --port 8000 --memory 512Mi `
     --add-cloudsql-instances $SQL_CONN `
-    --set-env-vars "ENVIRONMENT=production,SECRET_KEY=$SECRET,SEED_DIRECTOR_PASSWORD=$DIR_PW,DATABASE_URL=$DB_URL,UPLOAD_DIR=/app/data/uploads,TZ=Asia/Tashkent"
+    --set-env-vars "ENVIRONMENT=production,SEED_DEMO_STAFF=false,SECRET_KEY=$SECRET,SEED_DIRECTOR_PASSWORD=$DIR_PW,DATABASE_URL=$DB_URL,UPLOAD_DIR=/app/data/uploads,TZ=Asia/Tashkent"
 
 Write-Host '[5/6] Hosting с реврайтами /api/** -> Cloud Run...'
 Set-Location $PSScriptRoot\..

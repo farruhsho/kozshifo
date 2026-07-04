@@ -57,10 +57,14 @@ GitHub (форк)  ──push──▶  Railway service "kozshifo"
    ENVIRONMENT=production
    SECRET_KEY=<python -c "import secrets;print(secrets.token_urlsafe(48))">
    SEED_DIRECTOR_PASSWORD=<сильный пароль владельца, НЕ дефолт из репо>
+   SEED_DEMO_STAFF=false
    UPLOAD_DIR=/app/data/uploads
    TZ=Asia/Tashkent
    DATABASE_URL=${{Postgres.DATABASE_URL}}
    ```
+   `SEED_DEMO_STAFF=false` обязателен: демо-аккаунты быстрого входа (включая
+   is_superuser) используют репо-публичные пароли, и гард откажется стартовать
+   продакшен, пока сидинг демо-персонала не выключен.
    Опционально: `SEED_DIRECTOR_EMAIL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
    `CORS_ORIGINS` НЕ нужен (web с того же origin). `PORT` задаёт сам Railway.
 6. *Deploy*. Первая сборка дольше (тянет Flutter SDK и собирает web) — это норма.

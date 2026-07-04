@@ -141,9 +141,9 @@ def _seed_director(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
         # created before this change) must NOT retain owner-tier bypass.
         director.is_superuser = False
         director.roles = [roles["Director"]]
-        if settings.seed_demo_staff:
-            # Keep the password in sync so the quick-login «Директор» button works.
-            director.hashed_password = hash_password(settings.seed_director_password)
+        # The password is set ONLY at creation — never re-hashed here, so a
+        # password the owner changed via /users/{id}/set-password (or /admin)
+        # survives every restart instead of silently reverting to the repo value.
         db.flush()
 
 
@@ -166,20 +166,22 @@ _DEMO_STAFF: list[tuple[str, str, str, str, bool]] = [
 
 
 def _seed_demo_staff(db: Session, branch: Branch, roles: dict[str, Role]) -> None:
-    # Demo accounts power the one-click quick-login buttons. They are seeded in
-    # ANY environment while SEED_DEMO_STAFF is on, and the well-known password is
-    # made AUTHORITATIVE (reset on every startup) so the buttons always work even
-    # if an account already exists with a different/randomized password.
+    # Demo accounts power the one-click quick-login buttons. DEV ONLY —
+    # _production_guards refuses to boot any non-dev environment with
+    # SEED_DEMO_STAFF on. The well-known password AND the is_superuser flag are
+    # set ONLY at first creation: an existing account is never overwritten, so
+    # a password changed via /users/{id}/set-password (or /admin) and a revoked
+    # superuser flag both survive restarts. Roles/full_name stay in sync.
     if not settings.seed_demo_staff:
         return
     for email, full_name, password, role_name, is_superuser in _DEMO_STAFF:
         user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
         if user is None:
-            user = User(email=email, branch_id=branch.id)
+            user = User(email=email, branch_id=branch.id,
+                        hashed_password=hash_password(password),
+                        is_superuser=is_superuser)
             db.add(user)
         user.full_name = full_name
-        user.hashed_password = hash_password(password)
-        user.is_superuser = is_superuser
         user.roles = [roles[role_name]]
         if user.branch_id is None:
             user.branch_id = branch.id

@@ -258,8 +258,16 @@ class _HangingCategoryCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final color =
-        category.isCritical ? Theme.of(context).colorScheme.error : AppColors.amber;
+    final color = category.isCritical
+        ? Theme.of(context).colorScheme.error
+        : category.isInfo
+            ? AppColors.blue
+            : AppColors.amber;
+    final icon = category.isCritical
+        ? Icons.error_outline
+        : category.isInfo
+            ? Icons.info_outline
+            : Icons.warning_amber_outlined;
     final extra = category.count - category.visits.length;
     // Only the «никто не ведёт» (registered/awaiting/diagnostic) cases are safe to
     // abort inline; other categories need real follow-up, not cancellation.
@@ -268,11 +276,7 @@ class _HangingCategoryCard extends ConsumerWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
-        leading: Icon(
-            category.isCritical
-                ? Icons.error_outline
-                : Icons.warning_amber_outlined,
-            color: color),
+        leading: Icon(icon, color: color),
         title: Text(category.label,
             style: const TextStyle(fontWeight: FontWeight.bold)),
         trailing: Chip(

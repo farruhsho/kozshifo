@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
-from app.core.flow import advance_flow, recompute_plan
+from app.core.flow import advance_flow, complete_if_treatment_done, recompute_plan
 from app.core.notify import check_low_stock
 from app.core.stock import InsufficientStockError, write_off_fefo
 from app.features.visits import _make_item, _recompute_total
@@ -159,6 +159,12 @@ def dispense_treatment(
     record_audit(db, action="dispense", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id, branch_id=visit.branch_id,
                  summary=f"Dispensed {treatment.quantity} x {product.name} for «{treatment.name}»")
+    # Workflow engine (same transaction): a nurse working from the patient card
+    # (no Л-ticket) must still close out a treatment-only visit once the last
+    # prescription is done — mirrors the queue's treatment-done hook. The flush
+    # makes the done status visible to its pending-work queries (autoflush=False).
+    db.flush()
+    complete_if_treatment_done(db, visit)
     db.commit()
     check_low_stock(db, [treatment.product_id], visit.branch_id)  # post-commit, never raises
     db.refresh(treatment)
@@ -184,6 +190,10 @@ def complete_treatment(
     record_audit(db, action="complete", entity_type="treatment", entity_id=treatment.id,
                  actor_id=actor.id,
                  summary=f"Completed procedure «{treatment.name}»")
+    # Workflow engine (same transaction): see dispense — the last done treatment
+    # completes a treatment-only visit even without a queue ticket.
+    db.flush()
+    complete_if_treatment_done(db, visit)
     db.commit()
     db.refresh(treatment)
     return treatment

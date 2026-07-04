@@ -280,7 +280,24 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         'Остаток: ${formatMoney(result.visitBalance)}',
       );
     } else {
-      setState(() => _result = result);
+      setState(() {
+        _result = result;
+        // «Без направления» (intent hold): полный расчёт без талона — сервер
+        // держит визит в «Ожидает назначения». Отражаем это локально ТОЛЬКО
+        // если визит был свежерегистрированным (registered) — тогда отсутствие
+        // талона означает hold. Визит в surgery_scheduled/follow_up, где
+        // пациент лишь доплатил, талона и так не получает — его статус трогать
+        // нельзя, иначе появится ложная кнопка «Направить к врачу», чеканящая
+        // лишний С-талон в живую очередь врача.
+        if (result.queueTicketNumber == null &&
+            visit.flowStatus == 'registered') {
+          _visit = visit.copyWith(
+            status: result.visitStatus,
+            balance: result.visitBalance,
+            flowStatus: 'awaiting_assignment',
+          );
+        }
+      });
       // «При оплате сразу распечатывается очередь с чеком» — авто-печать
       // чека вместе с талоном очереди (та же PDF). Кнопка «Печать чека»
       // остаётся для повторной печати.
@@ -382,13 +399,77 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     }
     setState(() => _busy = true);
     try {
+      // Привязка талона к визиту: передаём id ТОЛЬКО когда открытый визит этого
+      // пациента реально показан на экране. Без визита на экране visit_id не
+      // шлём — бэкенд узко подберёт визит сам (клиентская эвристика «самый
+      // свежий открытый визит» без фильтра филиала перебивала серверную логику
+      // и привязывала талон к чужому визиту).
+      final visitId = _visit?.id;
       final number = await ref
           .read(receptionRepositoryProvider)
           .issueTreatmentTicket(
             patientId: patient.id,
             branchId: branchId,
+            visitId: visitId,
           );
       if (mounted) _snack('Номер очереди (лечение): $number');
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Выход из «Ожидает назначения»: выдаёт визиту талон врача (С-/V-).
+  /// Врач — автоматически (лечащий визита / врач услуги на бэкенде) или
+  /// выбранный вручную из пикера активных врачей.
+  Future<void> _referToDoctor() async {
+    final visit = _visit;
+    final patient = _patient;
+    if (visit == null) return;
+    List<({String id, String fullName, bool isActive})> doctors = const [];
+    try {
+      doctors = await ref.read(receptionDoctorsProvider.future);
+    } catch (_) {
+      // Пикер недоступен — остаётся автоматический вариант.
+    }
+    if (!mounted) return;
+    final active = [for (final d in doctors) if (d.isActive) d];
+    // Пустой id — «Автоматически»: doctor_id не передаём, врача выбирает сервер.
+    final chosen =
+        await showDialog<({String id, String fullName, bool isActive})>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Направить к врачу'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.pop(ctx, (id: '', fullName: '', isActive: true)),
+            child: const Text('Автоматически (по услуге)'),
+          ),
+          for (final d in active)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, d),
+              child: Text(d.fullName),
+            ),
+        ],
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final number = await ref.read(receptionRepositoryProvider).referToDoctor(
+            visitId: visit.id,
+            doctorId: chosen.id.isEmpty ? null : chosen.id,
+          );
+      if (mounted) {
+        // Талон выдан — визит ушёл из «Ожидает назначения» (двигает сервер).
+        setState(
+          () => _visit = _visit?.copyWith(flowStatus: 'waiting_doctor'),
+        );
+        if (patient != null) ref.invalidate(patientSummaryProvider(patient.id));
+        _snack('Номер очереди (врач): $number');
+      }
     } catch (e) {
       if (mounted) _snack('$e', error: true);
     } finally {
@@ -469,6 +550,8 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     final canRegister = user?.can('patients.create') ?? false;
     final canDiscount = user?.can('visits.update') ?? false;
     final canQueue = user?.can('queue.manage') ?? false;
+    // «Направить к врачу» бьёт в /queue/refer-to-doctor (queue.admin).
+    final canRefer = user?.can('queue.admin') ?? false;
     final services = ref.watch(activeServicesProvider);
     final wide = MediaQuery.sizeOf(context).width >= 1000;
 
@@ -480,7 +563,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
         _servicesSection(services, canBill),
       ],
     );
-    final right = _cartSection(canBill, canDiscount);
+    final right = _cartSection(canBill, canDiscount, canRefer);
 
     // Reception hotkeys (spec): Ctrl+N новый пациент · Ctrl+F поиск ·
     // Ctrl+P печать чека · Ctrl+Enter сохранить визит / принять оплату.
@@ -992,7 +1075,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     );
   }
 
-  Widget _cartSection(bool canBill, bool canDiscount) {
+  Widget _cartSection(bool canBill, bool canDiscount, bool canRefer) {
     final result = _result;
     final visit = _visit;
     final preTotal = cartTotalValue(
@@ -1056,7 +1139,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
       ],
       const SizedBox(height: 12),
       if (result != null)
-        _resultCard(result)
+        _resultCard(result, canRefer)
       else if (visit == null)
         FilledButton.icon(
           onPressed: (canBill && _patient != null && _cart.isNotEmpty && !_busy)
@@ -1115,6 +1198,16 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
             ),
           ),
         ),
+        // Тупик «Ожидает назначения»: без талона пациент никуда не попадёт —
+        // даём ресепшену выход прямо у статуса визита.
+        if (canRefer && visit.flowStatus == 'awaiting_assignment') ...[
+          const SizedBox(height: 8),
+          FilledButton.tonalIcon(
+            onPressed: _busy ? null : _referToDoctor,
+            icon: const Icon(Icons.assignment_ind_outlined),
+            label: const Text('Направить к врачу'),
+          ),
+        ],
         const SizedBox(height: 8),
         FilledButton.icon(
           onPressed: (canBill && !_busy) ? _takePayment : null,
@@ -1155,7 +1248,7 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
     ]);
   }
 
-  Widget _resultCard(PaymentResult r) {
+  Widget _resultCard(PaymentResult r, bool canRefer) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -1193,6 +1286,17 @@ class _ReceptionScreenState extends ConsumerState<ReceptionScreen> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          // Оплата «Без направления» прошла без талона — визит «Ожидает
+          // назначения»; выдаём талон врача отсюда, не теряя пациента.
+          if (canRefer && _visit?.flowStatus == 'awaiting_assignment')
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: FilledButton.tonalIcon(
+                onPressed: _busy ? null : _referToDoctor,
+                icon: const Icon(Icons.assignment_ind_outlined),
+                label: const Text('Направить к врачу'),
               ),
             ),
           const SizedBox(height: 12),

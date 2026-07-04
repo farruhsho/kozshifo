@@ -522,7 +522,8 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
   }
 
   /// «P&L дня» — итог операций выбранного календарного дня (выручка − COGS −
-  /// расходы = прибыль) для филиала пользователя. Сбой сводки не ломает
+  /// гонорары хирургов − расходы = прибыль) для филиала пользователя. Сбой
+  /// сводки не ломает
   /// календарь: рендерим компактную ошибку, список операций живёт отдельно.
   Widget _pnlCard(DateTime day) {
     final pnl = ref.watch(operationDayPnlProvider(day));
@@ -570,6 +571,7 @@ class _OperationsScreenState extends ConsumerState<OperationsScreen> {
             const SizedBox(height: 12),
             _pnlRow('Выручка', p.revenue),
             _pnlRow('Себестоимость', p.cogs),
+            _pnlRow('Гонорары хирургов', p.surgeonFees),
             _pnlRow('Расходы', p.expenses),
             const Divider(height: 18, color: AppColors.line),
             _pnlRow('Прибыль', p.profit, emphasize: true),
@@ -1367,9 +1369,10 @@ class _PerformDialogState extends ConsumerState<_PerformDialog> {
   }
 }
 
-/// Диалог планирования операции ресепшеном: дата/время (обязательно) и цена
-/// (необязательно — по умолчанию из каталога). Именно планирование выставляет
-/// счёт на визит.
+/// Диалог планирования операции ресепшеном: дата/время (обязательно), хирург
+/// (включая приезжих; предзаполнен текущим — если не трогать, назначение не
+/// меняется) и цена (необязательно — по умолчанию из каталога). Именно
+/// планирование выставляет счёт на визит.
 class _ScheduleDialog extends ConsumerStatefulWidget {
   const _ScheduleDialog({required this.op});
 
@@ -1384,6 +1387,7 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
   final _notes = TextEditingController();
   DateTime? _date;
   TimeOfDay _time = const TimeOfDay(hour: 9, minute: 0);
+  String? _surgeonId;
   bool _saving = false;
 
   @override
@@ -1394,6 +1398,7 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
       _date = DateTime(existing.year, existing.month, existing.day);
       _time = TimeOfDay(hour: existing.hour, minute: existing.minute);
     }
+    _surgeonId = widget.op.surgeonId;
     if (widget.op.price != null) _price.text = widget.op.price!;
     if (widget.op.notes != null) _notes.text = widget.op.notes!;
   }
@@ -1436,11 +1441,13 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
     final price = _price.text.trim();
     final notes = _notes.text.trim();
     try {
+      // Омит surgeon_id (null) для сервера значит «не менять текущего хирурга».
       await ref
           .read(clinicalRepositoryProvider)
           .scheduleOperation(
             id: widget.op.id,
             scheduledAt: dt.toUtc().toIso8601String(),
+            surgeonId: _surgeonId,
             price: price.isEmpty ? null : price,
             notes: notes.isEmpty ? null : notes,
           );
@@ -1460,6 +1467,7 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final surgeons = ref.watch(surgeonsProvider);
     final dateLabel = _date == null
         ? 'Выбрать дату'
         : DateFormat('dd.MM.yyyy').format(_date!);
@@ -1489,6 +1497,39 @@ class _ScheduleDialogState extends ConsumerState<_ScheduleDialog> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            surgeons.when(
+              loading: () => const LinearProgressIndicator(),
+              error: (e, _) => Text(
+                'Хирурги недоступны: ${e is ApiException ? e.message : e}',
+                style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
+              ),
+              data: (list) => DropdownButtonFormField<String?>(
+                initialValue: list.any((s) => s.id == _surgeonId)
+                    ? _surgeonId
+                    : null,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Хирург',
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('— без изменений —'),
+                  ),
+                  for (final s in list)
+                    DropdownMenuItem<String?>(
+                      value: s.id,
+                      child: Text(
+                        s.isExternal ? '${s.fullName} · приезжий' : s.fullName,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _surgeonId = v),
+              ),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -1602,7 +1643,7 @@ class _PlaceOnDayDialogState extends ConsumerState<_PlaceOnDayDialog> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('— не назначен —'),
+                    child: Text('— без изменений —'),
                   ),
                   for (final s in list)
                     DropdownMenuItem<String?>(

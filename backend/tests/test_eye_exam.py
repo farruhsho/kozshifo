@@ -139,3 +139,33 @@ def test_card_pdf_returns_pdf(client, auth):
     assert resp.headers["content-type"].startswith("application/pdf")
     assert len(resp.content) > 1000
     assert resp.content[:5] == b"%PDF-"
+
+
+def test_prescription_pdf_returns_pdf(client, auth):
+    _, visit_id = _make_visit(client, auth, last_name="Рецепт")
+    exam = client.put(f"{API}/visits/{visit_id}/exam", headers=auth, json=_EXAM_PAYLOAD).json()
+
+    resp = client.get(f"{API}/exams/{exam['id']}/prescription.pdf", headers=auth)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("application/pdf")
+    assert len(resp.content) > 1000
+    assert resp.content[:5] == b"%PDF-"
+
+
+def test_prescription_pdf_without_refraction(client, auth):
+    _, visit_id = _make_visit(client, auth, last_name="РецептБезОчков")
+    exam = client.put(
+        f"{API}/visits/{visit_id}/exam", headers=auth,
+        json={"diagnosis": "Конъюнктивит OU", "recommendations": "капли 3 раза в день"},
+    ).json()
+
+    resp = client.get(f"{API}/exams/{exam['id']}/prescription.pdf", headers=auth)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("application/pdf")
+    assert resp.content[:5] == b"%PDF-"
+
+
+def test_prescription_pdf_404_for_missing_exam(client, auth):
+    missing = "00000000-0000-0000-0000-000000000000"
+    resp = client.get(f"{API}/exams/{missing}/prescription.pdf", headers=auth)
+    assert resp.status_code == 404, resp.text

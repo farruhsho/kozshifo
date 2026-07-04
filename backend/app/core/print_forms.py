@@ -21,7 +21,7 @@ from pathlib import Path
 from reportlab.graphics import renderPDF
 from reportlab.graphics.barcode import qr
 from reportlab.graphics.shapes import Drawing
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, A5
 from reportlab.lib.units import mm
 from reportlab.lib.utils import simpleSplit
 from reportlab.pdfbase import pdfmetrics
@@ -151,6 +151,15 @@ def _fmt(value: object) -> str:
 
 def _fmt_date(d: date | None) -> str:
     return d.strftime("%d.%m.%Y") if d else ""
+
+
+def _age(birth: date | None, *, on: date | None = None) -> int | None:
+    """Full years between birth and `on` (today by default)."""
+    if birth is None:
+        return None
+    ref = on or date.today()
+    years = ref.year - birth.year - ((ref.month, ref.day) < (birth.month, birth.day))
+    return years if years >= 0 else None
 
 
 def _visus_line(eye: str, va: str | None, sph, cyl, axis, va_cc: str | None) -> str:
@@ -392,6 +401,123 @@ def build_exam_card_pdf(exam: EyeExam, diagnoses: list[VisitDiagnosis] | None = 
     w.text("Шифокор:", f"{doctor_name}    имзо: _________________", bold_label=True)
 
     _draw_footer(c)
+    c.save()
+    return buf.getvalue()
+
+
+def _has_refraction(exam: EyeExam) -> bool:
+    return any(v is not None for v in (
+        exam.od_sph, exam.od_cyl, exam.od_axis,
+        exam.os_sph, exam.os_cyl, exam.os_axis,
+    ))
+
+
+def build_prescription_pdf(exam: EyeExam, diagnoses: list[VisitDiagnosis] | None = None) -> bytes:
+    """Compact A5 prescription (РЕЦЕПТ / Retsept) the doctor hands to the patient.
+
+    Two blocks: «Очки / Ko'zoynak» (the OD/OS Sph/Cyl/Ax refraction table, printed
+    only when any refraction value is present) and «Назначения / Tavsiya» (the
+    exam's `recommendations` text plus the visit's accumulated diagnoses — same
+    source as the 025-8 card). Reuses the bundled Cyrillic font so nothing tofus.
+    """
+    _register_fonts()
+    patient = exam.patient
+    visit = exam.visit
+    doctor_name = exam.doctor.full_name if exam.doctor else ""
+
+    page_w, page_h = A5
+    margin = 14 * mm
+    inner = page_w - 2 * margin
+    buf = io.BytesIO()
+    c = Canvas(buf, pagesize=A5)
+    c.setTitle(f"Retsept — {patient.full_name} — {visit.visit_no}")
+    y = page_h - margin
+
+    def line(txt: str, *, font: str = FONT, size: float = 9.5, center: bool = False,
+             gap: float = 5 * mm, indent: float = 0) -> None:
+        nonlocal y
+        for seg in (simpleSplit(txt, font, size, inner - indent) or [""]):
+            c.setFont(font, size)
+            if center:
+                c.drawCentredString(page_w / 2, y, seg)
+            else:
+                c.drawString(margin + indent, y, seg)
+            y -= gap
+
+    def rule() -> None:
+        nonlocal y
+        c.setLineWidth(0.5)
+        c.line(margin, y + 1.5 * mm, page_w - margin, y + 1.5 * mm)
+        y -= 2.5 * mm
+
+    # Header
+    line("«KO'Z SHIFO» klinikasi", font=FONT_BOLD, size=12, center=True)
+    line("офтальмологик клиника", size=7.5, center=True, gap=4 * mm)
+    line("РЕЦЕПТ / Retsept", font=FONT_BOLD, size=11, center=True)
+    rule()
+
+    age = _age(patient.birth_date, on=exam.exam_date)
+    fio = patient.full_name + (f", {age} ёш" if age is not None else "")
+    line("Сана / Sana: " + _fmt_date(exam.exam_date))
+    line("Бемор / Bemor: " + fio, font=FONT_BOLD)
+    line("Ташриф / Tashrif: " + (visit.visit_no or ""))
+    if doctor_name:
+        line("Шифокор / Shifokor: " + doctor_name)
+    rule()
+
+    # Glasses / Ko'zoynak — refraction table (skip entirely when empty)
+    if _has_refraction(exam):
+        line("Очки / Ko'zoynak", font=FONT_BOLD, size=10)
+        col_x = [margin, margin + 22 * mm, margin + 52 * mm, margin + 82 * mm]
+        headers = ("", "Sph", "Cyl", "Ax")
+        c.setFont(FONT_BOLD, 9)
+        for x, h in zip(col_x, headers):
+            c.drawString(x, y, h)
+        y -= 5 * mm
+
+        def _cell(v: object) -> str:
+            return "—" if v is None else str(v)
+
+        for eye, sph, cyl, ax in (
+            ("OD", exam.od_sph, exam.od_cyl, exam.od_axis),
+            ("OS", exam.os_sph, exam.os_cyl, exam.os_axis),
+        ):
+            c.setFont(FONT_BOLD, 9)
+            c.drawString(col_x[0], y, eye)
+            c.setFont(FONT, 9)
+            c.drawString(col_x[1], y, _cell(sph))
+            c.drawString(col_x[2], y, _cell(cyl))
+            c.drawString(col_x[3], y, _cell(ax) + ("°" if ax is not None else ""))
+            y -= 5 * mm
+        rule()
+
+    # Назначения / Tavsiya — recommendations + accumulated diagnoses
+    line("Назначения / Tavsiya", font=FONT_BOLD, size=10)
+    diags = diagnoses or []
+    if diags:
+        for i, d in enumerate(diags, 1):
+            txt = d.diagnosis
+            if d.icd10:
+                txt = f"{txt}  (МКБ-10: {d.icd10})"
+            line(f"{i}. {txt}", size=9, gap=4.6 * mm, indent=3 * mm)
+    elif exam.diagnosis:
+        dx = exam.diagnosis
+        if exam.icd10:
+            dx = f"{dx}  (МКБ-10: {exam.icd10})"
+        line("Ташхис / Tashxis: " + dx, size=9, gap=4.6 * mm)
+    if exam.recommendations:
+        line(exam.recommendations, size=9, gap=4.6 * mm)
+    if not diags and not exam.diagnosis and not exam.recommendations:
+        line("—", size=9)
+
+    # Doctor signature line at the page bottom
+    y = margin + 14 * mm
+    c.setLineWidth(0.4)
+    c.line(page_w - margin - 45 * mm, y, page_w - margin, y)
+    c.setFont(FONT, 8)
+    c.drawString(margin, y, "М.П.")
+    c.drawRightString(page_w - margin, y - 4 * mm, "Шифокор / Врач")
+
     c.save()
     return buf.getvalue()
 

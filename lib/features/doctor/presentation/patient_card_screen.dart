@@ -125,6 +125,7 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
   bool _loadingExam = false;
   bool _saving = false;
   bool _printing = false;
+  bool _printingRx = false;
   bool _applyingRefraction = false;
   bool _finishing = false;
   bool _addingDiagnosis = false;
@@ -326,6 +327,30 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     }
   }
 
+  /// «Печать рецепта»: отдельный печатный бланк рецепта (очки/медикаменты) по
+  /// ТЕКУЩЕМУ осмотру — рефракция OD/OS + «Тавсия». Байты PDF под `exams.read`.
+  Future<void> _printPrescription() async {
+    final exam = _exam;
+    if (exam == null) return;
+    setState(() => _printingRx = true);
+    try {
+      final bytes = await ref
+          .read(doctorRepositoryProvider)
+          .prescriptionPdf(exam.id);
+      final path = await saveBytes(
+        bytes,
+        'prescription-${exam.id}.pdf',
+        'application/pdf',
+      );
+      if (!mounted) return;
+      _snack(path == null ? 'PDF рецепта загружен' : 'PDF сохранён: $path');
+    } catch (e) {
+      if (mounted) _snack('$e', error: true);
+    } finally {
+      if (mounted) setState(() => _printingRx = false);
+    }
+  }
+
   /// «Подтянуть из рефрактометра»: берём свежайший refraction-результат визита
   /// (RMK-700) и копируем sph/cyl/axis в осмотр через apply-refraction.
   Future<void> _pullFromRefractometer() async {
@@ -517,6 +542,23 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
                       )
                     : const Icon(Icons.print_outlined),
                 label: const Text('Печать 025-8'),
+              ),
+            ),
+          if (_exam != null &&
+              (ref.watch(authControllerProvider).user?.can('exams.read') ??
+                  false))
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton.tonalIcon(
+                onPressed: _printingRx ? null : _printPrescription,
+                icon: _printingRx
+                    ? const SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.receipt_long),
+                label: const Text('Печать рецепта'),
               ),
             ),
         ],

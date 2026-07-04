@@ -138,6 +138,14 @@ class _FakeDoctorRepository extends DoctorRepository {
   @override
   Future<Uint8List> cardPdf(String visitId) async => Uint8List(0);
 
+  String? prescriptionExamId;
+
+  @override
+  Future<Uint8List> prescriptionPdf(String examId) async {
+    prescriptionExamId = examId;
+    return Uint8List(0);
+  }
+
   bool finishCalled = false;
   String? finishFollowUpDate;
 
@@ -146,6 +154,14 @@ class _FakeDoctorRepository extends DoctorRepository {
     finishCalled = true;
     finishFollowUpDate = followUpDate;
   }
+}
+
+/// Same as [_FakeDoctorRepository] but the visit already has a recorded exam,
+/// so the print/prescription actions render.
+class _FakeDoctorRepositoryWithExam extends _FakeDoctorRepository {
+  @override
+  Future<EyeExam?> examForVisit(String visitId) async =>
+      const EyeExam(id: 'e1', visitId: 'v1', patientId: 'p1');
 }
 
 /// One scan result linked to v1; records unlinkResult calls — no Dio traffic.
@@ -441,6 +457,47 @@ void main() {
       await tester.pump();
 
       expect(devices.unlinkedId, 'dr1');
+    });
+  });
+
+  group('печать рецепта', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    Future<_FakeDoctorRepositoryWithExam> openScreen(
+      WidgetTester tester, {
+      required List<String> permissions,
+    }) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final doctor = _FakeDoctorRepositoryWithExam();
+      await tester.pumpWidget(_harness(doctor: doctor, permissions: permissions));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump();
+      return doctor;
+    }
+
+    testWidgets('кнопка скрыта без exams.read', (tester) async {
+      await openScreen(tester, permissions: const ['exams.write']);
+      expect(find.text('Печать рецепта'), findsNothing);
+    });
+
+    testWidgets('видна при exams.read и зовёт prescriptionPdf(examId)', (
+      tester,
+    ) async {
+      final doctor = await openScreen(
+        tester,
+        permissions: const ['exams.write', 'exams.read'],
+      );
+      expect(find.text('Печать рецепта'), findsOneWidget);
+
+      await tester.tap(find.text('Печать рецепта'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(doctor.prescriptionExamId, 'e1');
     });
   });
 }

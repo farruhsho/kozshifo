@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
-from app.core.print_forms import build_exam_card_pdf
+from app.core.print_forms import build_exam_card_pdf, build_prescription_pdf
 from app.models.diagnosis import Diagnosis, VisitDiagnosis
 from app.models.exam import EyeExam
 from app.models.exam_template import ExamTemplate
@@ -264,9 +264,27 @@ def exam_card_pdf(visit_id: UUID, db: Annotated[Session, Depends(get_db)]) -> Re
     )
 
 
-# NOTE: literal path — safe from route shadowing because this router has no
-# parameterized /exams/{...} sibling (its routes live under /visits/{id}/exam
-# and /patients/{id}/exams).
+@router.get(
+    "/exams/{exam_id}/prescription.pdf",
+    dependencies=[Depends(require_permission("exams.read"))],
+    response_class=Response,
+)
+def exam_prescription_pdf(exam_id: UUID, db: Annotated[Session, Depends(get_db)]) -> Response:
+    """Printable prescription (РЕЦЕПТ) — очки refraction + назначения — for one exam."""
+    exam = db.get(EyeExam, exam_id)
+    if exam is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Exam not found")
+    pdf = build_prescription_pdf(exam, diagnoses=_visit_diagnoses(db, exam.visit_id))
+    visit_no = exam.visit.visit_no if exam.visit else str(exam_id)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="prescription-{visit_no}.pdf"'},
+    )
+
+
+# NOTE: literal path — matches before /exams/{exam_id}/prescription.pdf because
+# «frequent-diagnoses» has no /prescription.pdf suffix; the two never collide.
 @router.get("/exams/frequent-diagnoses", response_model=list[FrequentDiagnosis])
 def frequent_diagnoses(
     db: Annotated[Session, Depends(get_db)],

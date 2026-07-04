@@ -99,6 +99,21 @@ class DoctorRepository {
     }
   }
 
+  /// Печатная форма РЕЦЕПТА (очки/медикаменты) по осмотру — отдельно от карты
+  /// 025-8; собирает рефракцию OD/OS и «Тавсия» в бланк рецепта. Байты PDF под
+  /// тем же правом `exams.read`, что и карта.
+  Future<Uint8List> prescriptionPdf(String examId) async {
+    try {
+      final resp = await _dio.get(
+        '/exams/$examId/prescription.pdf',
+        options: Options(responseType: ResponseType.bytes),
+      );
+      return Uint8List.fromList(resp.data as List<int>);
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
   /// Автоматическая хронология пациента (платежи, осмотры, операции, лечение…)
   /// — собирается backend'ом, по убыванию времени.
   Future<List<TimelineEvent>> timeline(String patientId) async {

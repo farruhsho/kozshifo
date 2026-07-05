@@ -10,15 +10,25 @@ from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
 from app.core.database import get_db
-from app.core.deps import CurrentUser, require_permission
+from app.core.deps import CurrentUser, require_any_permission, require_permission
 from app.models.branch import Branch
 from app.schemas.branch import BranchCreate, BranchOut, BranchUpdate
 
 router = APIRouter(prefix="/branches", tags=["Branches"])
 
 
-@router.get("", response_model=list[BranchOut], dependencies=[Depends(require_permission("branches.read"))])
-def list_branches(db: Annotated[Session, Depends(get_db)]) -> list[Branch]:
+@router.get("", response_model=list[BranchOut])
+def list_branches(
+    db: Annotated[Session, Depends(get_db)],
+    # Warehouse roles (inventory.manage, no branches.read) must be able to load the
+    # destination-branch list for the stock-transfer dialog — so ANY of these
+    # inventory/branch read rights unlocks the listing. Mutation endpoints below
+    # keep their strict per-branch permission.
+    _actor: Annotated[
+        CurrentUser,
+        Depends(require_any_permission("branches.read", "inventory.read", "inventory.manage")),
+    ],
+) -> list[Branch]:
     return list(db.execute(select(Branch).order_by(Branch.name)).scalars().all())
 
 

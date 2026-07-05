@@ -191,6 +191,60 @@ void main() {
     expect(batches.first.expiryDate, '2026-06-20');
   });
 
+  // ─── Repository: supplier return (supplier_id from the batch) ───────────────
+
+  test('supplierReturn: POST body carries supplier_id from the chosen batch',
+      () async {
+    final (repo, adapter) = _repo((_) => _json({}, status: 200));
+    await repo.supplierReturn(
+      productId: 'prod-1',
+      batchId: 'batch-1',
+      quantity: '2',
+      reason: 'брак',
+      supplierId: 'sup-7',
+    );
+    expect(adapter.lastRequest!.uri.path, endsWith('/inventory/supplier-returns'));
+    final body = adapter.lastRequest!.data as Map<String, dynamic>;
+    expect(body['product_id'], 'prod-1');
+    expect(body['batch_id'], 'batch-1');
+    expect(body['quantity'], '2');
+    expect(body['reason'], 'брак');
+    // Ключевой фикс бага 5: поставщик уходит в тело → движение с ref_id.
+    expect(body['supplier_id'], 'sup-7');
+  });
+
+  test('supplierReturn: supplier_id omitted when the batch has none', () async {
+    final (repo, adapter) = _repo((_) => _json({}, status: 200));
+    await repo.supplierReturn(
+      productId: 'prod-1',
+      batchId: 'batch-1',
+      quantity: '1',
+      reason: 'пересорт',
+    );
+    final body = adapter.lastRequest!.data as Map<String, dynamic>;
+    expect(body.containsKey('supplier_id'), isFalse);
+  });
+
+  test('StockBatch parses supplier_id → supplierId (null when absent)', () {
+    final withSup = StockBatch.fromJson(const {
+      'id': 'batch-1',
+      'batch_no': 'B-1',
+      'expiry_date': '2027-01-01',
+      'quantity': '10.000',
+      'unit_cost': '150000.00',
+      'received_at': '2026-06-12T09:00:00Z',
+      'supplier_id': 'sup-7',
+    });
+    expect(withSup.supplierId, 'sup-7');
+    final noSup = StockBatch.fromJson(const {
+      'id': 'batch-2',
+      'quantity': '1.000',
+      'unit_cost': '0.00',
+      'received_at': '2026-06-01T09:00:00Z',
+    });
+    expect(noSup.supplierId, isNull);
+  });
+
   // ─── Domain: expiry helpers (date-only, server-verdict aware) ────────────────
 
   test('StockBatch expiry helpers compute days + expiringWithin window', () {

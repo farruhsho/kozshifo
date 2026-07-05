@@ -121,6 +121,8 @@ class _Fab extends ConsumerWidget {
         branchId: branchId, product: product);
     if (movements != null && context.mounted) {
       ref.invalidate(stockProvider(branchId));
+      // Списание могло увести товар ниже порога заказа — обновляем «К заказу».
+      ref.invalidate(reorderSuggestionsProvider(branchId));
       final qty = movements.fold<int>(0, (n, _) => n + 1);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Списание выполнено: партий затронуто $qty'),
@@ -339,6 +341,24 @@ class _ExpiringTab extends ConsumerWidget {
   final String branchId;
   final bool canWriteOff;
 
+  /// Утилизация просроченной/истекающей партии прямо со вкладки «Истекает»:
+  /// открываем диалог списания с предвыбранным товаром и уже включённым флагом
+  /// «включая просроченные» — иначе просроченный лот FEFO-движок не спишет.
+  Future<void> _dispose(
+      BuildContext context, WidgetRef ref, Product product) async {
+    final movements = await showWriteOffDialog(context,
+        branchId: branchId, product: product, includeExpired: true);
+    if (movements != null && context.mounted) {
+      ref.invalidate(stockProvider(branchId));
+      // Утилизация уменьшает остаток — «К заказу» мог вырасти.
+      ref.invalidate(reorderSuggestionsProvider(branchId));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(
+            'Списание выполнено: партий затронуто ${movements.length}'),
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final stock = ref.watch(stockProvider(branchId));
@@ -374,6 +394,13 @@ class _ExpiringTab extends ConsumerWidget {
             final label = isExpired
                 ? (e.batch.expired ? 'просрочено' : 'истекло')
                 : (days == 0 ? 'сегодня' : 'через $days дн.');
+            final badge = Chip(
+              label: Text(label),
+              backgroundColor: badgeColor.withValues(alpha: 0.15),
+              labelStyle: TextStyle(color: badgeColor),
+              side: BorderSide.none,
+              visualDensity: VisualDensity.compact,
+            );
             return Card(
               margin: const EdgeInsets.only(bottom: 12),
               child: ListTile(
@@ -383,13 +410,23 @@ class _ExpiringTab extends ConsumerWidget {
                     'партия ${e.batch.batchNo ?? '—'} · '
                     'остаток ${e.batch.quantity} ${e.product.unit} · '
                     'годен до ${e.batch.expiryDate ?? '—'}'),
-                trailing: Chip(
-                  label: Text(label),
-                  backgroundColor: badgeColor.withValues(alpha: 0.15),
-                  labelStyle: TextStyle(color: badgeColor),
-                  side: BorderSide.none,
-                  visualDensity: VisualDensity.compact,
-                ),
+                trailing: canWriteOff
+                    ? Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          badge,
+                          const SizedBox(width: 8),
+                          TextButton.icon(
+                            icon: const Icon(Icons.delete_sweep_outlined,
+                                size: 18),
+                            label: const Text('Утилизировать'),
+                            style: TextButton.styleFrom(
+                                foregroundColor: scheme.error),
+                            onPressed: () => _dispose(context, ref, e.product),
+                          ),
+                        ],
+                      )
+                    : badge,
               ),
             );
           },
@@ -486,6 +523,9 @@ class _StockTile extends ConsumerWidget {
                             fromBranchId: branchId, product: p);
                         if (ok == true && context.mounted) {
                           ref.invalidate(stockProvider(branchId));
+                          // Перемещение могло увести товар ниже порога заказа —
+                          // обновляем вкладку «К заказу».
+                          ref.invalidate(reorderSuggestionsProvider(branchId));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Перемещение выполнено')),
                           );
@@ -501,6 +541,8 @@ class _StockTile extends ConsumerWidget {
                             product: p, batches: row.batches);
                         if (ok == true && context.mounted) {
                           ref.invalidate(stockProvider(branchId));
+                          // Возврат уменьшает остаток — «К заказу» мог вырасти.
+                          ref.invalidate(reorderSuggestionsProvider(branchId));
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(content: Text('Возврат оформлен')),
                           );
@@ -516,6 +558,8 @@ class _StockTile extends ConsumerWidget {
                             branchId: branchId, product: p);
                         if (movements != null && context.mounted) {
                           ref.invalidate(stockProvider(branchId));
+                          // Списание могло увести товар ниже порога заказа.
+                          ref.invalidate(reorderSuggestionsProvider(branchId));
                           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                             content: Text(
                                 'Списание выполнено: партий затронуто ${movements.length}'),

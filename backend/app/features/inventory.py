@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit
@@ -436,12 +437,17 @@ def create_stock_count(
     actor: Annotated[CurrentUser, Depends(require_permission("inventory.stocktake"))],
 ) -> StockCountDetailOut:
     """Open a draft stock-count: snapshot every (product, batch) of the branch
-    into a line with expected = on-hand and counted initialized to expected
-    (so untouched lines commit to a zero variance).
+    into a line with expected = on-hand and counted initialized to expected as a
+    DISPLAY default (recounted=False). This default is NOT a physical count — it
+    only exists so the operator sees the current book value on the sheet. Commit
+    applies ONLY lines the operator actually recounted (PATCHed), so a batch that
+    was never physically checked but whose stock moved after open (an operation /
+    treatment / write-off drained it) is left alone rather than resurrected back
+    to its stale open-time value.
 
     Zero-quantity batches of *active* products are included too: a batch that is
     empty at open but physically found on the shelf must have somewhere to record
-    the surplus (committing counted>0 then creates a corrective movement). Batches
+    the surplus (recounting counted>0 then creates a corrective movement). Batches
     with stock are always snapshotted regardless of product state."""
     if db.get(Branch, payload.branch_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Branch not found")
@@ -523,6 +529,7 @@ def update_stock_count_line(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Line not found")
     line.counted_qty = payload.counted_qty
     line.variance = Decimal(payload.counted_qty) - Decimal(line.expected_qty)
+    line.recounted = True  # the operator physically counted this batch — apply on commit
     db.flush()
     db.commit()
     batch = db.get(StockBatch, line.batch_id) if line.batch_id else None
@@ -535,21 +542,48 @@ def commit_stock_count(
     db: Annotated[Session, Depends(get_db)],
     actor: Annotated[CurrentUser, Depends(require_permission("inventory.stocktake"))],
 ) -> StockCountDetailOut:
-    """Force every counted batch to its ABSOLUTE physical count (an `adjustment`
+    """Force every RECOUNTED batch to its ABSOLUTE physical count (an `adjustment`
     movement records the actually-applied change: counted − live), then mark the
-    count committed. The count reconciles the ledger to the shelf, so stock must
-    NOT move while the count is open; committing sets counted outright rather than
-    applying the frozen counted−expected-at-open variance (which would double-count
-    any interim movement). Idempotency: committing an already-committed count
-    returns 409 (movements are applied once)."""
+    count committed.
+
+    Only lines the operator physically recounted (recounted=True, set by PATCH)
+    are applied — untouched lines still hold their open-time display default and
+    are skipped, so a batch that legitimately drained after open (operation /
+    treatment / write-off) is NOT resurrected to its stale value. For recounted
+    lines the count sets the batch to counted outright (absolute), NOT by the
+    frozen counted−expected-at-open variance, which would double-count any interim
+    movement.
+
+    Concurrency: the commit is claimed with a single guarded UPDATE
+    (`SET status='committed' WHERE id=:id AND status='draft'`) BEFORE any movement
+    is written; a racing second request finds rowcount==0 and gets a 409, so the
+    immutable ledger is never double-written for one count. Idempotency: committing
+    an already-committed count likewise returns 409."""
     count = db.get(StockCount, count_id)
     if count is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Stock count not found")
     if count.status != "draft":
         raise HTTPException(status.HTTP_409_CONFLICT, "Инвентаризация уже проведена")
 
+    # Atomically stake the commit BEFORE writing any movement. Two concurrent
+    # requests both pass the read check above, but only one guarded UPDATE flips
+    # draft→committed (rowcount==1); the loser sees rowcount==0 and is rejected
+    # before touching the ledger. Reliable on both SQLite and Postgres (the WHERE
+    # on status is the integrity boundary, not a no-op SELECT FOR UPDATE).
+    claimed = db.execute(
+        sa_update(StockCount)
+        .where(StockCount.id == count_id, StockCount.status == "draft")
+        .values(status="committed")
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Инвентаризация уже проведена")
+    db.expire(count)  # re-read status/lines after the guarded UPDATE
+
     touched: set[UUID] = set()
     for line in count.lines:
+        if not line.recounted:
+            continue  # never physically counted — its counted=expected is only a display default
         if line.batch_id is None:
             continue
         batch = db.get(StockBatch, line.batch_id)
@@ -564,7 +598,6 @@ def commit_stock_count(
             ref_type="stock_count", ref_id=count.id, actor_id=actor.id,
         )
         touched.add(line.product_id)
-    count.status = "committed"
     db.flush()
     record_audit(db, action="update", entity_type="stock_count", entity_id=count.id, actor_id=actor.id,
                  branch_id=count.branch_id, summary=f"Инвентаризация проведена: {len(touched)} товаров скорректировано")

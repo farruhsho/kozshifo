@@ -138,7 +138,14 @@ class StockCount(UUIDPKMixin, TimestampMixin, Base):
 class StockCountLine(UUIDPKMixin, TimestampMixin, Base):
     """One counted line of a stock-count: a (product, batch) snapshot with the
     expected qty frozen at open time, the counted qty entered by staff, and the
-    resulting variance (counted − expected)."""
+    resulting variance (counted − expected).
+
+    ``recounted`` guards against phantom resurrection: at open time every batch
+    of the branch gets a line with counted = expected (a display default, NOT a
+    real physical count). Only lines the operator actually PATCHed carry
+    recounted=True; commit applies the absolute set to those alone, so a batch
+    that moved between open and commit but was never physically recounted is
+    left untouched instead of being forced back to its stale open-time value."""
 
     __tablename__ = "stock_count_lines"
 
@@ -154,6 +161,11 @@ class StockCountLine(UUIDPKMixin, TimestampMixin, Base):
     expected_qty: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
     counted_qty: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
     variance: Mapped[Decimal] = mapped_column(Numeric(12, 3), default=Decimal("0"), nullable=False)
+    # True once staff physically entered a count for this line (PATCH). Untouched
+    # lines keep their open-time default and are skipped on commit.
+    recounted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0", nullable=False
+    )
 
     stock_count: Mapped[StockCount] = relationship(back_populates="lines")
     product: Mapped[Product] = relationship(lazy="joined")

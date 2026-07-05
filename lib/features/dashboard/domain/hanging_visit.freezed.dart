@@ -296,7 +296,7 @@ as String,
 /// @nodoc
 mixin _$HangingCategory {
 
- String get category; String get label; String get severity;// warning | critical
+ String get category; String get label; String get severity;// info | warning | critical
  int get count; String? get route; List<HangingVisitRow> get visits;
 /// Create a copy of HangingCategory
 /// with the given fields replaced by the non-null parameter values.
@@ -502,7 +502,7 @@ class _HangingCategory extends HangingCategory {
 @override final  String category;
 @override final  String label;
 @override final  String severity;
-// warning | critical
+// info | warning | critical
 @override final  int count;
 @override final  String? route;
  final  List<HangingVisitRow> _visits;

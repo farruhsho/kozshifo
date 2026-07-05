@@ -12,6 +12,8 @@ import '../domain/product.dart';
 /// Opens the write-off (списание) dialog and returns the recorded movements on
 /// success, or null if cancelled. [product] pre-selects and locks the picker
 /// (used from a stock row); when null the user searches for one.
+/// [includeExpired] seeds the «включая просроченные» checkbox — pass true from
+/// the «Истекает» tab so disposing an expired lot is a one-tap flow.
 ///
 /// The caller is responsible for refreshing stock and showing the success
 /// SnackBar — the dialog only reports the result.
@@ -19,10 +21,12 @@ Future<List<StockMovement>?> showWriteOffDialog(
   BuildContext context, {
   required String branchId,
   Product? product,
+  bool includeExpired = false,
 }) {
   return showDialog<List<StockMovement>>(
     context: context,
-    builder: (_) => WriteOffDialog(branchId: branchId, product: product),
+    builder: (_) => WriteOffDialog(
+        branchId: branchId, product: product, includeExpired: includeExpired),
   );
 }
 
@@ -30,10 +34,19 @@ Future<List<StockMovement>?> showWriteOffDialog(
 /// «включая просроченные». InsufficientStock (409) показываем точным текстом
 /// сервера прямо в диалоге, не закрывая его.
 class WriteOffDialog extends ConsumerStatefulWidget {
-  const WriteOffDialog({super.key, required this.branchId, this.product});
+  const WriteOffDialog({
+    super.key,
+    required this.branchId,
+    this.product,
+    this.includeExpired = false,
+  });
 
   final String branchId;
   final Product? product;
+
+  /// Initial state of the «включая просроченные» checkbox (true when opened
+  /// from the «Истекает» tab to dispose an expired lot).
+  final bool includeExpired;
 
   @override
   ConsumerState<WriteOffDialog> createState() => _WriteOffDialogState();
@@ -55,6 +68,7 @@ class _WriteOffDialogState extends ConsumerState<WriteOffDialog> {
   void initState() {
     super.initState();
     _selected = widget.product;
+    _includeExpired = widget.includeExpired;
   }
 
   @override

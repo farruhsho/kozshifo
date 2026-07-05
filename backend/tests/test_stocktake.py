@@ -196,6 +196,153 @@ def test_second_open_draft_same_branch_409(client, auth):
     client.post(f"{API}/inventory/stock-counts/{third.json()['id']}/commit", headers=auth)
 
 
+def _sc_movements(count_id: str) -> list:
+    """StockMovement rows written by a specific stock-count commit (direct DB)."""
+    from app.core.database import SessionLocal
+    from app.models.inventory import StockMovement
+    from sqlalchemy import select
+    from uuid import UUID
+
+    db = SessionLocal()
+    try:
+        return db.execute(
+            select(StockMovement).where(
+                StockMovement.ref_type == "stock_count",
+                StockMovement.ref_id == UUID(count_id),
+            )
+        ).scalars().all()
+    finally:
+        db.close()
+
+
+def test_untouched_line_does_not_resurrect_drained_batch(client, auth):
+    """Resurrect-guard: a batch that drained after the count opened but was NEVER
+    recounted must stay at its live qty on commit (no phantom resurrection, no
+    adjustment movement for that batch)."""
+    branch_id = _branch_id(client, auth)
+    p = _create_product(client, auth, "ST-RESURRECT", "Тест-воскрешение")
+    batch = _receipt(client, auth, branch_id, p["id"], "10", "RESURR-1")
+
+    # Open while on-hand == 10; the line is created with counted=expected=10 but
+    # recounted=False (a display default, not a physical count).
+    opened = client.post(f"{API}/inventory/stock-counts", headers=auth,
+                         json={"branch_id": branch_id}).json()
+    count_id = opened["id"]
+    line = next(l for l in opened["lines"] if l["batch_id"] == batch["id"])
+    assert Decimal(line["expected_qty"]) == Decimal("10")
+
+    # Stock moves: 3 written off (10 → 7 live). Operator does NOT recount this line.
+    wo = client.post(f"{API}/inventory/write-off", headers=auth, json={
+        "product_id": p["id"], "branch_id": branch_id,
+        "quantity": "3", "reason": "движение во время пересчёта"})
+    assert wo.status_code == 200, wo.text
+    assert Decimal(_stock_row(client, auth, branch_id, "ST-RESURRECT")["on_hand"]) == Decimal("7")
+
+    committed = client.post(f"{API}/inventory/stock-counts/{count_id}/commit", headers=auth)
+    assert committed.status_code == 200, committed.text
+    # The untouched line did NOT force the batch back to 10 — it stays at live 7.
+    assert Decimal(_stock_row(client, auth, branch_id, "ST-RESURRECT")["on_hand"]) == Decimal("7")
+    # And no adjustment movement was written for this count (nothing recounted).
+    assert _sc_movements(count_id) == []
+
+
+def test_recounted_line_applies_absolute_and_writes_one_movement(client, auth):
+    """Recounted-apply: the SAME drained batch, but the operator PATCHes counted=8
+    → commit forces the batch to 8 and writes exactly one adjustment movement."""
+    branch_id = _branch_id(client, auth)
+    p = _create_product(client, auth, "ST-RECOUNT", "Тест-пересчёт")
+    batch = _receipt(client, auth, branch_id, p["id"], "10", "RECOUNT-1")
+
+    opened = client.post(f"{API}/inventory/stock-counts", headers=auth,
+                         json={"branch_id": branch_id}).json()
+    count_id = opened["id"]
+    line = next(l for l in opened["lines"] if l["batch_id"] == batch["id"])
+
+    # Stock drains 10 → 7 live.
+    client.post(f"{API}/inventory/write-off", headers=auth, json={
+        "product_id": p["id"], "branch_id": branch_id, "quantity": "3", "reason": "движение"})
+    assert Decimal(_stock_row(client, auth, branch_id, "ST-RECOUNT")["on_hand"]) == Decimal("7")
+
+    # Operator physically recounts: finds 8 on the shelf.
+    up = client.patch(f"{API}/inventory/stock-counts/{count_id}/lines/{line['id']}",
+                      headers=auth, json={"counted_qty": "8"})
+    assert up.status_code == 200, up.text
+
+    committed = client.post(f"{API}/inventory/stock-counts/{count_id}/commit", headers=auth)
+    assert committed.status_code == 200, committed.text
+    # Absolute set to the physical 8 (not 7, not 10).
+    assert Decimal(_stock_row(client, auth, branch_id, "ST-RECOUNT")["on_hand"]) == Decimal("8")
+    # Exactly one adjustment movement, of applied delta 8 − 7 = +1.
+    movements = _sc_movements(count_id)
+    assert len(movements) == 1
+    assert Decimal(movements[0].quantity) == Decimal("1")
+
+
+def test_concurrent_commit_guarded_update_no_double_ledger(client, auth):
+    """Concurrent-commit: the guarded status UPDATE stakes the commit before any
+    movement is written, so a second commit is rejected (409) and the ledger does
+    not grow. We also assert the raw guarded UPDATE returns rowcount 0 the 2nd time
+    (the mechanism that makes an honest race safe on both SQLite and Postgres)."""
+    branch_id = _branch_id(client, auth)
+    p = _create_product(client, auth, "ST-RACE", "Тест-гонка")
+    batch = _receipt(client, auth, branch_id, p["id"], "10", "RACE-1")
+
+    opened = client.post(f"{API}/inventory/stock-counts", headers=auth,
+                         json={"branch_id": branch_id}).json()
+    count_id = opened["id"]
+    line = next(l for l in opened["lines"] if l["batch_id"] == batch["id"])
+    client.patch(f"{API}/inventory/stock-counts/{count_id}/lines/{line['id']}",
+                 headers=auth, json={"counted_qty": "12"})
+
+    first = client.post(f"{API}/inventory/stock-counts/{count_id}/commit", headers=auth)
+    assert first.status_code == 200, first.text
+    ledger_after_first = _sc_movements(count_id)
+    assert len(ledger_after_first) == 1  # one adjustment (12 − 10)
+
+    # A second commit request loses the race → 409, no extra movements.
+    second = client.post(f"{API}/inventory/stock-counts/{count_id}/commit", headers=auth)
+    assert second.status_code == 409, second.text
+    assert len(_sc_movements(count_id)) == len(ledger_after_first)  # ledger did NOT double
+
+    # Prove the underlying guard: a second draft→committed UPDATE matches 0 rows.
+    from app.core.database import SessionLocal
+    from app.models.inventory import StockCount
+    from sqlalchemy import update as sa_update
+    from uuid import UUID
+
+    db = SessionLocal()
+    try:
+        claimed = db.execute(
+            sa_update(StockCount)
+            .where(StockCount.id == UUID(count_id), StockCount.status == "draft")
+            .values(status="committed")
+            .execution_options(synchronize_session=False)
+        )
+        assert claimed.rowcount == 0  # already committed — guard rejects the loser
+        db.rollback()
+    finally:
+        db.close()
+
+
+def test_receipt_rejects_past_expiry_date(client, auth):
+    """Goods-in with an expiry already in the past (typo) is refused — such a lot
+    is born expired and would hang as an on_hand=0 phantom. None is allowed."""
+    branch_id = _branch_id(client, auth)
+    p = _create_product(client, auth, "ST-PASTEXP", "Тест-просрочка-приход")
+    denied = client.post(f"{API}/inventory/receipts", headers=auth, json={
+        "branch_id": branch_id,
+        "items": [{"product_id": p["id"], "quantity": "5", "unit_cost": "100",
+                   "batch_no": "PAST-1", "expiry_date": "2020-01-01"}]})
+    assert denied.status_code == 422, denied.text
+    assert "Срок годности" in denied.text
+    # A None expiry (бессрочный товар) is still accepted.
+    ok = client.post(f"{API}/inventory/receipts", headers=auth, json={
+        "branch_id": branch_id,
+        "items": [{"product_id": p["id"], "quantity": "5", "unit_cost": "100",
+                   "batch_no": "NOEXP-1"}]})
+    assert ok.status_code == 201, ok.text
+
+
 def test_stock_count_rbac_doctor_denied(client, auth):
     """Doctor lacks inventory.stocktake → cannot open a count."""
     branch_id = _branch_id(client, auth)

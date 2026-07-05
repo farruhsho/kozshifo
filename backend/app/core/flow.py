@@ -274,7 +274,7 @@ def close_visit_if_done(db: Session, visit: Visit) -> None:
     if Decimal(visit.payable) - Decimal(visit.paid_amount) > Decimal("0.00"):
         return
     # Local imports: operations/queue import flow (avoid module cycles).
-    from app.models.operation import Operation
+    from app.models.operation import Operation, Treatment
     from app.models.queue import QueueTicket
 
     still_active = db.execute(
@@ -284,6 +284,19 @@ def close_visit_if_done(db: Session, visit: Visit) -> None:
         ).limit(1)
     ).first()
     if still_active is not None:
+        return
+    # Оплаченный-вперёд многосеансный курс держит визит открытым до последнего
+    # сеанса: незавершённый (status=='prescribed') Treatment — это ещё не сделанная
+    # клиническая работа. Без этого гарда полная предоплата курса (take_payment →
+    # close_visit_if_done при flow=follow_up, баланс=0) заморозила бы визит ДО дня 1,
+    # и mark_treatment_session упёрся бы в 409. Зеркалит гард complete_if_treatment_done.
+    pending_tx = db.execute(
+        select(Treatment.id).where(
+            Treatment.visit_id == visit.id,
+            Treatment.status == "prescribed",
+        ).limit(1)
+    ).first()
+    if pending_tx is not None:
         return
     # Активной работой считаем ЛЮБУЮ не-cancelled операцию без финзакрытия
     # (financially_closed_at IS NULL). Проверка симметрична гарду set_operation_price

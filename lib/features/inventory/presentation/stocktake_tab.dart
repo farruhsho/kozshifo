@@ -163,14 +163,27 @@ final _stockCountProvider =
         (ref, countId) =>
             ref.watch(inventoryRepositoryProvider).stockCount(countId));
 
-class StockCountDetailScreen extends ConsumerWidget {
+class StockCountDetailScreen extends ConsumerStatefulWidget {
   const StockCountDetailScreen(
       {super.key, required this.branchId, required this.countId});
 
   final String branchId;
   final String countId;
 
-  Future<void> _commit(BuildContext context, WidgetRef ref) async {
+  @override
+  ConsumerState<StockCountDetailScreen> createState() =>
+      _StockCountDetailScreenState();
+}
+
+class _StockCountDetailScreenState
+    extends ConsumerState<StockCountDetailScreen> {
+  // Re-entrancy guard: блокируем FAB на время проведения, иначе двойной тап
+  // шлёт второй commit → идемпотентный бэкенд отвечает 409 «уже проведена» и
+  // пользователь видит красный error после успеха.
+  bool _committing = false;
+
+  Future<void> _commit() async {
+    if (_committing) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -190,34 +203,39 @@ class StockCountDetailScreen extends ConsumerWidget {
         ],
       ),
     );
-    if (ok != true || !context.mounted) return;
+    if (ok != true || !mounted || _committing) return;
+    setState(() => _committing = true);
     try {
-      await ref.read(inventoryRepositoryProvider).commitStockCount(countId);
-      ref.invalidate(_stockCountProvider(countId));
-      ref.invalidate(stockProvider(branchId));
-      ref.invalidate(reorderSuggestionsProvider(branchId));
-      if (context.mounted) {
+      await ref
+          .read(inventoryRepositoryProvider)
+          .commitStockCount(widget.countId);
+      ref.invalidate(_stockCountProvider(widget.countId));
+      ref.invalidate(stockProvider(widget.branchId));
+      ref.invalidate(reorderSuggestionsProvider(widget.branchId));
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Инвентаризация проведена')));
       }
     } catch (e) {
-      if (context.mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(e is ApiException ? e.message : e.toString()),
           backgroundColor: Theme.of(context).colorScheme.error,
         ));
       }
+    } finally {
+      if (mounted) setState(() => _committing = false);
     }
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final count = ref.watch(_stockCountProvider(countId));
+  Widget build(BuildContext context) {
+    final count = ref.watch(_stockCountProvider(widget.countId));
     return Scaffold(
       appBar: AppBar(title: const Text('Инвентаризация')),
       body: AsyncValueWidget<StockCount>(
         value: count,
-        onRetry: () => ref.invalidate(_stockCountProvider(countId)),
+        onRetry: () => ref.invalidate(_stockCountProvider(widget.countId)),
         builder: (c) {
           if (c.lines.isEmpty) {
             return const Center(
@@ -249,7 +267,11 @@ class StockCountDetailScreen extends ConsumerWidget {
                   padding: const EdgeInsets.fromLTRB(8, 8, 8, 88),
                   itemCount: c.lines.length,
                   itemBuilder: (_, i) => _LineTile(
-                    countId: countId,
+                    // ValueKey по id строки: после инвалидации провайдера Flutter
+                    // сопоставит State с той же строкой, а не переиспользует его
+                    // на соседнем индексе (иначе строка «залипает» disabled).
+                    key: ValueKey(c.lines[i].id),
+                    countId: widget.countId,
                     line: c.lines[i],
                     editable: c.isDraft,
                   ),
@@ -262,8 +284,15 @@ class StockCountDetailScreen extends ConsumerWidget {
       floatingActionButton: count.maybeWhen(
         data: (c) => c.isDraft
             ? FloatingActionButton.extended(
-                onPressed: () => _commit(context, ref),
-                icon: const Icon(Icons.task_alt_outlined),
+                // Дизейбл на время проведения — второй тап не уйдёт в 409.
+                onPressed: _committing ? null : _commit,
+                icon: _committing
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.task_alt_outlined),
                 label: const Text('Провести'),
               )
             : null,
@@ -275,7 +304,10 @@ class StockCountDetailScreen extends ConsumerWidget {
 
 class _LineTile extends ConsumerStatefulWidget {
   const _LineTile(
-      {required this.countId, required this.line, required this.editable});
+      {super.key,
+      required this.countId,
+      required this.line,
+      required this.editable});
 
   final String countId;
   final StockCountLine line;
@@ -287,6 +319,7 @@ class _LineTile extends ConsumerStatefulWidget {
 
 class _LineTileState extends ConsumerState<_LineTile> {
   late final TextEditingController _counted;
+  final FocusNode _focus = FocusNode();
   bool _saving = false;
 
   @override
@@ -296,7 +329,23 @@ class _LineTileState extends ConsumerState<_LineTile> {
   }
 
   @override
+  void didUpdateWidget(covariant _LineTile old) {
+    super.didUpdateWidget(old);
+    // После сохранения провайдер инвалидируется и виджет пересобирается с
+    // обновлённой строкой (тот же ValueKey → тот же State). Синхронизируем
+    // контроллер с серверным значением, но не затираем то, что сотрудник
+    // печатает прямо сейчас (поле в фокусе).
+    final fresh = _trim(widget.line.countedQty);
+    if (old.line.countedQty != widget.line.countedQty &&
+        _counted.text.trim().replaceAll(',', '.') != fresh &&
+        !_focus.hasFocus) {
+      _counted.text = fresh;
+    }
+  }
+
+  @override
   void dispose() {
+    _focus.dispose();
     _counted.dispose();
     super.dispose();
   }
@@ -311,6 +360,9 @@ class _LineTileState extends ConsumerState<_LineTile> {
             lineId: widget.line.id,
             countedQty: raw,
           );
+      // Снимаем блокировку поля: без этого TextField (enabled: … && !_saving)
+      // навсегда оставался бы disabled и строку нельзя было бы переправить.
+      if (mounted) setState(() => _saving = false);
       ref.invalidate(_stockCountProvider(widget.countId));
     } catch (e) {
       if (mounted) {
@@ -370,6 +422,7 @@ class _LineTileState extends ConsumerState<_LineTile> {
               width: 88,
               child: TextField(
                 controller: _counted,
+                focusNode: _focus,
                 enabled: widget.editable && !_saving,
                 textAlign: TextAlign.center,
                 keyboardType:

@@ -5,7 +5,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.dates import business_today
 
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -97,6 +99,16 @@ class ReceiptItemIn(BaseModel):
     batch_no: str | None = None
     expiry_date: date | None = None
 
+    @field_validator("expiry_date")
+    @classmethod
+    def _expiry_not_in_past(cls, v: date | None) -> date | None:
+        """Reject a receipt whose expiry is already past (typo like 2024-01-01):
+        such a lot is born expired, FEFO never touches it and it hangs as an
+        on_hand=0 phantom. None = бессрочный товар (allowed)."""
+        if v is not None and v < business_today():
+            raise ValueError("Срок годности в прошлом")
+        return v
+
 
 class ReceiptIn(BaseModel):
     branch_id: UUID
@@ -114,6 +126,7 @@ class BatchOut(BaseModel):
     unit_cost: Decimal
     received_at: datetime
     expired: bool  # expired batches are never auto-consumed; dispose explicitly
+    supplier_id: UUID | None = None  # feeds supplier-return ref_id from the picked lot
 
 
 # ── Stock view ────────────────────────────────────────────────────────────────

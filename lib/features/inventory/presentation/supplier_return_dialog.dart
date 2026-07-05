@@ -75,6 +75,10 @@ class _SupplierReturnDialogState extends ConsumerState<SupplierReturnDialog> {
             batchId: batch.id,
             quantity: QuantityStepper.format(_quantity),
             reason: _reason.text.trim(),
+            // Поставщик берётся из выбранной партии → движение возврата пишется
+            // с ref_id=supplier_id (виден в леджере). Null у партии без
+            // поставщика — оставляем как есть.
+            supplierId: batch.supplierId,
           );
       if (mounted) Navigator.of(context).pop(true);
     } on ApiException catch (e) {

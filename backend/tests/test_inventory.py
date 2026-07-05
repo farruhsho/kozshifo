@@ -172,11 +172,31 @@ def test_expired_batches_never_consumed_without_explicit_disposal(client, auth):
     branch_id = _branch_id(client, auth)
     product = _create_product(client, auth, "EXP-TEST-1", "Тест-срок")
 
+    # The FRESH lot is received through the API as usual. The OLD lot models a
+    # batch that expired *while in stock* — it is seeded directly via the core
+    # helper, bypassing the HTTP receipt validator (which now rejects an
+    # already-past expiry on goods-in; a receipt cannot legitimately book
+    # already-expired stock, but stock can expire over time).
+    import uuid
+    from datetime import date
+    from app.core.database import SessionLocal
+    from app.core.stock import receive_stock
+
+    with SessionLocal() as _db:
+        receive_stock(
+            _db,
+            product_id=uuid.UUID(product["id"]),
+            branch_id=uuid.UUID(branch_id),
+            quantity=Decimal("5"),
+            unit_cost=Decimal("100"),
+            batch_no="OLD",
+            expiry_date=date(2020, 1, 1),  # уже просрочен (истёк на складе)
+        )
+        _db.commit()
+
     client.post(f"{API}/inventory/receipts", headers=auth, json={
         "branch_id": branch_id,
         "items": [
-            {"product_id": product["id"], "quantity": "5", "unit_cost": "100",
-             "batch_no": "OLD", "expiry_date": "2020-01-01"},     # уже просрочен
             {"product_id": product["id"], "quantity": "3", "unit_cost": "100",
              "batch_no": "FRESH", "expiry_date": "2030-01-01"},
         ],

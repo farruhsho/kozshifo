@@ -12,7 +12,7 @@ from app.core.audit import record_audit
 from app.core.database import get_db
 from app.core.deps import CurrentUser, require_permission
 from app.core.security import hash_password
-from app.core.visibility import owner_user_ids
+from app.core.visibility import OWNER_ROLE, caller_is_owner, owner_user_id_set, owner_user_ids
 from app.models.catalog import Service
 from app.models.diagnosis import Diagnosis
 from app.models.rbac import Role
@@ -89,6 +89,73 @@ def _guard_owner_grant(actor: User, *, is_superuser: bool, role_names: list[str]
         )
 
 
+def _actor_is_owner(db: Session, actor: User) -> bool:
+    """Owner tier = a superuser OR a holder of the Superadmin (owner) role — the
+    only tier exempt from the privilege-subset guard below."""
+    return caller_is_owner(actor, owner_user_id_set(db))
+
+
+def _guard_permission_subset(db: Session, actor: User, role_names: list[str]) -> None:
+    """Anti privilege-escalation: a non-owner may not assign a user (incl. self) a
+    set of roles whose combined permissions exceed the actor's own effective
+    permissions. Otherwise a delegate with users.update could grant rights they
+    lack (directly or via a role they retuned). Owner / superuser is exempt."""
+    if _actor_is_owner(db, actor):
+        return
+    if not role_names:
+        return
+    roles = list(db.execute(select(Role).where(Role.name.in_(role_names))).scalars().all())
+    granted: set[str] = set()
+    for role in roles:
+        granted.update(p.code for p in role.permissions)
+    escalated = sorted(granted - actor.effective_permission_codes())
+    if escalated:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"Нельзя выдать права, которых у вас нет: {', '.join(escalated)}",
+        )
+
+
+def _would_strip_an_owner_marker(target: User, data: dict) -> bool:
+    """True if this update would remove ANY owner marker the target currently
+    holds: clear the is_superuser flag, or drop the Superadmin (owner) role. Both
+    define ownership (owner_user_ids() is role-based, so losing the role breaks the
+    owner set even if the flag lingers), so removing either from the last owner is
+    what the guard protects against."""
+    clears_superuser = (
+        target.is_superuser and data.get("is_superuser", target.is_superuser) is False
+    )
+    had_owner_role = any(r.name == OWNER_ROLE for r in target.roles)
+    drops_owner_role = (
+        had_owner_role
+        and "role_names" in data
+        and OWNER_ROLE not in set(data.get("role_names") or [])
+    )
+    return clears_superuser or drops_owner_role
+
+
+def _guard_last_owner(db: Session, target: User, data: dict) -> None:
+    """Never let the organisation lose its last owner: if this update would strip
+    an owner marker from the sole owner (no other owner account remains), refuse
+    with 409. Transferring ownership first (promote a second owner, then demote the
+    first) stays possible because the owner count is then > 1."""
+    owner_ids = set(owner_user_id_set(db))
+    is_owner_target = target.is_superuser or target.id in owner_ids
+    if not is_owner_target:
+        return
+    if not _would_strip_an_owner_marker(target, data):
+        return
+    # `owner_ids` counts Superadmin-role holders; add a bare superuser (defensive)
+    # so the last-owner count is never under-estimated.
+    if target.is_superuser:
+        owner_ids.add(target.id)
+    if len(owner_ids) <= 1:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Нельзя оставить систему без владельца",
+        )
+
+
 @router.get("", response_model=Page[UserOut])
 def list_users(
     db: Annotated[Session, Depends(get_db)],
@@ -117,6 +184,7 @@ def create_user(
     if db.execute(select(User).where(User.email == payload.email)).scalar_one_or_none():
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
     _guard_owner_grant(actor, is_superuser=payload.is_superuser, role_names=payload.role_names)
+    _guard_permission_subset(db, actor, payload.role_names)
     user = User(
         email=payload.email,
         full_name=payload.full_name,
@@ -174,6 +242,11 @@ def update_user(
         is_superuser=bool(data.get("is_superuser", False)),
         role_names=data.get("role_names") or [],
     )
+    if "role_names" in data:
+        _guard_permission_subset(db, actor, data.get("role_names") or [])
+    # Never let the last owner demote themselves (or be demoted) into a non-owner,
+    # which would lock the whole org out of owner-only functions.
+    _guard_last_owner(db, user, data)
     if "role_names" in data:
         user.roles = _resolve_roles(db, data.pop("role_names") or [])
     if "service_ids" in data:

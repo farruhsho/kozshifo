@@ -22,6 +22,9 @@ abstract class StockBatch with _$StockBatch {
     required String unitCost,
     required String receivedAt,
     @Default(false) bool expired,
+    // Поставщик партии (для возврата поставщику → ref_id движения). Может быть
+    // null: партия без поставщика или бэкенд ещё не отдаёт поле в BatchOut.
+    String? supplierId,
   }) = _StockBatch;
 
   factory StockBatch.fromJson(Map<String, dynamic> json) =>

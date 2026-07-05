@@ -279,15 +279,19 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
     };
   }
 
-  Future<void> _save() async {
+  /// Сохраняет весь бланк на сервер (PUT), обновляет [_exam] свежей серверной
+  /// версией, сбрасывает [_dirty] и убирает черновик. Возвращает `true` при
+  /// успехе, `false` при ошибке (снек уже показан) — печать по `false` обязана
+  /// прерваться, чтобы не выдать устаревший бланк с несохранёнными данными.
+  Future<bool> _save() async {
     final visitId = _visitId;
-    if (visitId == null) return;
+    if (visitId == null) return false;
     setState(() => _saving = true);
     try {
       final exam = await ref
           .read(doctorRepositoryProvider)
           .upsertExam(visitId, _payload());
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() {
         _exam = exam;
         _draftRestored = false;
@@ -300,16 +304,34 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
       ref.invalidate(patientTimelineProvider(widget.patientId));
       ref.invalidate(frequentDiagnosesProvider);
       _snack('Осмотр сохранён');
+      return true;
     } catch (e) {
       if (mounted) _snack('$e', error: true);
+      return false;
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
+  /// Гарантирует, что серверный [_exam] совпадает с экраном перед печатью: при
+  /// несохранённых правках ([_dirty]) принудительно сохраняет через [_save].
+  /// Возвращает `true`, если печатать безопасно (нет правок либо сохранение
+  /// удалось); `false` — если сохранение упало (снек уже показан) либо виджет
+  /// размонтирован. Так рецепт/025-8 всегда печатаются из свежих данных, а не
+  /// из устаревшего серверного объекта.
+  Future<bool> _ensureSavedBeforePrint() async {
+    if (!_dirty) return true;
+    final ok = await _save();
+    if (!mounted) return false;
+    return ok;
+  }
+
   Future<void> _print() async {
     final visitId = _visitId;
     if (visitId == null) return;
+    // Бэкенд собирает PDF из строки БД — сначала гарантируем, что там свежие
+    // данные с экрана, иначе распечатается устаревшая версия 025-8.
+    if (!await _ensureSavedBeforePrint()) return;
     setState(() => _printing = true);
     try {
       final bytes = await ref.read(doctorRepositoryProvider).cardPdf(visitId);
@@ -330,6 +352,12 @@ class _PatientCardScreenState extends ConsumerState<PatientCardScreen> {
   /// «Печать рецепта»: отдельный печатный бланк рецепта (очки/медикаменты) по
   /// ТЕКУЩЕМУ осмотру — рефракция OD/OS + «Тавсия». Байты PDF под `exams.read`.
   Future<void> _printPrescription() async {
+    if (_exam == null) return;
+    // Рецепт генерится сервером из сохранённого осмотра: без принудительного
+    // сохранения несохранённая рефракция OD/OS и «Тавсия» не попадут в бланк
+    // (мед-безопасность). Если сохранение упало — не печатаем устаревшее.
+    if (!await _ensureSavedBeforePrint()) return;
+    // Берём exam ПОСЛЕ сохранения: _save мог создать/обновить _exam.
     final exam = _exam;
     if (exam == null) return;
     setState(() => _printingRx = true);

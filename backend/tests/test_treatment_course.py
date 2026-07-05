@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
 from tests.conftest import API
 
 
@@ -211,3 +213,135 @@ def test_course_billing_not_doubled(client, auth):
     billed_after = [i for i in after["items"] if i["service_id"] == service["id"]]
     assert len(billed_after) == 1, after
     assert Decimal(after["balance"]) == Decimal("150000")
+
+
+def _pay_full(client, auth, visit_id, *, issue_ticket=False) -> dict:
+    """Полная оплата остатка визита (не выпуская талон по умолчанию — курс уже
+    назначен, диагностический талон не нужен)."""
+    balance = client.get(f"{API}/visits/{visit_id}", headers=auth).json()["balance"]
+    r = client.post(f"{API}/payments", headers=auth,
+                    json={"visit_id": visit_id, "amount": balance,
+                          "issue_queue_ticket": issue_ticket})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def test_prepaid_course_keeps_visit_open(client, auth):
+    """БАГ 1 (регрессия): полная предоплата платного многосеансного курса ДО
+    первого сеанса НЕ должна авто-закрыть визит. После назначения курса и
+    завершения приёма (flow=follow_up) полная оплата раньше звала
+    close_visit_if_done → visit.status='completed' ещё до дня 1, и
+    mark_treatment_session упирался в 409. Теперь незавершённый (prescribed) курс
+    держит визит открытым, а день-1 сеанс проходит."""
+    branch = _branch(client, auth)
+    patient = _patient(client, auth, "Предоплата")
+    visit = _visit(client, auth, patient, branch)
+    service = client.post(f"{API}/services", headers=auth,
+                          json={"code": "TX-PREPAID", "name": "Курс вперёд",
+                                "price": "90000"}).json()
+
+    tx = client.post(f"{API}/visits/{visit['id']}/treatments", headers=auth,
+                     json={"kind": "procedure", "name": "Курс вперёд",
+                           "service_id": service["id"], "sessions_total": 3}).json()
+    tid = tx["id"]
+
+    # Врач завершает приём: есть назначение (treatment_assigned) → flow=follow_up.
+    fin = client.post(f"{API}/visits/{visit['id']}/finish-appointment", headers=auth)
+    assert fin.status_code == 200, fin.text
+    assert fin.json()["flow_status"] == "follow_up", fin.text
+    assert fin.json()["status"] == "open"
+
+    # Регистратура принимает ПОЛНУЮ предоплату курса до выдачи первого Л-талона.
+    paid = _pay_full(client, auth, visit["id"])
+    # КЛЮЧЕВОЕ утверждение бага 1: визит НЕ закрылся — курс ещё не выполнен.
+    assert paid["visit_status"] == "open", paid
+    v = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
+    assert v["status"] == "open", v
+    assert Decimal(v["balance"]) == Decimal("0")
+
+    # День 1: сеанс проходит (не 409, визит открыт).
+    r = client.post(f"{API}/treatments/{tid}/mark-session", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["sessions_done"] == 1
+    assert r.json()["status"] == "prescribed"
+
+
+def test_course_closes_after_last_session(client, auth):
+    """Оплаченный-вперёд курс закрывает визит на ПОСЛЕДНЕМ сеансе: гард снимается,
+    когда prescribed-Treatment больше не остаётся (не создали вечно-открытый
+    визит). Баланс 0 → авто-close отрабатывает."""
+    branch = _branch(client, auth)
+    patient = _patient(client, auth, "ПоследнийСеанс")
+    visit = _visit(client, auth, patient, branch)
+    service = client.post(f"{API}/services", headers=auth,
+                          json={"code": "TX-LAST", "name": "Курс закрытие",
+                                "price": "60000"}).json()
+    tx = client.post(f"{API}/visits/{visit['id']}/treatments", headers=auth,
+                     json={"kind": "procedure", "name": "Курс закрытие",
+                           "service_id": service["id"], "sessions_total": 3}).json()
+    tid = tx["id"]
+    assert client.post(f"{API}/visits/{visit['id']}/finish-appointment",
+                       headers=auth).status_code == 200
+    _pay_full(client, auth, visit["id"])
+
+    # Первые два сеанса — визит остаётся открытым (курс не добит).
+    for _ in range(2):
+        assert client.post(f"{API}/treatments/{tid}/mark-session",
+                           headers=auth).status_code == 200
+    mid = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
+    assert mid["status"] == "open", mid
+
+    # Последний сеанс: prescribed-Treatment исчезает → визит авто-закрывается.
+    last = client.post(f"{API}/treatments/{tid}/mark-session", headers=auth)
+    assert last.status_code == 200, last.text
+    assert last.json()["status"] == "done"
+    after = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()
+    assert after["status"] == "completed", after
+    assert Decimal(after["balance"]) == Decimal("0")
+
+
+def test_guards_reject_closed_visit(client, auth):
+    """БАГ 2 (регрессия): dispense/complete на закрытом визите отвергаются тем же
+    409, что и mark_treatment_session — списание стока и завершение курса не
+    попадают в терминальный визит."""
+    branch = _branch(client, auth)
+    patient = _patient(client, auth, "ЗакрытГарды")
+    visit = _visit(client, auth, patient, branch)
+    product = _product(client, auth, branch, sku="MED-GUARD")
+    # Кладём реальный сток на медикамент, чтобы /dispense упёрся именно в гард
+    # закрытого визита, а не в нехватку остатка (иначе тест был бы вырожденным).
+    rcpt = client.post(f"{API}/inventory/receipts", headers=auth,
+                       json={"branch_id": branch,
+                             "items": [{"product_id": product["id"], "quantity": "5"}]})
+    assert rcpt.status_code == 201, rcpt.text
+
+    # Процедура (для complete) и медикамент (для dispense) на одном визите.
+    proc = client.post(f"{API}/visits/{visit['id']}/treatments", headers=auth,
+                       json={"kind": "procedure", "name": "Процедура"}).json()
+    med = client.post(f"{API}/visits/{visit['id']}/treatments", headers=auth,
+                      json={"kind": "medication", "name": "Капли",
+                            "product_id": product["id"], "quantity": "1"}).json()
+
+    # Легально закрываем визит (баланс 0 — назначения без оплаты).
+    closed = client.post(f"{API}/visits/{visit['id']}/close", headers=auth)
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "completed", closed.text
+
+    # Эталон — mark-session на completed визите даёт 409.
+    ref = client.post(f"{API}/treatments/{proc['id']}/mark-session", headers=auth)
+    assert ref.status_code == 409, ref.text
+
+    # Гард приведён к тому же коду: complete на completed визите тоже 409.
+    comp = client.post(f"{API}/treatments/{proc['id']}/complete", headers=auth)
+    assert comp.status_code == 409, comp.text
+    assert "completed" in comp.json()["detail"], comp.text
+
+    # dispense: сток есть, поэтому 409 приходит от гарда визита, а не от нехватки
+    # остатка — сообщение упоминает закрытый визит, а сток остаётся нетронутым.
+    disp = client.post(f"{API}/treatments/{med['id']}/dispense", headers=auth)
+    assert disp.status_code == 409, disp.text
+    assert "completed" in disp.json()["detail"], disp.text
+    stock = client.get(f"{API}/inventory/stock", headers=auth,
+                       params={"branch_id": branch}).json()
+    med_row = next(r for r in stock if r["product"]["sku"] == "MED-GUARD")
+    assert Decimal(med_row["on_hand"]) == Decimal("5"), med_row  # ничего не списано

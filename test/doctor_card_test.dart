@@ -157,11 +157,29 @@ class _FakeDoctorRepository extends DoctorRepository {
 }
 
 /// Same as [_FakeDoctorRepository] but the visit already has a recorded exam,
-/// so the print/prescription actions render.
+/// so the print/prescription actions render. Tracks upsertExam to verify that
+/// print buttons force a save of unsaved edits before generating the PDF.
 class _FakeDoctorRepositoryWithExam extends _FakeDoctorRepository {
+  /// When true, upsertExam throws → simulates a failed save before print.
+  bool failSave = false;
+
+  /// Number of times the form was persisted to the server via upsertExam.
+  int upsertCount = 0;
+
+  /// id the (re)saved exam gets — distinct from the initially loaded 'e1' so a
+  /// test can assert the prescription used the FRESH exam id, not the stale one.
+  String upsertedExamId = 'e2';
+
   @override
   Future<EyeExam?> examForVisit(String visitId) async =>
       const EyeExam(id: 'e1', visitId: 'v1', patientId: 'p1');
+
+  @override
+  Future<EyeExam> upsertExam(String visitId, Map<String, dynamic> payload) async {
+    upsertCount++;
+    if (failSave) throw Exception('save failed');
+    return EyeExam(id: upsertedExamId, visitId: visitId, patientId: 'p1');
+  }
 }
 
 /// One scan result linked to v1; records unlinkResult calls — no Dio traffic.
@@ -498,6 +516,78 @@ void main() {
       await tester.pump();
 
       expect(doctor.prescriptionExamId, 'e1');
+      // Форма не менялась → лишнего сохранения не было.
+      expect(doctor.upsertCount, 0);
+    });
+
+    testWidgets(
+      'несохранённые правки: печать сначала сохраняет, затем печатает свежий exam',
+      (tester) async {
+        final doctor = await openScreen(
+          tester,
+          permissions: const ['exams.write', 'exams.read'],
+        );
+
+        // Врач ввёл рекомендации, но НЕ нажал «Сохранить осмотр» → форма грязная.
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Тавсия (рекомендации)'),
+          'Очки для дали',
+        );
+        await tester.pump();
+
+        await tester.tap(find.text('Печать рецепта'));
+        await tester.pump();
+        await tester.pump();
+
+        // Перед печатью выполнено принудительное сохранение…
+        expect(doctor.upsertCount, 1);
+        // …и рецепт напечатан по СВЕЖЕМУ осмотру (e2), а не по устаревшему e1.
+        expect(doctor.prescriptionExamId, 'e2');
+      },
+    );
+
+    testWidgets('сохранение упало → рецепт НЕ печатается (нет устаревшего бланка)',
+        (tester) async {
+      final doctor = await openScreen(
+        tester,
+        permissions: const ['exams.write', 'exams.read'],
+      );
+      doctor.failSave = true;
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Тавсия (рекомендации)'),
+        'Очки для дали',
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Печать рецепта'));
+      await tester.pump();
+      await tester.pump();
+
+      // Сохранение попытались, оно упало → prescriptionPdf НЕ вызван.
+      expect(doctor.upsertCount, 1);
+      expect(doctor.prescriptionExamId, isNull);
+    });
+
+    testWidgets('печать 025-8 тоже сохраняет грязную форму перед PDF',
+        (tester) async {
+      final doctor = await openScreen(
+        tester,
+        permissions: const ['exams.write', 'exams.read'],
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Тавсия (рекомендации)'),
+        'Очки для дали',
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('Печать 025-8'));
+      await tester.pump();
+      await tester.pump();
+
+      // Тот же приём распространён на карту 025-8 (cardPdf).
+      expect(doctor.upsertCount, 1);
     });
   });
 

@@ -139,9 +139,13 @@ def dispense_treatment(
     if treatment.product_id is None or treatment.quantity is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Treatment has no linked product to dispense")
     visit = db.get(Visit, treatment.visit_id)
-    # Real stock must never leave the warehouse against a dead visit.
-    if visit.status == "cancelled":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot dispense on a cancelled visit")
+    # Real stock must never leave the warehouse against a closed/dead visit —
+    # зеркало mark_treatment_session: списание/COGS не должны попасть в терминальный
+    # (completed/cancelled) визит, иначе последующий complete_if_treatment_done
+    # окажется no-op из-за _is_locked, а сток спишется в закрытый визит.
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Cannot dispense on a {visit.status} visit")
     product = db.get(Product, treatment.product_id)
 
     # Single product: write_off_fefo checks availability before mutating, so a
@@ -195,8 +199,12 @@ def complete_treatment(
                             "Only a prescribed procedure can be completed "
                             f"(kind: {treatment.kind}, status: {treatment.status})")
     visit = db.get(Visit, treatment.visit_id)
-    if visit.status == "cancelled":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Cannot complete on a cancelled visit")
+    # Зеркало mark_treatment_session: клиническую работу нельзя завершать на
+    # терминальном визите — иначе complete_if_treatment_done станет no-op
+    # (_is_locked), а курс «завершится» против закрытого визита.
+    if visit.status in ("completed", "cancelled"):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"Cannot complete on a {visit.status} visit")
     treatment.status = "done"
     # Завершение процедуры целиком закрывает курс (все сеансы), чтобы прогресс
     # оставался согласованным даже при закрытии через /complete, а не /mark-session.

@@ -22,7 +22,49 @@ tokens re-deriving the project from scratch.
 
 ## 1. Status at a glance (2026-07)
 
-> **2026-07-04 — Actor-journey audit + 3 build waves (HEAD `95eedd4`, in `main`).**
+> **2026-07-05 — Wave 4 (fresh adversarial audit over Wave 3) + Phase 4 features
+> (HEAD `ea692c0`, in `main`).** A second orchestrator pass re-audited the Wave-3
+> code + key actor journeys (16 agents, findings adversarially refuted), fixed
+> everything, then shipped two backlog features. Rebased onto the whole-system
+> **integration audit `ab8ba4e`** (which had landed in `main` first — 11 cross-wave
+> bugs incl. a CRITICAL partial-refund money-loss, cancel→auto-close, concurrent-
+> stocktake block, free-visit routing, RBAC coherence). Gates on the merged tree:
+> **pytest 485 / flutter 238 / analyze clean / alembic head `d1e5c9a2f7b3` (linear,
+> applies clean on a fresh DB)**. One migration added this pass: `d1e5c9a2f7b3`
+> (`stock_count_lines.recounted`). Owner run `alembic upgrade head` to apply.
+> - **Wave 4 fixes (3 blockers + 7 majors + 7 minors)** — *stocktake:* commit no
+>   longer resurrects stock consumed during the count (`recounted` flag → only
+>   physically-recounted lines apply; absolute-set kept) + guarded-UPDATE makes a
+>   concurrent commit race-safe (no double ledger rows) + goods-in rejects a
+>   past expiry. *Treatment course:* `close_visit_if_done` guards a pending
+>   `prescribed` course (a prepaid course after «Завершить приём» no longer
+>   auto-closes the visit before its sessions) + `dispense`/`complete` reject a
+>   closed visit like `mark-session`. *RBAC:* privilege-escalation blocked (a
+>   non-owner can't grant a role permissions they lack + self-assign) + ghost
+>   Superadmin role hidden from non-owners on `GET /roles` + last-owner self-
+>   demotion refused (409) + role-audit records the permission diff + `GET
+>   /branches` opened to inventory roles (warehouse-only role can pick a transfer
+>   target). *Flutter:* stocktake line no longer freezes after save + рецепт/025-8
+>   print force-saves unsaved exam edits first (patient-facing safety) + minor
+>   polish (FAB disable, reorder-provider invalidate, «Истекает» write-off,
+>   supplier_id on return).
+> - **Phase 4 — H2 treatment-revenue report:** `GET /reports/by-treatment`
+>   (+ csv/xlsx/pdf), revenue grouped by service with procedure/medication split;
+>   semantics mirror `by-operation` 1:1 (Flutter «По лечениям» tab).
+> - **Phase 4 — warehouse traceability:** `GET /inventory/movements` (StockMovement
+>   ledger history — filters + pagination + joined names; Flutter «История» tab) +
+>   supplier picker on goods-in (receipt no longer hardcodes `supplier_id=null`) +
+>   batch/expiry inputs in the reorder-prefill receipt (closes a never-expiring-
+>   phantom FEFO hole).
+> - **Consciously deferred (see `docs/ACTORS.md`):** H9 (two consult-services →
+>   two doctors in one visit) is a flow-machine redesign, not a quick fix, and has
+>   a manual workaround — deferred with rationale; also per-session course
+>   consumables, FK `RESTRICT` on `user_roles` (TOCTOU covered by a re-check),
+>   and re-walking the reception/doctor/diagnost/director/surgeon journeys
+>   (validated in the 2026-07-04 audit; H4/H4a/H14 remain unverified).
+>
+> **2026-07-04 — Actor-journey audit + 3 build waves (was HEAD `95eedd4`; superseded
+> by the pass above).**
 > An orchestrator pass modelled all 14 actors (`docs/ACTORS.md`), ran a 50-agent
 > journey audit against the code, then shipped three reviewed waves. Every actor now
 > completes their journey with **no dead-ends**. Gates: **pytest 461 / flutter 218 /
@@ -706,14 +748,25 @@ preview via file_picker), notification core (`core/notify.py`: log rows always,
 Telegram when TELEGRAM_BOT_TOKEN/CHAT_ID set; low-stock alerts on every
 write-off path, 24h anti-spam), director KPIs (operations, deficit, expiring lots).
 
-**Next (Phase 5 candidates), plus known leftovers:**
-1. Real device transports (serial/HL7/DICOM stubs in `core/devices/adapters.py`), SMS provider, notification UI screen.
-2. Full Director KPI suite (conversions, LTV, forecasts) + Reports engine; double-entry ledger.
-3. Tokens still live in `shared_preferences` — secure-storage hardening pending the build_runner/native-hooks issue (§6).
-4. Refresh tokens are stateless — add a `jti` revocation list when Postgres/Redis lands.
-5. First real `docker compose up --build` on a Docker-capable host; CI.
-6. Searchable product pickers (dropdowns load one 500-item page today) and an
-   expired-stock disposal UI (backend `include_expired` write-off exists).
+**Next candidates + known leftovers** (updated 2026-07-05 after Wave 4 / Phase 4):
+1. **H9 — two consult-services → two doctors in one visit** (deferred flow-machine
+   redesign; `docs/ACTORS.md` has the rationale + design sketch): needs a per-service
+   consultation concept + parallel doctor legs (`appointment_finished` only on the
+   last V-ticket). Manual workaround today: reception refer-to-doctor for the 2nd.
+2. **Per-session course consumables** (treatment-nurse can't write off stock per day
+   of a procedure course; medication is single-dispense only) + FK `RESTRICT` on
+   `user_roles.role_id` (delete-role TOCTOU is covered by a re-check, not the DB).
+3. Real device transports (serial/HL7/DICOM stubs in `core/devices/adapters.py`), SMS provider, notification UI screen.
+4. Full Director KPI suite (conversions, LTV, forecasts) + report-constructor; double-entry ledger.
+5. Tokens still live in `shared_preferences` — secure-storage hardening pending the build_runner/native-hooks issue (§6).
+6. First real `docker compose up --build` on a Docker-capable host; CI.
+7. Searchable product pickers (dropdowns load one 500-item page today). *(Expired-stock
+   disposal UI shipped in Wave 4 — the «Истекает» tab now has a «Списать» action; the
+   StockMovement history screen shipped in Phase 4 — «История» tab.)*
+8. Re-walk the reception/doctor/diagnost/director/surgeon journeys — validated in the
+   2026-07-04 audit but NOT re-audited in Wave 4 (`H4`/`H4a`/`H14` in `docs/ACTORS.md`
+   remain unverified: partial-payment number rule, pay double-click idempotency,
+   cashier-shift split).
 
 Full roadmap: `PLATFORM.md` §6.
 

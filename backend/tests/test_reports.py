@@ -139,6 +139,71 @@ def test_by_doctor_enriched_and_profit_by_region(client, auth):
     assert "Регион" in csv.content.decode("utf-8-sig")
 
 
+def test_by_treatment_reflects_procedure_revenue(client, auth):
+    """Платная процедура-лечение появляется в отчёте «По лечениям» с корректной
+    выручкой (цена услуги), и все экспорты отдают 200. Зеркалит by-operation:
+    выручка — собственная биллинговая строка лечения (VisitItem), не оплата."""
+    branch_id = _branch(client, auth)
+    # Пациент + визит без диагностического талона (лечение назначается сразу).
+    patient = client.post(
+        f"{API}/patients", headers=auth,
+        json={"first_name": "Леч", "last_name": "Отчёт", "branch_id": branch_id},
+    ).json()
+    visit = client.post(
+        f"{API}/visits", headers=auth,
+        json={"patient_id": patient["id"], "branch_id": branch_id},
+    ).json()
+    service = client.post(
+        f"{API}/services", headers=auth,
+        json={"code": "TX-REPORT", "name": "Отчётная процедура", "price": "175000"},
+    ).json()
+    # Платное лечение биллит строку услуги (visit_item_id) на цену услуги.
+    tx = client.post(
+        f"{API}/visits/{visit['id']}/treatments", headers=auth,
+        json={"kind": "procedure", "name": "Отчётная процедура",
+              "service_id": service["id"]},
+    )
+    assert tx.status_code == 201, tx.text
+    assert tx.json()["visit_item_id"] is not None
+
+    # Оплачиваем визит полностью (семантика by-treatment — accrual, но платим для
+    # полноты сценария директора «процедура принесла деньги»).
+    balance = client.get(f"{API}/visits/{visit['id']}", headers=auth).json()["balance"]
+    pay = client.post(f"{API}/payments", headers=auth,
+                      json={"visit_id": visit["id"], "amount": balance,
+                            "issue_queue_ticket": False})
+    assert pay.status_code in (200, 201), pay.text
+
+    rep = client.get(f"{API}/reports/by-treatment", headers=auth)
+    assert rep.status_code == 200, rep.text
+    body = rep.json()
+    for key in ("count", "revenue", "by_service", "date_from", "date_to"):
+        assert key in body
+    row = next((r for r in body["by_service"]
+                if r["service_name"] == "Отчётная процедура"), None)
+    assert row is not None, body
+    assert row["kind"] == "procedure"
+    assert row["count"] >= 1
+    assert float(row["revenue"]) >= 175000
+    assert float(body["revenue"]) >= 175000
+
+    # Все четыре формата экспорта отдают 200 + верный content-type/magic.
+    csv = client.get(f"{API}/reports/by-treatment.csv", headers=auth)
+    assert csv.status_code == 200
+    assert csv.content[:3] == b"\xef\xbb\xbf"
+    assert "Услуга" in csv.content.decode("utf-8-sig")
+
+    xlsx = client.get(f"{API}/reports/by-treatment.xlsx", headers=auth)
+    assert xlsx.status_code == 200
+    assert "spreadsheetml" in xlsx.headers["content-type"]
+    assert xlsx.content[:4] == b"PK\x03\x04"
+
+    pdf = client.get(f"{API}/reports/by-treatment.pdf", headers=auth)
+    assert pdf.status_code == 200
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content[:4] == b"%PDF"
+
+
 def test_by_diagnostician_has_studies_and_time(client, auth):
     dx = client.get(f"{API}/reports/by-diagnostician", headers=auth).json()
     assert isinstance(dx, list)

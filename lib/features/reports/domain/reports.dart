@@ -204,5 +204,55 @@ class OperationsReport {
       );
 }
 
+/// Одна строка по услуге в отчёте лечений: тип (процедура/медикамент),
+/// число лечений и суммарная выручка.
+class TreatmentServiceRow {
+  const TreatmentServiceRow({
+    required this.serviceName,
+    required this.kind,
+    required this.count,
+    required this.revenue,
+  });
+  final String serviceName;
+
+  /// `procedure` | `medication` (сырое значение бэкенда).
+  final String kind;
+  final int count;
+  final String revenue;
+  factory TreatmentServiceRow.fromJson(Map<String, dynamic> j) =>
+      TreatmentServiceRow(
+        serviceName: (j['service_name'] ?? '—').toString(),
+        kind: (j['kind'] ?? '').toString(),
+        count: _int(j['count']),
+        revenue: _money(j['revenue']),
+      );
+
+  /// Человекочитаемый тип: Процедура / Медикамент (иначе — сырое значение).
+  String get kindLabel => switch (kind) {
+        'procedure' => 'Процедура',
+        'medication' => 'Медикамент',
+        _ => kind,
+      };
+}
+
+/// Отчёт по лечениям: всего (кол-во/выручка) + разбивка по услугам.
+class TreatmentsReport {
+  const TreatmentsReport({
+    required this.count,
+    required this.revenue,
+    required this.byService,
+  });
+  final int count;
+  final String revenue;
+  final List<TreatmentServiceRow> byService;
+  factory TreatmentsReport.fromJson(Map<String, dynamic> j) => TreatmentsReport(
+        count: _int(j['count']),
+        revenue: _money(j['revenue']),
+        byService: ((j['by_service'] as List<dynamic>?) ?? const [])
+            .map((e) => TreatmentServiceRow.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 /// Ключ диапазона дат для провайдеров отчётов (value-равенство record).
 typedef ReportRange = ({DateTime? from, DateTime? to});

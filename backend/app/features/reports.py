@@ -11,6 +11,7 @@ Reports:
   • by-patient     — top patients by spend over the window (LTV slice)
   • by-region      — new patients per region in the window (CRM acquisition)
   • by-operation   — performed operations count/revenue + by-surgeon
+  • by-treatment   — procedure/medication revenue grouped by service (+ by-kind)
 
 All monetary values are Decimal → JSON decimal strings; counts are ints.
 """
@@ -35,12 +36,12 @@ from app.core.report_export import build_pdf, build_xlsx
 from app.models.diagnosis import VisitDiagnosis
 from app.models.finance import Expense
 from app.models.inventory import StockBatch, StockMovement
-from app.models.operation import Operation
+from app.models.operation import Operation, Treatment
 from app.models.patient import Patient
 from app.models.payment import Payment
 from app.models.queue import QueueTicket
 from app.models.user import User
-from app.models.visit import Visit
+from app.models.visit import Visit, VisitItem
 
 router = APIRouter(
     prefix="/reports",
@@ -714,6 +715,107 @@ def by_operation_pdf(db: Annotated[Session, Depends(get_db)],
     df, dt, start, end = _resolve_range(date_from, date_to)
     title, header, rows = _by_operation_table(db, df, dt, start, end)
     return _pdf(f"by_operation_{df}_{dt}.pdf", title, header, rows)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# By-treatment — billed treatments (procedures + dispensed medications) grouped
+# by service, with a by-kind (procedure vs medication) split.
+#
+# Revenue semantics mirror by-operation 1:1 (the owner chose NOT to unify the two
+# panels): by-operation counts each DONE operation's own `Operation.price` keyed
+# by its completion timestamp (`performed_at`), NOT collected payments. The
+# treatment analog is the treatment's own billed line (`VisitItem.total`, the
+# amount charged at prescribe time) keyed by the treatment's `created_at`. Only
+# billed treatments (service_id + a linked VisitItem) carry revenue — an unbilled
+# clinical-only prescription (service_id NULL) has no charge and is excluded.
+# Cancelled treatments are excluded so a de-billed course drops out, mirroring how
+# by-operation's DONE_STATUSES filter excludes cancelled operations.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class TreatmentServiceRow(BaseModel):
+    service_name: str
+    kind: str            # procedure | medication
+    count: int           # число биллинговых лечений этой услуги
+    revenue: Decimal     # суммарная выручка (VisitItem.total) этих лечений
+
+
+class TreatmentsReport(BaseModel):
+    date_from: date
+    date_to: date
+    count: int
+    revenue: Decimal
+    by_service: list[TreatmentServiceRow]
+
+
+def _by_treatment(db: Session, df: date, dt: date, start: datetime, end: datetime) -> TreatmentsReport:
+    # Billed treatments in the window: join the linked VisitItem (the actual
+    # charge) — mirrors by-operation reading Operation.price off the entity. Only
+    # treatments that billed a service line contribute revenue; cancelled ones drop.
+    rows = db.execute(
+        select(VisitItem.service_name, Treatment.kind,
+               func.count(), func.coalesce(func.sum(VisitItem.total), 0))
+        .join(VisitItem, VisitItem.id == Treatment.visit_item_id)
+        .where(Treatment.status != "cancelled",
+               Treatment.created_at >= start, Treatment.created_at < end)
+        .group_by(VisitItem.service_name, Treatment.kind)
+    ).all()
+
+    by_service = [
+        TreatmentServiceRow(service_name=name, kind=kind, count=int(n), revenue=Decimal(rev))
+        for name, kind, n, rev in rows
+    ]
+    by_service.sort(key=lambda r: r.revenue, reverse=True)
+
+    total_count = sum(r.count for r in by_service)
+    total_revenue = sum((r.revenue for r in by_service), Decimal("0"))
+    return TreatmentsReport(
+        date_from=df, date_to=dt, count=total_count,
+        revenue=total_revenue, by_service=by_service,
+    )
+
+
+@router.get("/by-treatment", response_model=TreatmentsReport)
+def by_treatment(db: Annotated[Session, Depends(get_db)],
+                 date_from: _DateFrom = None, date_to: _DateTo = None) -> TreatmentsReport:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    return _by_treatment(db, df, dt, start, end)
+
+
+_KIND_LABELS = {"procedure": "Процедура", "medication": "Медикамент"}
+
+
+def _by_treatment_table(db: Session, df: date, dt: date, start: datetime,
+                        end: datetime) -> tuple[str, list[str], list[list]]:
+    r = _by_treatment(db, df, dt, start, end)
+    rows = [[s.service_name, _KIND_LABELS.get(s.kind, s.kind), s.count, s.revenue] for s in r.by_service]
+    rows.append(["ИТОГО", "", r.count, r.revenue])
+    header = ["Услуга", "Тип", "Лечений", "Выручка"]
+    return f"Выручка процедур ({df} — {dt})", header, rows
+
+
+@router.get("/by-treatment.csv")
+def by_treatment_csv(db: Annotated[Session, Depends(get_db)],
+                     date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    _, header, rows = _by_treatment_table(db, df, dt, start, end)
+    return _csv(f"by_treatment_{df}_{dt}.csv", header, rows)
+
+
+@router.get("/by-treatment.xlsx")
+def by_treatment_xlsx(db: Annotated[Session, Depends(get_db)],
+                      date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_treatment_table(db, df, dt, start, end)
+    return _xlsx(f"by_treatment_{df}_{dt}.xlsx", title, header, rows)
+
+
+@router.get("/by-treatment.pdf")
+def by_treatment_pdf(db: Annotated[Session, Depends(get_db)],
+                     date_from: _DateFrom = None, date_to: _DateTo = None) -> Response:
+    df, dt, start, end = _resolve_range(date_from, date_to)
+    title, header, rows = _by_treatment_table(db, df, dt, start, end)
+    return _pdf(f"by_treatment_{df}_{dt}.pdf", title, header, rows)
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -9,6 +9,8 @@ import '../../auth/application/auth_controller.dart';
 import '../data/inventory_repository.dart';
 import '../domain/product.dart';
 import '../domain/stock.dart';
+import '../domain/supplier.dart';
+import 'movements_tab.dart';
 import 'stocktake_tab.dart';
 import 'supplier_return_dialog.dart';
 import 'transfer_dialog.dart';
@@ -47,6 +49,7 @@ class InventoryScreen extends ConsumerWidget {
       const Tab(text: 'Дефицит'),
       const Tab(text: 'Истекает'),
       const Tab(text: 'К заказу'),
+      const Tab(text: 'История'),
       if (canStocktake) const Tab(text: 'Инвентаризация'),
     ];
     final views = <Widget>[
@@ -56,6 +59,7 @@ class InventoryScreen extends ConsumerWidget {
           branchId: branchId, canWriteOff: canWriteOff, canManage: canManage),
       _ExpiringTab(branchId: branchId, canWriteOff: canWriteOff),
       _ReorderTab(branchId: branchId, canManage: canManage),
+      MovementsTab(branchId: branchId),
       if (canStocktake) StocktakeTab(branchId: branchId),
     ];
 
@@ -773,6 +777,10 @@ class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
   late final List<_ReceiptLine> _lines;
   bool _saving = false;
 
+  /// Опциональный поставщик всего прихода (null → «— не указан —»). Он один на
+  /// весь документ — сервер проставит его в каждую созданную партию.
+  String? _supplierId;
+
   bool get _isPrefilled => widget.prefill != null && widget.prefill!.isNotEmpty;
 
   @override
@@ -802,6 +810,7 @@ class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
     try {
       await ref.read(inventoryRepositoryProvider).createReceipt(
             branchId: widget.branchId,
+            supplierId: _supplierId,
             items: [
               for (final l in lines)
                 (
@@ -843,9 +852,22 @@ class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
           : 'Приход товара'),
       content: SizedBox(
         width: 460,
-        child: _isPrefilled
-            ? _prefilledBody()
-            : _SingleLineBody(line: _lines.first, onChanged: () => setState(() {})),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _SupplierPicker(
+              supplierId: _supplierId,
+              onChanged: (v) => setState(() => _supplierId = v),
+            ),
+            const SizedBox(height: 12),
+            Flexible(
+              child: _isPrefilled
+                  ? _prefilledBody()
+                  : _SingleLineBody(
+                      line: _lines.first, onChanged: () => setState(() {})),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -909,11 +931,83 @@ class _ReceiptDialogState extends ConsumerState<_ReceiptDialog> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: l.batchNo,
+                        decoration: const InputDecoration(
+                            labelText: 'Партия', hintText: 'необязательно'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _ExpiryField(
+                        controller: l.expiry,
+                        onChanged: () => setState(() {}),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             );
           },
         ),
       );
+}
+
+/// Опциональный выбор поставщика прихода. Дефолт — «— не указан —» (null).
+/// Источник — GET /inventory/suppliers. Пока грузится — плейсхолдер; при ошибке
+/// приход не блокируем (поставщик необязателен), показываем нейтральный текст.
+class _SupplierPicker extends ConsumerWidget {
+  const _SupplierPicker({required this.supplierId, required this.onChanged});
+
+  final String? supplierId;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final suppliers = ref.watch(suppliersProvider);
+    return suppliers.when(
+      data: (items) {
+        final active = items.where((s) => s.isActive).toList();
+        return DropdownButtonFormField<String?>(
+          initialValue: supplierId,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Поставщик'),
+          items: <DropdownMenuItem<String?>>[
+            const DropdownMenuItem<String?>(
+                value: null, child: Text('— не указан —')),
+            for (final Supplier s in active)
+              DropdownMenuItem<String?>(
+                value: s.id,
+                child: Text(s.name, overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: onChanged,
+        );
+      },
+      loading: () => const InputDecorator(
+        decoration: InputDecoration(labelText: 'Поставщик'),
+        child: SizedBox(
+          height: 20,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: SizedBox(
+                height: 16,
+                width: 16,
+                child: CircularProgressIndicator(strokeWidth: 2)),
+          ),
+        ),
+      ),
+      // Поставщик необязателен → при ошибке загрузки не мешаем приходу.
+      error: (_, _) => const InputDecorator(
+        decoration: InputDecoration(labelText: 'Поставщик'),
+        child: Text('— не указан — (список недоступен)'),
+      ),
+    );
+  }
 }
 
 /// Тело диалога в ручном режиме — прежний одностраничный приход (одна позиция).
@@ -978,13 +1072,67 @@ class _SingleLineBody extends ConsumerWidget {
               labelText: 'Номер партии (необязательно)'),
         ),
         const SizedBox(height: 12),
-        TextField(
-          controller: line.expiry,
-          decoration: const InputDecoration(
-              labelText: 'Годен до (ГГГГ-ММ-ДД, необязательно)',
-              hintText: '2027-01-01'),
-        ),
+        _ExpiryField(controller: line.expiry, onChanged: onChanged),
       ],
+    );
+  }
+}
+
+/// Поле «Годен до» с выбором даты. Хранит значение как `YYYY-MM-DD` в
+/// [controller] (формат, который принимает бэкенд). Date picker предлагает
+/// только будущие даты — бэкенд отклоняет срок годности в прошлом (422).
+/// Значение необязательно: рядом кнопка очистки.
+class _ExpiryField extends StatelessWidget {
+  const _ExpiryField({required this.controller, this.onChanged});
+
+  final TextEditingController controller;
+  final VoidCallback? onChanged;
+
+  Future<void> _pick(BuildContext context) async {
+    final today = DateTime.now();
+    // Только будущее: firstDate = завтра (бэкенд отклонит сегодня-или-раньше).
+    final first = DateTime(today.year, today.month, today.day)
+        .add(const Duration(days: 1));
+    final current = DateTime.tryParse(controller.text.trim());
+    final initial =
+        (current != null && current.isAfter(first)) ? current : first;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: DateTime(today.year + 20),
+    );
+    if (picked != null) {
+      // ISO-дата без времени: YYYY-MM-DD.
+      controller.text =
+          '${picked.year.toString().padLeft(4, '0')}-'
+          '${picked.month.toString().padLeft(2, '0')}-'
+          '${picked.day.toString().padLeft(2, '0')}';
+      onChanged?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = controller.text.trim().isNotEmpty;
+    return TextField(
+      controller: controller,
+      readOnly: true,
+      onTap: () => _pick(context),
+      decoration: InputDecoration(
+        labelText: 'Годен до',
+        hintText: 'необязательно',
+        prefixIcon: const Icon(Icons.event_available_outlined, size: 20),
+        suffixIcon: hasValue
+            ? IconButton(
+                icon: const Icon(Icons.clear, size: 18),
+                onPressed: () {
+                  controller.clear();
+                  onChanged?.call();
+                },
+              )
+            : null,
+      ),
     );
   }
 }

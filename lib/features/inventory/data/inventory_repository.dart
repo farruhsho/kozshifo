@@ -8,6 +8,7 @@ import '../domain/movement.dart';
 import '../domain/product.dart';
 import '../domain/stock.dart';
 import '../domain/stock_count.dart';
+import '../domain/supplier.dart';
 
 /// A reorder suggestion row (mirrors backend `ReorderSuggestionOut`): an active
 /// product at/below min_stock plus a suggested restock quantity. Decimal fields
@@ -32,6 +33,75 @@ class ReorderSuggestion {
         minStock: json['min_stock'] as String,
         suggestedQty: json['suggested_qty'] as String,
       );
+}
+
+/// Immutable filter for the movements-history query. Used as the family key of
+/// [movementsProvider], so it must have value equality — a Dart `record`-backed
+/// class gives that for free via [props]. All fields optional; nulls are simply
+/// not sent as query params.
+class MovementFilter {
+  const MovementFilter({
+    required this.branchId,
+    this.productId,
+    this.movementType,
+    this.dateFrom,
+    this.dateTo,
+    this.offset = 0,
+    this.limit = 50,
+  });
+
+  final String branchId;
+  final String? productId;
+  final String? movementType; // receipt | write_off | adjustment | transfer_* | supplier_return
+  final DateTime? dateFrom;
+  final DateTime? dateTo; // half-open [from, to)
+  final int offset;
+  final int limit;
+
+  MovementFilter copyWith({
+    String? movementType,
+    bool clearMovementType = false,
+    DateTime? dateFrom,
+    bool clearDateFrom = false,
+    DateTime? dateTo,
+    bool clearDateTo = false,
+    int? offset,
+    int? limit,
+  }) =>
+      MovementFilter(
+        branchId: branchId,
+        productId: productId,
+        movementType:
+            clearMovementType ? null : (movementType ?? this.movementType),
+        dateFrom: clearDateFrom ? null : (dateFrom ?? this.dateFrom),
+        dateTo: clearDateTo ? null : (dateTo ?? this.dateTo),
+        offset: offset ?? this.offset,
+        limit: limit ?? this.limit,
+      );
+
+  // Value equality so the FutureProvider.family caches per distinct filter.
+  (String, String?, String?, DateTime?, DateTime?, int, int) get _props =>
+      (branchId, productId, movementType, dateFrom, dateTo, offset, limit);
+
+  @override
+  bool operator ==(Object other) =>
+      other is MovementFilter && other._props == _props;
+
+  @override
+  int get hashCode => _props.hashCode;
+}
+
+/// One page of movement rows plus the server's total (for the «ещё» button).
+class MovementsPage {
+  const MovementsPage(
+      {required this.items, required this.total, required this.offset});
+
+  final List<StockMovement> items;
+  final int total;
+  final int offset;
+
+  /// True when the server holds more rows past this page.
+  bool get hasMore => offset + items.length < total;
 }
 
 final inventoryRepositoryProvider = Provider<InventoryRepository>(
@@ -79,9 +149,11 @@ class InventoryRepository {
   }
 
   /// Goods receipt: creates batches and increases stock. Decimals are passed
-  /// as strings — the server parses them as exact Decimal.
+  /// as strings — the server parses them as exact Decimal. [supplierId] is
+  /// optional (null → «— не указан —»); when set it stamps every created batch.
   Future<void> createReceipt({
     required String branchId,
+    String? supplierId,
     required List<
             ({
               String productId,
@@ -95,7 +167,7 @@ class InventoryRepository {
     try {
       await _dio.post('/inventory/receipts', data: {
         'branch_id': branchId,
-        'supplier_id': null,
+        'supplier_id': supplierId,
         'items': [
           for (final it in items)
             {
@@ -107,6 +179,42 @@ class InventoryRepository {
             },
         ],
       });
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Suppliers (Page envelope; we only need the items for the receipt picker).
+  Future<List<Supplier>> suppliers() async {
+    try {
+      final resp = await _dio.get('/inventory/suppliers', queryParameters: {
+        'offset': 0,
+        'limit': 200,
+      });
+      return Page.fromJson(resp.data as Map<String, dynamic>, Supplier.fromJson)
+          .items;
+    } on DioException catch (e) {
+      throw ApiException.from(e);
+    }
+  }
+
+  /// Stock-movements ledger (history). Dates go to the server as UTC ISO-8601;
+  /// `date_to` is half-open [from, to). Returns a page + total for «показать ещё».
+  Future<MovementsPage> movements(MovementFilter f) async {
+    try {
+      final resp = await _dio.get('/inventory/movements', queryParameters: {
+        'branch_id': f.branchId,
+        'product_id': ?f.productId,
+        'movement_type': ?f.movementType,
+        'date_from': ?f.dateFrom?.toUtc().toIso8601String(),
+        'date_to': ?f.dateTo?.toUtc().toIso8601String(),
+        'offset': f.offset,
+        'limit': f.limit,
+      });
+      final page = Page.fromJson(
+          resp.data as Map<String, dynamic>, StockMovement.fromJson);
+      return MovementsPage(
+          items: page.items, total: page.total, offset: page.offset);
     } on DioException catch (e) {
       throw ApiException.from(e);
     }
@@ -301,3 +409,15 @@ final stockCountsProvider =
     FutureProvider.autoDispose.family<List<StockCount>, String>(
         (ref, branchId) =>
             ref.watch(inventoryRepositoryProvider).stockCounts(branchId));
+
+/// Suppliers list for the optional receipt picker. autoDispose so it refreshes
+/// when the receipt dialog reopens; small list, one page is enough.
+final suppliersProvider = FutureProvider.autoDispose<List<Supplier>>(
+    (ref) => ref.watch(inventoryRepositoryProvider).suppliers());
+
+/// Movements-history page for a given filter. Keyed by [MovementFilter] (value
+/// equality), so paging/filtering just watches a new key.
+final movementsProvider =
+    FutureProvider.autoDispose.family<MovementsPage, MovementFilter>(
+        (ref, filter) =>
+            ref.watch(inventoryRepositoryProvider).movements(filter));

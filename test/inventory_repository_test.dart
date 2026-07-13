@@ -245,6 +245,149 @@ void main() {
     expect(noSup.supplierId, isNull);
   });
 
+  // ─── Repository: movements history (Page envelope + enriched fields) ─────────
+
+  test('movements: sends filters as query params; parses Page + enriched row',
+      () async {
+    final (repo, adapter) = _repo((_) => _json({
+          'items': [
+            {
+              'id': 'mv-9',
+              'product_id': 'prod-1',
+              'batch_id': 'batch-1',
+              'branch_id': 'br-1',
+              'movement_type': 'receipt',
+              'quantity': '5.000', // inflow, positive
+              'reason': 'закупка',
+              'ref_type': 'receipt',
+              'ref_id': 'rc-1',
+              'created_at': '2026-06-13T09:00:00Z',
+              'product_name': 'Тропикамид 1%',
+              'product_sku': 'MED-001',
+              'actor_name': 'Иванова А.',
+            },
+          ],
+          'total': 42,
+          'offset': 0,
+          'limit': 50,
+        }));
+
+    final from = DateTime.utc(2026, 6, 1);
+    final to = DateTime.utc(2026, 6, 14);
+    final page = await repo.movements(MovementFilter(
+      branchId: 'br-1',
+      movementType: 'receipt',
+      dateFrom: from,
+      dateTo: to,
+      offset: 0,
+      limit: 50,
+    ));
+
+    final q = adapter.lastRequest!.uri.queryParameters;
+    expect(adapter.lastRequest!.uri.path, endsWith('/inventory/movements'));
+    expect(q['branch_id'], 'br-1');
+    expect(q['movement_type'], 'receipt');
+    expect(q['date_from'], from.toIso8601String());
+    expect(q['date_to'], to.toIso8601String());
+    expect(q['offset'], '0');
+    expect(q['limit'], '50');
+
+    expect(page.total, 42);
+    expect(page.items, hasLength(1));
+    expect(page.hasMore, isTrue); // 0 + 1 < 42
+
+    final m = page.items.first;
+    expect(m.movementType, 'receipt');
+    expect(m.typeLabel, 'Приход');
+    expect(m.isInflow, isTrue);
+    expect(m.productName, 'Тропикамид 1%');
+    expect(m.productSku, 'MED-001');
+    expect(m.actorName, 'Иванова А.');
+  });
+
+  test('movements: omits null filters (only branch_id + paging sent)', () async {
+    final (repo, adapter) = _repo((_) =>
+        _json({'items': [], 'total': 0, 'offset': 0, 'limit': 50}));
+    await repo.movements(const MovementFilter(branchId: 'br-1'));
+    final q = adapter.lastRequest!.uri.queryParameters;
+    expect(q.containsKey('movement_type'), isFalse);
+    expect(q.containsKey('date_from'), isFalse);
+    expect(q.containsKey('date_to'), isFalse);
+    expect(q['branch_id'], 'br-1');
+  });
+
+  test('StockMovement.isInflow: negative quantity is an outflow', () {
+    final out = StockMovement.fromJson(_movementJson);
+    expect(out.isInflow, isFalse); // "-3.000"
+    expect(out.typeLabel, 'Списание');
+  });
+
+  // ─── Repository: suppliers (Page → items) ────────────────────────────────────
+
+  test('suppliers: parses Page envelope items', () async {
+    final (repo, adapter) = _repo((_) => _json({
+          'items': [
+            {
+              'id': 'sup-1',
+              'name': 'ООО Медтех',
+              'phone': '+998901112233',
+              'email': null,
+              'address': null,
+              'is_active': true,
+            },
+          ],
+          'total': 1,
+          'offset': 0,
+          'limit': 200,
+        }));
+    final list = await repo.suppliers();
+    expect(adapter.lastRequest!.uri.path, endsWith('/inventory/suppliers'));
+    expect(list, hasLength(1));
+    expect(list.first.name, 'ООО Медтех');
+    expect(list.first.isActive, isTrue);
+  });
+
+  // ─── Repository: receipt carries the chosen supplier_id ──────────────────────
+
+  test('createReceipt: supplier_id is sent (null when not chosen)', () async {
+    final (repo, adapter) = _repo((_) => _json({}, status: 200));
+    await repo.createReceipt(
+      branchId: 'br-1',
+      supplierId: 'sup-7',
+      items: const [
+        (
+          productId: 'prod-1',
+          quantity: '10',
+          unitCost: '150000',
+          batchNo: 'B-1',
+          expiryDate: '2027-01-01',
+        ),
+      ],
+    );
+    final body = adapter.lastRequest!.data as Map<String, dynamic>;
+    expect(body['branch_id'], 'br-1');
+    expect(body['supplier_id'], 'sup-7');
+    final item = (body['items'] as List).first as Map<String, dynamic>;
+    expect(item['batch_no'], 'B-1');
+    expect(item['expiry_date'], '2027-01-01');
+
+    // And null when omitted.
+    await repo.createReceipt(
+      branchId: 'br-1',
+      items: const [
+        (
+          productId: 'prod-1',
+          quantity: '1',
+          unitCost: '0',
+          batchNo: null,
+          expiryDate: null,
+        ),
+      ],
+    );
+    final body2 = adapter.lastRequest!.data as Map<String, dynamic>;
+    expect(body2['supplier_id'], isNull);
+  });
+
   // ─── Domain: expiry helpers (date-only, server-verdict aware) ────────────────
 
   test('StockBatch expiry helpers compute days + expiringWithin window', () {

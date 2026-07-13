@@ -88,7 +88,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 7,
+      length: 8,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Отчёты'),
@@ -99,6 +99,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
               Tab(text: 'Врачи'),
               Tab(text: 'Диагносты'),
               Tab(text: 'Операции'),
+              Tab(text: 'По лечениям'),
               Tab(text: 'Прибыль по регионам'),
               Tab(text: 'Регионы'),
               Tab(text: 'Пациенты'),
@@ -116,6 +117,7 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                   _byDoctorTab(),
                   _byDiagnosticianTab(),
                   _byOperationTab(),
+                  _byTreatmentTab(),
                   _profitByRegionTab(),
                   _byRegionTab(),
                   _byPatientTab(),
@@ -349,6 +351,42 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         ),
       );
 
+  // ── По лечениям ──────────────────────────────────────────────────────────────
+  Widget _byTreatmentTab() => _tab(
+        csvSlug: 'by-treatment',
+        child: AsyncValueWidget<TreatmentsReport>(
+          value: ref.watch(byTreatmentReportProvider(_range)),
+          onRetry: () => ref.invalidate(byTreatmentReportProvider(_range)),
+          builder: (r) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  _kpi('Лечений', formatInt(r.count),
+                      Theme.of(context).colorScheme.primary),
+                  _kpi('Выручка', formatMoney(r.revenue), Colors.green),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (r.byService.isEmpty)
+                const _Empty(message: 'За период лечений нет')
+              else
+                _table(['Услуга', 'Тип', 'Лечений', 'Выручка'], [
+                  for (final s in r.byService)
+                    [
+                      s.serviceName,
+                      s.kindLabel,
+                      formatInt(s.count),
+                      formatMoney(s.revenue),
+                    ],
+                ], textColumns: const {1}),
+            ],
+          ),
+        ),
+      );
+
   // ── Прибыль по регионам ──────────────────────────────────────────────────────
   Widget _profitByRegionTab() => _tab(
         csvSlug: 'profit-by-region',
@@ -408,14 +446,18 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       );
 
   /// Простая таблица: первый столбец слева, остальные — справа (числа).
-  Widget _table(List<String> headers, List<List<String>> rows) {
+  /// [textColumns] — индексы дополнительных текстовых столбцов, которые не
+  /// нужно выравнивать по правому краю (например «Тип»).
+  Widget _table(List<String> headers, List<List<String>> rows,
+      {Set<int> textColumns = const {}}) {
+    bool numeric(int i) => i != 0 && !textColumns.contains(i);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
         columnSpacing: 28,
         columns: [
           for (var i = 0; i < headers.length; i++)
-            DataColumn(label: Text(headers[i]), numeric: i != 0),
+            DataColumn(label: Text(headers[i]), numeric: numeric(i)),
         ],
         rows: [
           for (final r in rows)
@@ -429,12 +471,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
 }
 
 class _Empty extends StatelessWidget {
-  const _Empty();
+  const _Empty({this.message = 'Нет данных за период'});
+
+  /// Текст пустого состояния (по умолчанию — общий для всех отчётов).
+  final String message;
+
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 28),
         child: Center(
-          child: Text('Нет данных за период',
+          child: Text(message,
               style: TextStyle(
                   color: Theme.of(context)
                       .colorScheme

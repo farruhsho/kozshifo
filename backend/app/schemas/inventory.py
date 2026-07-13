@@ -170,6 +170,13 @@ class MovementOut(BaseModel):
     ref_type: str | None
     ref_id: UUID | None
     created_at: datetime
+    # Joined, human-readable labels for the movement-history list. Optional so
+    # the inline action responses (write-off / transfer / supplier-return) that
+    # build MovementOut straight from the ORM row keep working unchanged — those
+    # rows simply leave the labels None.
+    product_name: str | None = None
+    product_sku: str | None = None
+    actor_name: str | None = None
 
 
 # ── Stock-count / инвентаризация ──────────────────────────────────────────────

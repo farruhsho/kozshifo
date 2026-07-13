@@ -68,6 +68,9 @@ class ReportsRepository {
   Future<OperationsReport> byOperation(ReportRange r) =>
       _get('/reports/by-operation', r, (d) => OperationsReport.fromJson(d as Map<String, dynamic>));
 
+  Future<TreatmentsReport> byTreatment(ReportRange r) =>
+      _get('/reports/by-treatment', r, (d) => TreatmentsReport.fromJson(d as Map<String, dynamic>));
+
   Future<List<RegionRevenueRow>> profitByRegion(ReportRange r) =>
       _get('/reports/profit-by-region', r,
           (d) => (d as List).map((e) => RegionRevenueRow.fromJson(e as Map<String, dynamic>)).toList());
@@ -118,6 +121,10 @@ final byRegionReportProvider =
 final byOperationReportProvider =
     FutureProvider.autoDispose.family<OperationsReport, ReportRange>(
         (ref, r) => ref.watch(reportsRepositoryProvider).byOperation(r));
+
+final byTreatmentReportProvider =
+    FutureProvider.autoDispose.family<TreatmentsReport, ReportRange>(
+        (ref, r) => ref.watch(reportsRepositoryProvider).byTreatment(r));
 
 final profitByRegionReportProvider =
     FutureProvider.autoDispose.family<List<RegionRevenueRow>, ReportRange>(

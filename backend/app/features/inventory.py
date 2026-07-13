@@ -6,6 +6,7 @@ so future features (operations, treatment) reuse the exact same write-off path.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -34,8 +35,10 @@ from app.models.inventory import (
     StockBatch,
     StockCount,
     StockCountLine,
+    StockMovement,
     Supplier,
 )
+from app.models.user import User
 from app.schemas.common import Page
 from app.schemas.inventory import (
     BatchOut,
@@ -362,6 +365,75 @@ def write_off(
     db.commit()
     check_low_stock(db, [payload.product_id], payload.branch_id)  # post-commit, never raises
     return [MovementOut.model_validate(m) for m in movements]
+
+
+# ── Movement history (immutable ledger view) ──────────────────────────────────
+@router.get("/movements", response_model=Page[MovementOut],
+            dependencies=[Depends(require_permission("inventory.read"))])
+def list_movements(
+    db: Annotated[Session, Depends(get_db)],
+    branch_id: UUID | None = None,
+    product_id: UUID | None = None,
+    movement_type: str | None = Query(
+        None,
+        description="receipt | write_off | adjustment | transfer_out | transfer_in | supplier_return",
+    ),
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+) -> Page[MovementOut]:
+    """Immutable StockMovement ledger — the warehouse audit trail («куда ушёл
+    товар»). Newest first, joined to product name/SKU and actor name so the list
+    reads for a human rather than as raw UUIDs.
+
+    `date_from`/`date_to` window the result by `created_at` as a half-open
+    [from, to) range of absolute UTC instants (the client passes the selected
+    local-day bounds as UTC), mirroring /visits `opened_from`/`opened_to`."""
+    stmt = (
+        select(StockMovement, Product.name, Product.sku, User.full_name)
+        .join(Product, Product.id == StockMovement.product_id)
+        .outerjoin(User, User.id == StockMovement.actor_id)
+    )
+    if branch_id:
+        stmt = stmt.where(StockMovement.branch_id == branch_id)
+    if product_id:
+        stmt = stmt.where(StockMovement.product_id == product_id)
+    if movement_type:
+        stmt = stmt.where(StockMovement.movement_type == movement_type)
+    if date_from is not None:
+        stmt = stmt.where(StockMovement.created_at >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(StockMovement.created_at < date_to)
+
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    # Newest first; id.desc() is a deterministic tiebreak because created_at
+    # (server_default func.now()) has second granularity on SQLite and is
+    # identical for rows written in one transaction (transfer_out + transfer_in),
+    # so without it the same-instant order would be DB-arbitrary/flaky.
+    rows = db.execute(
+        stmt.order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+        .offset(offset).limit(limit)
+    ).all()
+    items = [
+        MovementOut(
+            id=m.id,
+            product_id=m.product_id,
+            batch_id=m.batch_id,
+            branch_id=m.branch_id,
+            movement_type=m.movement_type,
+            quantity=Decimal(m.quantity),
+            reason=m.reason,
+            ref_type=m.ref_type,
+            ref_id=m.ref_id,
+            created_at=m.created_at,
+            product_name=product_name,
+            product_sku=product_sku,
+            actor_name=actor_name,
+        )
+        for (m, product_name, product_sku, actor_name) in rows
+    ]
+    return Page(items=items, total=total, offset=offset, limit=limit)
 
 
 # ── Stock-count / инвентаризация ──────────────────────────────────────────────
